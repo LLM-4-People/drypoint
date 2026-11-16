@@ -207,7 +207,7 @@ function finite(value, fallback) {
 /**
  * A coordinate or size this app can use, or null.
  *
- * A file may carry a value that is finite but meaningless — `1e308` is not a
+ * A file may carry a value that is finite but meaningless: `1e308` is not a
  * position on a label this app can author. Those are replaced and reported.
  * A value that merely exceeds the *current* tape is not: shortening a label
  * legitimately clamps every box, and that is a re-layout, not a damaged file.
@@ -336,7 +336,7 @@ export function boundElementText(element) {
  * Normalise one element against its type defaults without mutating the input.
  *
  * The defaults object is the shape owner: a key it does not declare is dropped.
- * A stored or imported document must not be able to carry arbitrary strings —
+ * A stored or imported document must not be able to carry arbitrary strings:
  * history counts what validation retains, and an unknown 250 kB field used to
  * be retained while the estimate counted only known fields.
  */

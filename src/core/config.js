@@ -15,7 +15,7 @@ function deepFreeze(value) {
 }
 
 /**
- * The user threshold is a percentage; the renderer wants a 0–255 luminance cut.
+ * The user threshold is a percentage; the renderer wants a 0-255 luminance cut.
  * One owner for both representations: `thresholdDefault` is derived from it.
  */
 const THRESHOLD = Object.freeze({ min: 5, max: 95, step: 5, default: 55 });
@@ -73,7 +73,7 @@ export const CONFIG = deepFreeze({
     dpi: 203,
     widthPx: 96,
     /**
-     * A real D110-family head is 96–576 dots. A reported 0 or 65535 is a
+     * A real D110-family head is 96-576 dots. A reported 0 or 65535 is a
      * malformed/hostile reply: it must not become geometry or a raster width,
      * and with no usable report the print gate treats the head as a guess.
      */
@@ -137,10 +137,10 @@ export const CONFIG = deepFreeze({
     }),
     /** The user-facing threshold is a percentage of full ink. */
     threshold: THRESHOLD,
-    /** Internal 0–255 luminance cut derived from the default percentage. */
+    /** Internal 0-255 luminance cut derived from the default percentage. */
     thresholdDefault: Math.round((THRESHOLD.default / 100) * 255),
     /**
-     * Fixed 0–255 luminance cut for the final 1-bit raster pass. The user
+     * Fixed 0-255 luminance cut for the final 1-bit raster pass. The user
      * threshold only drives image dithering, so small antialiased text is not
      * lost when the user picks a low image threshold.
      */

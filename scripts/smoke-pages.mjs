@@ -3,8 +3,8 @@
  * Smoke-test a Pages deployment: the document root and every file the service
  * worker precaches, each bounded-retried until it answers 200.
  *
- * The file list comes from `assets/precache.js` — the generated manifest the
- * worker itself installs — so a deployment that forgets one file fails here
+ * The file list comes from `assets/precache.js` (the generated manifest the
+ * worker itself installs), so a deployment that forgets one file fails here
  * instead of failing on a user's phone. Four hand-picked URLs used to be
  * enough to pass while the list grew to sixty-four.
  *

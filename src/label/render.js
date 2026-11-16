@@ -471,7 +471,7 @@ export function layoutWarnings(labelDocument) {
             `the box is ${Math.round(box.w)} px`
         );
       }
-      // USS-128/ISO 15417: the bars need 6.35 mm — 51 dots at 8 dots/mm — and
+      // USS-128/ISO 15417: the bars need 6.35 mm (51 dots at 8 dots/mm) and
       // at least 15% of the symbol length, whichever is greater. The bar height
       // excludes the caption strip the painter reserves for the HRI.
       const { barHeight } = barcodeBarLayout(box.h, element.showText);

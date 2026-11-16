@@ -11,8 +11,8 @@ import { createLogger } from '../../core/log.js';
 const log = createLogger('transport.serial');
 
 /**
- * Reduce any form the platform reports a Bluetooth service class ID in — a
- * 16-bit number, a short hex string, or the full 128-bit UUID — to the eight
+ * Reduce any form the platform reports a Bluetooth service class ID in (a
+ * 16-bit number, a short hex string, or the full 128-bit UUID) to the eight
  * hex digits every comparison uses. Chrome returns a number for a mapped SPP
  * port and the UUID string for a custom one, so both forms must match.
  */

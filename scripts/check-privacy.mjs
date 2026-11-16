@@ -31,8 +31,8 @@ import { ROOT, isTextBuffer, listFiles, listTrackedFiles } from './lib/tree.mjs'
 export const REQUIRED_ROOTS = Object.freeze(['src', 'docs', 'index.html', 'sw.js', 'README.md']);
 
 /**
- * The reference unit's serial. Split into two fragments so this file — which
- * the scanner also scans — never carries the string it exists to ban.
+ * The reference unit's serial. Split into two fragments so this file (which
+ * the scanner also scans) never carries the string it exists to ban.
  */
 export const DEVICE_SERIAL = ['G5310', '22527'].join('');
 
@@ -142,7 +142,7 @@ export async function scanTree({ root = ROOT, rules, requireRoots = true, tracke
 
 /** One `file:line` line per finding. */
 export function formatFinding(finding) {
-  return `${finding.file}:${finding.line}: ${finding.rule} — ${finding.why}: ${finding.text}`;
+  return `${finding.file}:${finding.line}: ${finding.rule}: ${finding.why}: ${finding.text}`;
 }
 
 async function main(argv) {

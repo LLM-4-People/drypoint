@@ -35,7 +35,7 @@ export function createStore(initialState, options = {}) {
   /**
    * Read the stored value.
    *
-   * The raw string is handed to `onError` on every failure — a parse error, a
+   * The raw string is handed to `onError` on every failure: a parse error, a
    * rejected shape or a failed hydrate. The caller needs it to keep an
    * unreadable label intact instead of replacing it with a fresh one.
    */

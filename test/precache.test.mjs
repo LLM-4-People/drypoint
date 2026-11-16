@@ -268,7 +268,7 @@ test('a symlink to a repository-only file is rejected by the shared resolver', a
 
   // The dev server passes its own set, which also contains the worker and the
   // generated manifest. That set must accept them and still refuse a keystore
-  // symlink whose key is allowed lexically — the exact call shape serve.mjs uses.
+  // symlink whose key is allowed lexically: the exact call shape serve.mjs uses.
   await writeFile(join(dir, 'sw.js'), 'self.addEventListener("install", () => {});');
   await writeFile(join(dir, 'assets', 'precache.js'), 'self.__PRECACHE = {};');
   const serverAllowed = new Set(['sw.js', 'assets/precache.js', 'assets/app.css', 'assets/leak.css']);

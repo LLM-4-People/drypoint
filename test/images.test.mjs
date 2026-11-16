@@ -264,7 +264,7 @@ test('one decision covers the distinct count and the image-text budget', () => {
 test('a new document revision clears the one-attempt memory', () => {
   // K-F11: the hydrator attempts each source once per revision. Without the
   // clear, a revision that re-references a source still decoding (or refused
-  // and still within the cache) would never be attempted again — the 17th
+  // and still within the cache) would never be attempted again: the 17th
   // refused image path depends on the next revision being fresh.
   let resolveDecode;
   const decode = () => new Promise((resolve) => { resolveDecode = resolve; });

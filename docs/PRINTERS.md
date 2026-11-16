@@ -43,7 +43,7 @@ table is `Unknown` and blocked, never guessed from a neighbouring name.
 | N1 | `0x0e02` | Not supported | Vendor: 203 dpi, 12 mm class; no head-width report on the device | Not measured | An independent capture shows its firmware refusing the 13-byte `SetPageSize`/`PageEnd` of the D110M V4 sequence (`0xDB 06`) and printing with the `b1` task; it reports no head width on the `0xDC[0x03]` probe. | A captured handshake and the task its firmware accepts; head-width evidence. |
 | H1 | `0x0f00` | Not supported | Vendor: 203 dpi, 12 mm class; 96 dots derived, not measured here | Not measured | A 12 mm sibling from the vendor catalogue; its print task is not established. | A captured handshake and print. |
 | H1S | `0x1100` | Not supported | Vendor: 203 dpi, 12 mm class; 96 dots derived, not measured here | Not measured | It uses its own task (2-byte `PrintStart`, 9-byte `SetPageSize`, `PageStart`), not the D110M V4 sequence. | A model-specific implementation and a hardware test. |
-| D101 | `0x0a00` | Not supported | Vendor: 192 dots at 203 dpi; 24 mm head | 24 mm stock | The D110M V4 sequence is reported to work, but the D101 head is 24 mm and this app is scoped to 12 mm; the geometry gate would refuse the label. This is a scope refusal, not a protocol failure. | A 24 mm product scope decision and a capture in this repo. |
+| D101 | `0x0a00` | Not supported | Vendor: 192 dots at 203 dpi; 24 mm head | 24 mm stock | The D110M V4 sequence is reported to work, but the D101 head is 24 mm and this app is scoped to 12 mm; the model gate refuses D101 as a 12 mm scope decision. This is a scope refusal, not a protocol failure. | A 24 mm product scope decision and a capture in this repo. |
 | B1 | `0x1000` | Not supported | Not measured | Not measured | A different printer family; this app only speaks the 12 mm D110 path. | A model-specific protocol implementation, not just an id. |
 | B1 Pro | `0x1001` | Not supported | Vendor: 300 dpi, 50 mm media; not measured here | 50 mm stock | Independent captures report the D110M V4 sequence works, but its 50 mm media is outside this release's 12 mm scope; the model gate refuses it. A scope decision, not a different family or an unknown task. | A wider-media product scope decision and a capture in this repository. |
 | B1 SE | `0x1002` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
@@ -91,7 +91,7 @@ derives the rest:
   heartbeat's resolution class byte is `2`, which decodes to 203 dpi; the TLV
   is the pitch authority when it has a usable value.
 - **Tape width** = `headWidthPx / pitch`. For the reference unit,
-  `96 / 7.87` = 12.19 mm — slightly wider than the 12 mm stock, because the
+  `96 / 7.87` = 12.19 mm, slightly wider than the 12 mm stock, because the
   head is wider than the printable area of the label.
 - **Maximum length** comes from the printer's reported maximum print height
   (1600 px on the reference unit → 203 mm at 200 dpi), capped by the app at

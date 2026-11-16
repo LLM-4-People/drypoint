@@ -2,8 +2,8 @@
  * One `<base href>` for the offline shell.
  *
  * The worker answers an in-scope navigation with the cached app shell, but the
- * document URL stays at the deep path. Every relative URL in the shell —
- * `assets/app.css`, `src/main.js`, the vendored script — then resolves under
+ * document URL stays at the deep path. Every relative URL in the shell
+ * (`assets/app.css`, `src/main.js`, the vendored script) then resolves under
  * that path and 404s, so a controlled page at
  * `/drypoint/library/deep/path#/label/x` renders unstyled HTML with no layers.
  *

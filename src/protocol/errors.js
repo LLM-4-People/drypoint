@@ -73,7 +73,7 @@ function cancelledError(message = 'Print cancelled') {
 
 /**
  * The reason an aborted signal carries. A printer error aborts the operation
- * that owns the link, and that error — not a generic cancel — is what the
+ * that owns the link, and that error (not a generic cancel) is what the
  * caller must see, so the one flow reports one cause. Any other reason keeps
  * the shared "cancelled" outcome.
  */

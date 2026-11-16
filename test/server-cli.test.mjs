@@ -28,7 +28,7 @@ async function copyProject() {
  * that number goes stale the moment the probe socket closes: a parallel test's
  * outgoing connection or another probe can take it before the server binds, and
  * the server exits with EADDRINUSE. The range below 32768 is outside the Linux,
- * Windows and macOS ephemeral allocators, so only a real listener can hold it —
+ * Windows and macOS ephemeral allocators, so only a real listener can hold it:
  * and the probe proves one does not.
  */
 async function freePort() {

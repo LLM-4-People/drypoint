@@ -4,7 +4,7 @@
  *
  * A test file that imports `helpers/browser-page.mjs` needs Chromium; every
  * other file runs on Node alone. The import itself is the classification, so
- * there is no second list to keep current — a new browser test is partitioned
+ * there is no second list to keep current, so a new browser test is partitioned
  * the moment it uses the shared page harness.
  *
  * Usage:

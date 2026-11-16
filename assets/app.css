@@ -1008,7 +1008,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* Selected state: a --field-border ring (3.22:1 light, 3.43:1 dark on this
-   surface) plus two non-colour cues — bolder text and a bar along the bottom
+   surface) plus two non-colour cues: bolder text and a bar along the bottom
    edge. The old inset divider ring was 1.08:1 and colour was the only cue. */
 .segmented button[aria-pressed="true"] {
   border-color: var(--field-border);
@@ -1874,7 +1874,7 @@ input[type="range"]::-webkit-slider-thumb {
 
   /* Opening the menu moves focus into the grid, so the trigger is never
      display:none'd while it holds focus. The grid stays in the row's normal
-     flow — the list's overflow-y must keep clipping a long list, so a floating
+     flow; the list's overflow-y must keep clipping a long list, so a floating
      popup was cut off at the list edges. The row grows and the list scrolls it
      into view instead. */
   .layer-row[data-menu="open"] .layer-actions {

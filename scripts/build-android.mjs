@@ -325,9 +325,9 @@ export async function writeManifest({ androidDir, buildDir, versionName, version
  * The Android versionCode for a semver version.
  *
  * `major * 10000 + minor * 100 + patch` has room for two digits in the minor
- * and the patch. A larger component would silently borrow from the next one —
+ * and the patch. A larger component would silently borrow from the next one:
  * 1.100.0 and 2.0.0 would both be 20000, and patch 100 would collide with the
- * next minor — so an out-of-range component is refused instead of colliding.
+ * next minor, so an out-of-range component is refused instead of colliding.
  * A prerelease suffix is refused for the same reason: the release contract is a
  * strict `vMAJOR.MINOR.PATCH` tag, and `1.0.0-rc.1` has no versionCode.
  *
@@ -480,7 +480,7 @@ export const KEYSTORE_DN = `CN=${brand.name}, O=${brand.author}, C=CA`;
  * The `sh -c` wrapper that runs keytool with umask 077.
  *
  * keytool creates the store with the process umask, so on a standard login it
- * would be 0664 — readable by every local user — until the chmod at the end.
+ * would be 0664, readable by every local user, until the chmod at the end.
  * With umask 077 the file is 0600 from its first byte. `"$@"` keeps every
  * argument verbatim, so no password or path is ever shell-parsed.
  */
@@ -656,8 +656,8 @@ export async function ensureKeystore({
  *
  * This is the only owner of the staging lifetime. `fail()` used to call
  * `process.exit(1)` where it stood, so the cleanup below never ran and every
- * failed build left its `build-XXXXXX` tree — assets, dex, keystore copy and
- * signed APK — behind on disk.
+ * failed build left its `build-XXXXXX` tree (assets, dex, keystore copy and
+ * signed APK) behind on disk.
  *
  * @template T
  * @param {string} directory the parent the scratch directory lives in

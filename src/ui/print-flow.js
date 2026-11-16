@@ -245,7 +245,7 @@ export function createPrintFlow({
       await hydrate(target);
       const { canvas, warnings, hidden = 0 } = render(target, options);
       const warningReport = { warnings, hidden };
-      // Keep the warnings in the stage hint, even when the user cancels here —
+      // Keep the warnings in the stage hint even when the user cancels here,
       // but only for the label on screen: a test print must not overwrite the
       // current label's warning with the test document's.
       if (current) onWarnings(warningReport);
@@ -255,7 +255,7 @@ export function createPrintFlow({
       const capabilities = device.state?.capabilities ?? null;
       const experimental = capabilities?.modelSupport === 'experimental';
       const experimentalText = experimental
-        ? `${capabilities.model ?? 'This printer'} — ${CONFIG.device.printGate.experimental}`
+        ? `${capabilities.model ?? 'This printer'}. ${CONFIG.device.printGate.experimental}`
         : null;
       if (warnings.length) {
         const proceed = await confirm(

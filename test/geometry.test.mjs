@@ -224,7 +224,7 @@ test('vertical alignment moves the block by the slack inside the box', () => {
 
 /* ---------------- pinned dither weights (R5G-9) ---------------- */
 
-test('a 4×4 Floyd–Steinberg fixture pins the 7/16 weight exactly', () => {
+test('a 4×4 Floyd-Steinberg fixture pins the 7/16 weight exactly', () => {
   // A field where the 7/16 right-neighbour weight changes the outcome: with
   // 6/16 row 2 keeps a dot at column 2 that 7/16 diffuses away. The weights are
   // current behaviour, not a tunable, so this fixture fails on any change.

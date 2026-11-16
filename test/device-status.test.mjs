@@ -35,7 +35,7 @@ test('every connection status has one unambiguous description', () => {
     label: `D110_M · ${FIXTURE_SERIAL}`,
     shortLabel: 'D110_M',
     title: 'Open printer controls · Bluetooth serial (SPP)',
-    ariaLabel: `D110_M · ${FIXTURE_SERIAL} — open printer controls`,
+    ariaLabel: `D110_M · ${FIXTURE_SERIAL}: open printer controls`,
     panelLabel: 'Connected',
   });
 
@@ -48,14 +48,14 @@ test('every connection status has one unambiguous description', () => {
   const anonymous = describeDeviceStatus({ status: 'connected', capabilities: { model: null } });
   assert.equal(anonymous.label, 'Printer');
   assert.equal(anonymous.shortLabel, 'Printer');
-  assert.equal(anonymous.ariaLabel, 'Printer — open printer controls');
+  assert.equal(anonymous.ariaLabel, 'Printer: open printer controls');
   assert.equal(anonymous.panelLabel, 'Connected');
 
   // A reported id outside the table is not the model name "Unknown".
   const unknown = describeDeviceStatus({ status: 'connected', capabilities: { model: 'Unknown', modelSupport: 'unknown', deviceType: 0x1234 } });
   assert.equal(unknown.label, 'Unknown model');
   assert.equal(unknown.shortLabel, 'Unknown');
-  assert.equal(unknown.ariaLabel, 'Unknown model — open printer controls');
+  assert.equal(unknown.ariaLabel, 'Unknown model: open printer controls');
 
   const error = describeDeviceStatus({ status: 'error' });
   assert.equal(error.dot, 'error');

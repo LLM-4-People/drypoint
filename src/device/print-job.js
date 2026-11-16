@@ -3,7 +3,7 @@
  * expects; every step is named so it can be tested and aborted cleanly.
  *
  * Terminal frames: a completed job ends with printEnd (0xF3). A job that is
- * cancelled or fails after it started ends with cancelPrint (0xDA) instead —
+ * cancelled or fails after it started ends with cancelPrint (0xDA) instead:
  * never both, and never a success frame after a cancel.
  */
 

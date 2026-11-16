@@ -1,8 +1,8 @@
 /**
  * K-F9: the status line's hold and its cancellation, on a fake clock.
  *
- * main.js used to own this timer inline, so the two behaviours that matter —
- * a toned line reverts, an untoned line survives an earlier timer — had no
+ * main.js used to own this timer inline, so the two behaviours that matter,
+ * a toned line reverts, an untoned line survives an earlier timer, had no
  * test. The owner is now shared and injectable.
  */
 import test from 'node:test';

@@ -74,7 +74,7 @@ export function describeDeviceStatus(state = {}) {
       shortLabel,
       title: `Open printer controls${transport}`,
       // The accessible name contains the visible text (WCAG 2.5.3).
-      ariaLabel: `${label} — open printer controls`,
+      ariaLabel: `${label}: open printer controls`,
       panelLabel: 'Connected',
     };
   }

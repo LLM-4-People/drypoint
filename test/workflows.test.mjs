@@ -2,9 +2,9 @@
  * Workflow policy on parsed YAML.
  *
  * A tag reference is mutable and YAML has many spellings for the same grant.
- * These fixtures plant every confirmed bypass — anchors, folded scalars, tags,
+ * These fixtures plant every confirmed bypass: anchors, folded scalars, tags,
  * quoted job keys, multiline `uses`, masked gate steps, a no-op aggregate, a
- * decoy publish flag — and the CLI test proves each one exits nonzero. The real
+ * decoy publish flag. The CLI test proves each one exits nonzero. The real
  * tree is then held to the same rules.
  */
 import test from 'node:test';

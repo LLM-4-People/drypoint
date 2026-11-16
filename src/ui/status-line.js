@@ -3,9 +3,9 @@
  *
  * A toned status ("Saved", a job outcome, a chosen device line) is transient:
  * it holds for `holdMs` and then falls back to the live connection state. An
- * untoned status is a fact that stands until something replaces it — an idle
+ * untoned status is a fact that stands until something replaces it (an idle
  * disconnect says "Disconnected" and must not be wiped by a timer left over
- * from an earlier message — so writing one cancels any pending revert.
+ * from an earlier message), so writing one cancels any pending revert.
  *
  * `schedule`/`cancel` are injectable so the hold and the cancellation are
  * tested on a fake clock instead of with a real timer.

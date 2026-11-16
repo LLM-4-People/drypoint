@@ -61,8 +61,8 @@ async function claimPort() {
 /**
  * Only the app surface is served: the files the offline manifest lists (each
  * re-asserted against the generator's allowlist) plus the worker itself and its
- * generated manifest. Everything else in the repository — keystore, docs,
- * scripts, tests, package.json, .run — is not reachable even on a LAN bind.
+ * generated manifest. Everything else in the repository (keystore, docs,
+ * scripts, tests, package.json, .run) is not reachable even on a LAN bind.
  * There is deliberately no generic static fallback.
  */
 let allowed = new Set();
@@ -98,7 +98,7 @@ const server = createServer(async (request, response) => {
   }
   // The allowlist is lexical; the shared resolver proves the real file (after
   // symlinks) is still inside the repository, and re-checks the real path
-  // against this server's own surface — which includes the worker and the
+  // against this server's own surface, which includes the worker and the
   // generated manifest even though the precache allowlist does not.
   let filePath;
   try {

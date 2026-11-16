@@ -1,6 +1,6 @@
 # Drypoint
 
-Design and print 12 mm labels on a **NIIMBOT D110-family** thermal printer —
+Design and print 12 mm labels on a **NIIMBOT D110-family** thermal printer:
 in the browser, entirely offline, with no account, no server and no telemetry.
 
 [![Checks](https://github.com/LLM-4-People/drypoint/actions/workflows/checks.yml/badge.svg)](https://github.com/LLM-4-People/drypoint/actions/workflows/checks.yml)
@@ -31,7 +31,7 @@ would need before it could print is in [docs/PRINTERS.md](docs/PRINTERS.md).
 ## Quick start
 
 **In a browser.** Open <https://llm-4-people.github.io/drypoint/> in a browser
-that exposes the printer API you need — Chrome or Edge on desktop, or Chrome on
+that exposes the printer API you need: Chrome or Edge on desktop, or Chrome on
 Android (see [Browser support](#browser-support)). Pair the printer first
 (Windows: Settings → Bluetooth), then use **Connect printer** in the header or
 the Print tab. The first load registers the offline worker; after that a cold
@@ -41,7 +41,7 @@ start with no connectivity still edits and prints.
 [latest release](https://github.com/LLM-4-People/drypoint/releases/latest),
 allow "install unknown apps" for the file manager, and sideload it. The APK is
 self-signed, needs Android 8 or newer, and asks for the Nearby-devices
-permission on Android 12+ (location on Android 8–11) when it scans. It needs no
+permission on Android 12+ (location on Android 8-11) when it scans. It needs no
 network and no server. Build and install details:
 [docs/ANDROID.md](docs/ANDROID.md).
 
@@ -58,7 +58,7 @@ was tested on hardware.
 
 | Capability | Chrome | Chrome Android | Edge | Firefox | Safari |
 | --- | --- | --- | --- | --- | --- |
-| **Web Serial** | 89+ | 148+ (138–147 partial RFCOMM) | mirrors Chrome | 151+ | none |
+| **Web Serial** | 89+ | 148+ (138-147 partial RFCOMM) | mirrors Chrome | 151+ | none |
 | **Web Bluetooth** | 70+ | 56+ | mirrors Chrome | none | none |
 
 - **Chromium on Linux** (Chrome and Edge) ships Web Bluetooth disabled by
@@ -72,7 +72,7 @@ was tested on hardware.
 
 **Export a label.** Open **Document → Export label**. The web app downloads one
 JSON file; the Android app writes the same file to Downloads through its native
-bridge (on Android 8–9, the app's external Downloads directory). The filename
+bridge (on Android 8-9, the app's external Downloads directory). The filename
 carries a timestamp, so exporting twice does not overwrite the first file.
 
 **Import a label.** Open **Document → Import label**, pick the `.json` file, and
@@ -100,27 +100,28 @@ not install 1.0.0 for new work.
 
 ### Design
 
-- **Text** — multi-line, automatic or fixed font size, bold, horizontal and
+- **Text**: multi-line, automatic or fixed font size, bold, horizontal and
   vertical alignment, rotation 0/90/180/270.
-- **QR code** — arbitrary text/URL, error correction L/M/Q/H, real 4-module
+- **QR code**: arbitrary text/URL, error correction L/M/Q/H, real 4-module
   quiet zone.
-- **Code 128** — subset B (printable ASCII), optional human-readable text.
-- **Image** — imported as a data URL, fit contain/cover/stretch, per-image
-  dithering (crisp, Floyd–Steinberg, Atkinson) or the print setting.
-- **Frame** — stroke width, filled or outline, corner radius.
-- **Canvas** — drag and resize, snapping to the grid and label centres, optional
+- **Code 128**: subset B (printable ASCII), optional human-readable text.
+- **Image**: imported as a data URL, fit contain/cover/stretch, per-image
+  dithering (crisp, Floyd-Steinberg, Atkinson) or the print setting.
+- **Frame**: stroke width, filled or outline, corner radius.
+- **Canvas**: drag and resize, snapping to the grid and label centres, optional
   grid and centre guides, zoom buttons / Ctrl+wheel / fit, keyboard nudging
   (1 px, Shift = 8 px), duplicate, delete, lock, hide, z-order, alignment
   controls, and undo/redo. Two fingers on a zoomed label pan the stage
   horizontally; a second touch cancels a pending drag, so the label never moves
   by accident.
-- **Layers and templates** — reorder, lock and hide from the layer list;
+- **Layers and templates**: reorder, lock and hide from the layer list;
   starter templates for text, name tag, QR, cable, framed and blank labels.
-- **Export and import** — one JSON file per label, from the Document panel
+- **Export and import**: one JSON file per label, from the Document panel
   beside Templates. Import validates the format, bounds and document version,
   applies as one undoable step and reports any content it had to shorten.
-- **Document** — length in millimetres (20–200 mm, clamped to the device
-  maximum), presets, and copies.
+- **Document**: length in millimetres (20-200 mm, clamped to the device
+  maximum) and presets. Copies is a document field, but its only control is in
+  the Print panel.
 
 ### Print
 
@@ -144,8 +145,8 @@ not install 1.0.0 for new work.
   printer settings.
 - Diagnostics: log level, log viewer and JSON export.
 - Print also needs a live connection and at least one visible element. Every
-  command that writes to the printer — print, test print, self-test, feed,
-  reset, clock, density, tape type, auto power-off and sound — is gated on a
+  command that writes to the printer (print, test print, self-test, feed,
+  reset, clock, density, tape type, auto power-off and sound) is gated on a
   supplied model and a head width the printer actually reported. An
   unsupported or unknown model or a guessed head writes no frame at all; reads
   (identity, battery, sensors, roll and diagnostics) stay available. An
@@ -180,7 +181,7 @@ The design is stored locally; reopening the page keeps the label.
 - **No network.** The only requests the app makes are for its own files from the
   host that served the page; it never calls a third-party service or an API. The
   only other network APIs it can reach are the ones the browser gives it to talk
-  to the printer: Web Serial, Web Bluetooth, and — inside the Android app — a
+  to the printer: Web Serial, Web Bluetooth, and, inside the Android app, a
   local BLE bridge. There is no analytics, no crash reporter, no remote logging
   and no update check.
 - **No account.** Nothing to sign in to, nothing to sign up for.
@@ -235,7 +236,7 @@ After that:
   every staged body and refuses the install when the bytes differ or a digest is
   missing, so a host that serves a different file cannot poison the cache.
 - The worker refuses to install when its stamp and the manifest disagree, when a
-  file redirects, or when a response's content type contradicts its extension —
+  file redirects, or when a response's content type contradicts its extension,
   including a known extension served with no `Content-Type` at all.
 
 If a listed file is missing or the list is malformed, install fails loudly: the
@@ -244,10 +245,10 @@ page shows as a toast and records in the diagnostics log. A transient
 network-level failure is retried twice per file with a short backoff; an HTTP
 non-200, a redirect or a validation failure is never retried. The worker fetches
 into a staging cache and promotes it only when every file arrived, so a failed
-install never writes into or deletes the cache being served — for a same-build
-reinstall too.
+install never writes into or deletes the cache being served, even for a
+same-build reinstall.
 
-A *torn pair* — a manifest and a worker from two different builds — is not an
+A *torn pair* (a manifest and a worker from two different builds) is not an
 error. The two are separate atomic writes, so a host or a cache can serve a
 manifest newer than the worker; the worker then logs one informational line,
 installs nothing and keeps the active cache and its page untouched, without a
@@ -308,11 +309,11 @@ are not published here; the fixtures use clearly synthetic values.
 | Heartbeat resolution class | `0xDE` payload byte 6 is `2` → 203 dpi; the TLV's 200 dpi is the pitch the app uses |
 | Protocol build | 301, reported by status data; it does not name the print task |
 | Max print height | 1600 px → 203 mm at 200 dpi (capped to the 200 mm app maximum) |
-| Density / speed range | 1–5 / 1–5 |
+| Density / speed range | 1-5 / 1-5 |
 | Roll tag | `6977031214406`, 192-label capacity; used/remaining are read from the tag |
 
-The pitch is the reported resolution divided by 25.4 — 203 dpi is 7.99 dots/mm
-and 300 dpi is 11.81 dots/mm — and the tape width is derived from the head. The
+The pitch is the reported resolution divided by 25.4 (203 dpi is 7.99 dots/mm
+and 300 dpi is 11.81 dots/mm), and the tape width is derived from the head. The
 app prefers the capability TLV's dpi and falls back to the heartbeat's class
 byte only when the TLV has no usable value. Before a printer is discovered, or
 when its head width is unknown, the app uses the configured fallback (203 dpi,
@@ -320,7 +321,7 @@ when its head width is unknown, the app uses the configured fallback (203 dpi,
 
 ## Development
 
-The app has **no npm runtime dependencies** — it ships only `node:` built-ins.
+The app has **no npm runtime dependencies**: it ships only `node:` built-ins.
 One dev-only dependency, the ISC `yaml` parser, backs the workflow policy gate
 and is installed with `npm ci`; `package-lock.json` is tracked so that install is
 reproducible. CI runs `npm ci` before the gates that use it, then
@@ -346,7 +347,7 @@ Commands:
 The table is generated from `package.json`; edit the script there and run
 `npm run docs:generate`. The prose below the block explains the two gates.
 
-<!-- generated:scripts -->
+[//]: # (generated:scripts)
 | Command | Runs |
 | --- | --- |
 | `npm start` | `node scripts/serve.mjs` |
@@ -366,7 +367,7 @@ The table is generated from `package.json`; edit the script there and run
 | `npm run verify` | `npm run build:brand -- --check && npm run build:icons -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
 | `npm run test:unit` | `node scripts/test-suites.mjs unit` |
 | `npm run verify:all` | `npm run verify && npm run test:browser` |
-<!-- /generated:scripts -->
+[//]: # (/generated:scripts)
 
 `npm run verify` is the **unit gate**: brand and precache drift, privacy, the
 unit suite, generated documentation and link checks, and workflow policy.
@@ -374,8 +375,8 @@ unit suite, generated documentation and link checks, and workflow policy.
 and signs the APK and proves that the build left no tracked or untracked change.
 
 `npm start` serves the app with Node's standard library only; there is nothing
-to install. It binds to `127.0.0.1` and serves only the app surface — the files
-in `assets/precache.js` plus `sw.js` — so the keystore, docs, scripts, tests and
+to install. It binds to `127.0.0.1` and serves only the app surface (the files
+in `assets/precache.js` plus `sw.js`), so the keystore, docs, scripts, tests and
 `.run` are not reachable. Use `npm start -- --port 8081` to change the port.
 `npm start -- --host 0.0.0.0` serves the same surface on the LAN, which is
 useful for viewing on a phone only: a `192.168.x.x` origin is not a secure
@@ -404,7 +405,7 @@ never edit one by hand.
 
 `npm run build:android` packages the same web app in a small native shell and
 signs a sideloadable APK (`android/build/drypoint.apk`). The shell provides the
-one connectivity API WebView lacks — a BLE GATT bridge — plus two small host
+one connectivity API WebView lacks (a BLE GATT bridge) plus two small host
 helpers (`saveFile` for the label export, the diagnostics report and the raw
 copy of an unreadable stored label, and `setSystemBars` for the native theme
 bars), and serves the bundled assets from a stable `https://drypoint.local`
@@ -412,7 +413,7 @@ origin, so the editor, storage and print pipeline are identical. It needs no
 internet and no server.
 
 Running it needs Android 8+; scanning asks for Nearby devices on Android 12+
-and for location on Android 8–11. The APK is self-signed, so install it by
+and for location on Android 8-11. The APK is self-signed, so install it by
 sideloading. See [docs/ANDROID.md](docs/ANDROID.md) for build, install, signing
 and limits.
 
@@ -449,7 +450,7 @@ memory.
   hint warns and the print flow asks before printing anyway.
 - **Length is a setting, not a measurement.** It is remembered per roll, but if
   prints drift across the gap, set the length to match the tape.
-- **Code 128 B only** (printable ASCII 32–126). QR handles arbitrary text.
+- **Code 128 B only** (printable ASCII 32-126). QR handles arbitrary text.
 - **Browser APIs decide.** Web Serial is tested on desktop Chrome. Edge mirrors
   the Chromium APIs but was not hardware-tested with this printer. Web Bluetooth
   is Chrome and Edge on desktop and Chrome on Android; Chromium on Linux ships
@@ -460,10 +461,11 @@ memory.
 - **Paper info (`0x69`), print history (`0x62`) and the print area (`0x0F`)
   layouts are unverified.** They are exposed as raw bytes rather than guessed
   fields.
-- **Density and tape type always come from the printer.** Discovery mirrors the
-  values stored in the printer, so an edit made while offline is overwritten on
-  the next connection. Change them while connected (or on the printer itself);
-  the next job uses the printer's stored values.
+- **Density and tape type come from the printer when `Read printer settings`
+  is on**, which is the default: discovery mirrors the printer's stored values,
+  so an edit made while offline is overwritten on the next connection. With the
+  setting off, the app's stored values are used. Change them while connected
+  (or on the printer itself) when the setting is on.
 - **One document at a time.** There is no multi-label library or cloud sync;
   images are embedded as data URLs, which count against the browser's
   localStorage quota.
@@ -473,22 +475,22 @@ memory.
   memory; export a smaller label or remove an image first. 1.0.3 has no chunked
   transfer.
 - **Two open tabs are last-writer-wins.** Each tab saves its own label; the last
-  tab to write — or to close while dirty — replaces the other. There is no merge
+  tab to write (or to close while dirty) replaces the other. There is no merge
   and no revision envelope, so finish in one tab before editing in another.
 
 ## Troubleshooting
 
-- **“Failed to open serial port”** — another tab or program holds the printer.
+- **“Failed to open serial port”**: another tab or program holds the printer.
   Close it and connect again.
-- **The chooser is empty** — the printer is not paired, or Windows assigned no
+- **The chooser is empty**: the printer is not paired, or Windows assigned no
   SPP port. Re-pair it in Settings → Bluetooth.
-- **“Port 8080 is already in use”** — run `npm stop` (or `node
+- **“Port 8080 is already in use”**: run `npm stop` (or `node
   scripts/stop.mjs --port 8080`), or start on another port with `PORT=8081 npm
   start`. A tracked server is recorded in `.run/server-<port>.pid`.
-- **Offline reload fails** — run `npm run build`, then `npm run
+- **Offline reload fails**: run `npm run build`, then `npm run
   check:precache`, and reload once while online so the new worker installs.
   Check the console for `precache-error` details.
-- **Printer stops mid-job** — check the tape and lid; the status line and
+- **Printer stops mid-job**: check the tape and lid; the status line and
   diagnostics log report the printer's error code.
 
 ## Documentation
@@ -510,10 +512,10 @@ memory.
 
 Contributions are welcome: short-lived branch, pull request, `main`. Start with
 [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities privately
-through GitHub's security advisories — see [SECURITY.md](SECURITY.md) — and
+through GitHub's security advisories (see [SECURITY.md](SECURITY.md)), and
 never paste a printer serial, a home path or a log with either into an issue.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Bundled third-party work and its attribution:
+MIT: see [LICENSE](LICENSE). Bundled third-party work and its attribution:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

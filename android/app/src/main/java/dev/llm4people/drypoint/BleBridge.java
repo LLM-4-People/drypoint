@@ -301,13 +301,13 @@ public class BleBridge {
   }
 
   /**
-   * API 26–28: no MediaStore Downloads collection, so write the file directly.
+   * API 26-28: no MediaStore Downloads collection, so write the file directly.
    *
    * The file itself is the duplicate check here as well: truncating an existing
    * export would silently destroy the earlier copy, and the bridge promises the
    * same refusal on every supported API. It also means any file at this path is
-   * this call's own partial output, so every failure — including a close that
-   * cannot flush — deletes it before the error is rethrown.
+   * this call's own partial output, so every failure, including a close that
+   * cannot flush, deletes it before the error is rethrown.
    */
   private boolean saveFileLegacy(String name, String text) throws java.io.IOException {
     File target = downloadTarget(name);

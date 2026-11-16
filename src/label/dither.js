@@ -30,7 +30,7 @@ export function thresholdGray(gray, threshold) {
   return out;
 }
 
-/** Floyd–Steinberg error diffusion. */
+/** Floyd-Steinberg error diffusion. */
 export function floydSteinberg(gray, width, height, threshold) {
   const buffer = Float32Array.from(gray);
   const out = new Uint8Array(width * height);
@@ -97,7 +97,7 @@ export function alphaMask(imageData, cut = 128) {
 /**
  * @param {ImageData} imageData
  * @param {'threshold'|'floyd'|'atkinson'} mode
- * @param {number} threshold 0–255
+ * @param {number} threshold 0-255
  * @returns {ImageData} black/white pixels, alpha preserved as opaque
  */
 export function ditherImageData(imageData, mode, threshold = 150) {

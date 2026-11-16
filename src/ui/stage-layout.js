@@ -4,7 +4,7 @@
  * The compact layout moves the label name, the stage and the inspector into
  * different containers; the fit scale subtracts a different gutter depending
  * on the layout. main.js measures the viewport and applies what this module
- * decides — nothing here touches the DOM.
+ * decides: nothing here touches the DOM.
  */
 
 import { CONFIG } from '../core/config.js';

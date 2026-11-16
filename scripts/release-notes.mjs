@@ -4,7 +4,7 @@
  * needs.
  *
  * `package.json` owns the version. A tag is published only when it is exactly
- * `v<version>`, and the notes are the matching `CHANGELOG.md` section — never a
+ * `v<version>`, and the notes are the matching `CHANGELOG.md` section, never a
  * hand-typed copy in the workflow. A missing section fails the release.
  *
  * Usage:

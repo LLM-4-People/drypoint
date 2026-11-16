@@ -296,7 +296,7 @@ test('a symbol below two dots per module is reported with the numbers', () => {
   ]);
 
   const badBarcode = documentWith([createElement(ELEMENT_TYPES.BARCODE, { value: 'café', x: 0, y: 0, w: 200, h: 60 })]);
-  assert.deepEqual(warningsOf(badBarcode), ['Barcode: Code 128 B supports printable ASCII (32–126) only']);
+  assert.deepEqual(warningsOf(badBarcode), ['Barcode: Code 128 B supports printable ASCII (32-126) only']);
 
   const badQr = documentWith([createElement(ELEMENT_TYPES.QR, { value: '', x: 0, y: 0, w: 80, h: 80 })]);
   assert.deepEqual(warningsOf(badQr), ['QR code: QR content is empty']);
@@ -350,7 +350,7 @@ test('every starter template is free of layout warnings at its own length', () =
 });
 
 test('migration notices reach the renderer warnings', () => {
-  const notice = 'The legacy barcode was dropped during migration: Code 128 B supports printable ASCII (32–126) only.';
+  const notice = 'The legacy barcode was dropped during migration: Code 128 B supports printable ASCII (32-126) only.';
   const document = validateDocument({ lengthMm: 40, notices: [notice], elements: [] });
   assert.deepEqual(renderDocument(document).warnings, [notice]);
 });
@@ -566,7 +566,7 @@ test('the HRI strip is excluded from the bar height, so 60 px with a caption war
 
 test('a long symbol needs 15% of its length even when 51 px is satisfied', () => {
   // 20 characters → 255 modules. A 550 px box gives 2 px modules: the drawn
-  // symbol is 510 px, so 15% is 76.5 px — above the 51 px floor.
+  // symbol is 510 px, so 15% is 76.5 px, above the 51 px floor.
   const value = 'ABCDEFGHIJKLMNOPQRST';
   const warnings = warningsOf(
     documentWith([createElement(ELEMENT_TYPES.BARCODE, { value, x: 0, y: 0, w: 550, h: 60, showText: false })], 200)
