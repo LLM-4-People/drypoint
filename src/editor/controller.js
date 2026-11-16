@@ -18,6 +18,7 @@ import {
 import { CONFIG } from '../core/config.js';
 import { clamp, createId, deepClone } from '../core/format.js';
 import { geometry } from '../core/geometry.js';
+import { IMAGE_SOURCE_LIMIT, imageSourceLimitMessage, imageSources } from '../label/images.js';
 
 export function createEditor({ document: initial, onChange = () => {}, onSelection = () => {} } = {}) {
   let document = validateDocument(initial ?? createDocument());
@@ -103,6 +104,24 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
     return true;
   }
 
+  /**
+   * Refuse a new distinct image source before insertion. The decode cache can
+   * hold only IMAGE_SOURCE_LIMIT bitmaps, so a seventeenth source could never
+   * be painted reliably; the print path refuses the same document. Reusing an
+   * existing source is always allowed.
+   */
+  function refuseImageSourceCap(element) {
+    if (element?.type !== ELEMENT_TYPES.IMAGE || !element.src) return false;
+    const sources = imageSources(document);
+    if (sources.includes(element.src) || sources.length < IMAGE_SOURCE_LIMIT) return false;
+    const notice = imageSourceLimitMessage(sources.length + 1, 'adding another image');
+    if (!document.notices?.includes(notice)) {
+      document = { ...document, notices: [...(document.notices ?? []), notice].slice(0, CONFIG.bounds.maxNotices) };
+      emit({ commit: false, keepNotices: true });
+    }
+    return true;
+  }
+
   function updateElement(id, patch, { coalesceKey = null, coalesceMs } = {}) {
     const current = find(id);
     if (!current) return null;
@@ -141,6 +160,7 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
     // grow a label past what the renderer and the warning pass can handle.
     if (refuseElementCap()) return null;
     const bounded = boundElementText(createElement(type, props));
+    if (refuseImageSourceCap(bounded.element)) return null;
     const element = clampElement(bounded.element, document);
     document = { ...document, elements: [...document.elements, element] };
     if (bounded.droppedSrc) {

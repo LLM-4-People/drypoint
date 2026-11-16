@@ -14,6 +14,7 @@ import {
   supportGate,
 } from '../src/device/capabilities.js';
 import { decodeCapabilities } from '../src/protocol/replies.js';
+import { geometry, mmToPx, resetGeometry, setGeometry } from '../src/core/geometry.js';
 import { CONFIG } from '../src/core/config.js';
 import { fromHex } from '../src/core/format.js';
 import { FIXTURE_SERIAL, ROLL_BARCODE } from './fixtures/captured-unit.mjs';
@@ -351,4 +352,30 @@ test('the support gate is the one owner of allowed, reason and kind', () => {
     assert.match(reason, /nothing was printed/, 'a sensor refusal never claims nothing was sent');
     assert.doesNotMatch(reason, /nothing was sent/);
   }
+});
+
+test('a reported dpi above 600 is absent, makes geometry a guess and blocks printing', (t) => {
+  t.after(resetGeometry);
+  const info = { deviceType: 0x0910, model: 'D110_M', modelSupport: 'confirmed', task: 'd110mv4' };
+  for (const dpi of [65535, 0, Number.NaN, 601]) {
+    const merged = mergeCapabilities({ capabilities: { dpi, headWidthPx: 96 }, heartbeat: { headWidthPx: 96 }, info });
+    assert.equal(merged.dpi, null, `${dpi} is not a resolution`);
+    assert.equal(merged.source.geometry, 'default', `${dpi}: geometry is not reported`);
+    assert.equal(printBlockReason(merged), CONFIG.device.printGate.guessedGeometry, `${dpi} blocks printing`);
+
+    setGeometry(merged);
+    assert.equal(geometry().dotsPerMm, CONFIG.geometry.dotsPerMm, `${dpi}: no hostile pitch reaches geometry`);
+    assert.equal(mmToPx(CONFIG.geometry.maxLengthMm), CONFIG.geometry.maxLengthMm * CONFIG.geometry.dotsPerMm);
+  }
+  resetGeometry();
+
+  for (const dpi of [600, 203]) {
+    const merged = mergeCapabilities({ capabilities: { dpi, headWidthPx: 96 }, heartbeat: { headWidthPx: 96 }, info });
+    assert.equal(merged.dpi, dpi, `${dpi} is usable`);
+    assert.equal(merged.source.geometry, 'reported');
+    assert.equal(printBlockReason(merged), null);
+    setGeometry(merged);
+    assert.ok(Math.abs(geometry().dotsPerMm - dpi / 25.4) < 1e-9);
+  }
+  resetGeometry();
 });

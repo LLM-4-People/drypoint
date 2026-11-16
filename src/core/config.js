@@ -4,6 +4,7 @@
  */
 
 import { BRAND } from './brand.js';
+import { APP_VERSION } from './version.js';
 
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -19,11 +20,21 @@ function deepFreeze(value) {
  */
 const THRESHOLD = Object.freeze({ min: 5, max: 95, step: 5, default: 55 });
 
+/**
+ * One image-source cap, and the file size that can still fit inside it after
+ * base64 expansion (4 chars per 3 bytes) plus the `data:<type>;base64,` prefix.
+ * A file is refused at `file.size` before it is read, so an over-size pick
+ * never becomes a 67 MB string or a full bitmap.
+ */
+const MAX_SRC_CHARS = 4_000_000;
+const DATA_URL_PREFIX_CHARS = 128;
+const MAX_IMAGE_FILE_BYTES = Math.floor(((MAX_SRC_CHARS - DATA_URL_PREFIX_CHARS) * 3) / 4);
+
 export const CONFIG = deepFreeze({
   app: {
     id: BRAND.slug,
     name: BRAND.name,
-    version: '1.0.0',
+    version: APP_VERSION,
     storagePrefix: BRAND.storagePrefix,
     documentVersion: 4,
   },
@@ -40,6 +51,12 @@ export const CONFIG = deepFreeze({
      * and with no usable report the print gate treats the head as a guess.
      */
     maxHeadWidthPx: 1024,
+    /**
+     * A reported resolution above this is hostile or misparsed. It becomes
+     * absent instead of a pitch: 65535 dpi would otherwise turn a 200 mm label
+     * into a 516k-row raster and a huge canvas allocation.
+     */
+    maxDpi: 600,
     minLengthMm: 20,
     maxLengthMm: 200,
     defaultLengthMm: 40,
@@ -213,6 +230,12 @@ export const CONFIG = deepFreeze({
 
   history: {
     maxEntries: 80,
+    /**
+     * Retained snapshot budget. Snapshots hold whole documents, and an image
+     * data URL can be most of a snapshot, so the entry count alone is not a
+     * memory bound: 80 copies of one 3.8 MB image is ~290 MiB.
+     */
+    maxBytes: 32 * 1024 * 1024,
   },
 
   /**
@@ -226,7 +249,7 @@ export const CONFIG = deepFreeze({
     maxValueChars: 2000,
     maxNameChars: 120,
     /** An image data URL longer than this is dropped, never truncated. */
-    maxSrcChars: 4_000_000,
+    maxSrcChars: MAX_SRC_CHARS,
     maxNotices: 50,
     maxNoticeChars: 300,
     /** Layout warnings collected before one "… and N more" line. */
@@ -238,6 +261,8 @@ export const CONFIG = deepFreeze({
   image: {
     /** Decoded bitmaps retained before the least recently used source is evicted. */
     cacheLimit: 16,
+    /** An image file larger than this cannot fit `bounds.maxSrcChars` as a data URL. */
+    maxFileBytes: MAX_IMAGE_FILE_BYTES,
   },
 
   diagnostics: {
