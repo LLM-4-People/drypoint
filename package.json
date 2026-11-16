@@ -47,5 +47,8 @@
     "verify": "npm run build:brand -- --check && npm run build:icons -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check",
     "test:unit": "node scripts/test-suites.mjs unit",
     "verify:all": "npm run verify && npm run test:browser"
+  },
+  "devDependencies": {
+    "yaml": "^2.9.1"
   }
 }

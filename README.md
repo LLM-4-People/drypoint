@@ -299,8 +299,9 @@ when its head width is unknown, the app uses the configured fallback (203 dpi,
 
 ## Development
 
-The app has **no dependencies at all** — only `node:` built-ins. There is no
-lockfile and no `npm install` step; `npm ci` does not apply. CI runs
+The app has **no npm runtime dependencies** — it ships only `node:` built-ins.
+One dev-only dependency is installed from a tracked `package-lock.json` with
+`npm ci`; the app itself needs no install to run. CI runs `npm ci` before
 `npm run test:unit`, `npm run test:browser` and the Android build, then proves
 the tree is clean.
 
