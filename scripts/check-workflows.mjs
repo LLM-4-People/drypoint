@@ -50,7 +50,6 @@ export const PINNED_ACTIONS = Object.freeze({
   'ossf/scorecard-action': 'fa7117db83c52d787ae5a89f350999701505d78e',
   'actions/stale': '4391f3da665fdf50b6810c1a66712fb9ba21aa93',
   'actions/github-script': '3a2844b7e9c422d3c10d287c895573f7108da1b3',
-  'raven-actions/actionlint': '3d39aea434753780c3b3d4a1a31c854b4dbf49d7',
 });
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -250,27 +249,76 @@ export function needsOf(jobBlock) {
 }
 
 /**
- * The `needs:` entries a job never reads.
+ * Split one shell command into the simple commands joined by `&&`, `||`, `;`
+ * or `|`. Quotes and backslash escapes are respected, so a separator inside a
+ * quoted argument is not a command boundary.
  *
- * `toJSON(needs)` hands the whole map to the step, so it covers every leg by
- * construction. An explicit map names each one, and a leg added to `needs`
- * without being named there is silently ignored: the aggregate job would go
- * green while its result was never inspected. That is the drift this finds.
- *
- * @param {string} jobBlock
- * @returns {string[]} the declared legs with no reference in the block
+ * @param {string} command
+ * @returns {string[]}
  */
-export function uninspectedNeeds(jobBlock) {
-  const needs = needsOf(jobBlock);
-  if (!needs.length) return [];
-  if (/toJSON\(\s*needs\s*\)/.test(jobBlock)) return [];
-  return needs.filter((name) => {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return !(
-      new RegExp(`needs\\.${escaped}\\b`).test(jobBlock) ||
-      new RegExp(`['"]${escaped}['"]\\s*:`).test(jobBlock)
-    );
-  });
+export function splitShellCommands(command) {
+  const parts = [];
+  let current = '';
+  let quote = null;
+  const text = String(command);
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (quote) {
+      current += character;
+      if (character === '\\' && quote === '"' && index + 1 < text.length) {
+        current += text[++index];
+        continue;
+      }
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === '\\' && index + 1 < text.length) {
+      current += character + text[++index];
+      continue;
+    }
+    const pair = text.slice(index, index + 2);
+    if (character === ';' || character === '|' || pair === '&&' || pair === '||') {
+      if (current.trim()) parts.push(current.trim());
+      current = '';
+      if (pair === '&&' || pair === '||') index++;
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+/**
+ * The logical shell commands in a workflow's run blocks.
+ *
+ * A backslash continuation joins the next physical line before the command is
+ * examined. `run: |` bodies otherwise arrive one line at a time, which made
+ * `--verify-tag` on a line of its own look present even when it was not part
+ * of the `gh release create` invocation.
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function shellCommands(text) {
+  const commands = [];
+  let pending = '';
+  for (const line of commandLines(text)) {
+    pending = pending ? `${pending} ${line.trim()}` : line.trim();
+    if (pending.endsWith('\\')) {
+      pending = pending.slice(0, -1).trimEnd();
+      continue;
+    }
+    commands.push(...splitShellCommands(pending));
+    pending = '';
+  }
+  if (pending) commands.push(...splitShellCommands(pending));
+  return commands;
 }
 
 /**
@@ -301,9 +349,34 @@ export function checkWorkflow(text, { file = 'workflow' } = {}) {
     }
   }
 
-  if (!/^permissions\s*:/m.test(source)) findings.push(`${file}: no top-level permissions block`);
-  if (/^permissions\s*:\s*(?:write-all|read-all)\s*$/m.test(source)) {
-    findings.push(`${file}: permissions are declared per scope, never write-all/read-all`);
+  // A job-level `permissions:` overrides the workflow default, and quotes are
+  // valid YAML around a scalar or a key. All three forms grant exactly the
+  // same authority as the bare top-level token, so every declaration is
+  // checked.
+  const permissionKey = /^(\s*)(?:['"])?permissions(?:['"])?\s*:\s*(.*)$/;
+  const declarations = lines
+    .map((line, index) => ({ line, index, match: permissionKey.exec(line) }))
+    .filter((entry) => entry.match);
+  if (!declarations.some((entry) => entry.match[1] === '')) {
+    findings.push(`${file}: no top-level permissions block`);
+  }
+  for (const { index, match } of declarations) {
+    // The scalar may sit after the colon or on the next indented line
+    // (`permissions:` newline `  "write-all"`); both are the same grant.
+    let value = match[2].trim();
+    if (!value) {
+      for (let next = index + 1; next < lines.length; next++) {
+        if (!lines[next].trim()) continue;
+        const indent = lines[next].length - lines[next].trimStart().length;
+        if (indent <= match[1].length) break;
+        value = lines[next].trim();
+        break;
+      }
+    }
+    value = value.replace(/^(['"])(.*)\1$/, '$2');
+    if (value === 'write-all' || value === 'read-all') {
+      findings.push(`${file}: line ${index + 1}: permissions are declared per scope, never write-all/read-all`);
+    }
   }
   if (!/^concurrency\s*:/m.test(source)) findings.push(`${file}: no top-level concurrency block`);
   if (/pull_request_target/.test(source)) findings.push(`${file}: pull_request_target is banned`);
@@ -314,11 +387,36 @@ export function checkWorkflow(text, { file = 'workflow' } = {}) {
     if (!/^\s{4}timeout-minutes\s*:\s*\d+\s*$/m.test(job.block)) {
       findings.push(`${file}: job "${job.name}" has no timeout-minutes`);
     }
-    // Only the aggregate gate exists to read its legs' results; an ordinary
-    // job's `needs:` is an ordering edge, not a result to inspect.
-    if (job.name !== AGGREGATE_JOB) continue;
-    for (const leg of uninspectedNeeds(job.block)) {
-      findings.push(`${file}: job "${job.name}" depends on "${leg}" but never inspects its result`);
+  }
+  const aggregate = jobs.find((job) => job.name === AGGREGATE_JOB);
+  if (aggregate) {
+    const needed = needsOf(aggregate.block);
+    for (const job of jobs) {
+      if (job.name !== AGGREGATE_JOB && !needed.includes(job.name)) {
+        findings.push(`${file}: job "${job.name}" is not listed in ${AGGREGATE_JOB}.needs`);
+      }
+    }
+    // The aggregate is only maintenance-free when it reads the whole needs map:
+    // an explicit map (or a needs.<job> read) has to be edited for every new
+    // leg and can silently omit one.
+    if (!/\$\{\{\s*toJSON\(\s*needs\s*\)\s*\}\}/.test(aggregate.block)) {
+      findings.push(`${file}: job "${AGGREGATE_JOB}" must derive its result from toJSON(needs)`);
+    } else {
+      const assignment = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\$\{\{\s*toJSON\(\s*needs\s*\)\s*\}\}/.exec(
+        aggregate.block
+      );
+      if (assignment) {
+        const name = assignment[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const reads = aggregate.block.match(new RegExp(`\\b${name}\\b`, 'g')) ?? [];
+        if (reads.length < 2) {
+          findings.push(
+            `${file}: job "${AGGREGATE_JOB}" assigns the toJSON(needs) result to "${assignment[1]}" but never reads it`
+          );
+        }
+      }
+    }
+    if (/needs\.[A-Za-z0-9_-]+/.test(aggregate.block)) {
+      findings.push(`${file}: job "${AGGREGATE_JOB}" hardcodes a leg name; use toJSON(needs)`);
     }
   }
 
@@ -348,8 +446,11 @@ export function checkReleaseWorkflow(text, { file = RELEASE_FILE } = {}) {
   for (const forbidden of ['branches:', 'pull_request:', 'pull_request_target:', 'workflow_dispatch:', 'schedule:']) {
     if (triggers.includes(forbidden)) findings.push(`${file}: the release must not trigger on ${forbidden.replace(':', '')}`);
   }
-  if (!commandLines(text).some((line) => /(?:^|\W)--verify-tag(?:$|\W)/.test(line))) {
-    findings.push(`${file}: the release must pass --verify-tag on a command line`);
+  const publishes = shellCommands(text).filter((command) => /(?:^|\s)gh\s+release\s+create(?:\s|$)/.test(command));
+  if (!publishes.length) {
+    findings.push(`${file}: no gh release create command found`);
+  } else if (!publishes.some((command) => /(?:^|\s)--verify-tag(?:\s|$)/.test(command))) {
+    findings.push(`${file}: the release must pass --verify-tag on the gh release create command itself`);
   }
   return findings;
 }

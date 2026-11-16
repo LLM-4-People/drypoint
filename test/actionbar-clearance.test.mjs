@@ -21,12 +21,17 @@ test('the toasts clear the measured action bar with a status line and insets', a
       const state = await cdp.evaluate('location.href + " | " + document.title + " | " + Boolean(document.querySelector("#status"))');
       assert.equal(state.endsWith('true'), true, `the app document is loaded: ${state}`);
       return cdp.evaluate(`(async () => {
-        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const status = document.querySelector('#status');
         status.textContent = 'Printer stopped acknowledging writes; the link is closed';
         const host = document.querySelector('#toasts');
         host.innerHTML = '<div class="toast" style="min-height:40px">Changes are not being saved</div>';
-        await wait(300);
+        // Measure after every animation settles, not at an arbitrary frame:
+        // the fixed 300 ms sleep failed 2/33 runs at the frame-0 value. A
+        // cancelled animation is already settled; its finished promise rejects
+        // with AbortError, which must not fail the measurement.
+        await Promise.all(
+          document.getAnimations().map((animation) => animation.finished.catch(() => {}))
+        );
         const barNode = document.querySelector('.actionbar');
         const bar = barNode.getBoundingClientRect();
         const toast = host.querySelector('.toast').getBoundingClientRect();

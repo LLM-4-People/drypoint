@@ -41,11 +41,13 @@ jobs:
         run: npm run privacy:check
       - name: Unit test suite (the browser suites have their own job)
         run: npm run test:unit
-      - name: Documentation and workflow policy
-        # Both are gates, so both run in the merge gate and not only in the
-        # path-filtered Docs workflow.
+      - name: Documentation, generated docs and workflow policy
+        # All three are gates, so all three run in the merge gate on every web
+        # leg. There is no separate path-filtered Docs workflow: a docs-only
+        # pull request gets the same checks here.
         run: |
           set -euo pipefail
+          node scripts/build-docs.mjs --check
           npm run docs:check
           npm run workflows:check
       - name: No tracked file changed

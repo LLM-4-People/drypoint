@@ -10,24 +10,36 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { renderManifest, writeManifest } from '../scripts/build-android.mjs';
+import brand from '../brand.json' with { type: 'json' };
 import { readProjectFile as read } from './helpers/project-files.mjs';
 
 test('the rendered manifest carries the exact version and no placeholder', () => {
   const template = read('android/AndroidManifest.template.xml');
-  const xml = renderManifest(template, { versionName: '2.0.0', versionCode: 20000 });
+  const xml = renderManifest(template, { versionName: '2.0.0', versionCode: 20000, packageName: 'dev.example.labels' });
 
   assert.doesNotMatch(xml, /@[A-Z][A-Z0-9_]*@/, 'nothing is left for the package manager to interpret');
+  assert.match(xml, /package="dev\.example\.labels"/, 'the package is rendered, not templated');
   assert.match(xml, /android:versionName="2\.0\.0"/);
   assert.match(xml, /android:versionCode="20000"/);
   assert.equal(xml.match(/android:versionName=/g)?.length, 1, 'one version, not a later override');
 });
 
 test('the renderer converts a numeric version code and rejects unknown placeholders', () => {
-  assert.match(renderManifest('<x code="@VERSION_CODE@"/>', { versionName: '1', versionCode: 7 }), /code="7"/);
+  assert.match(renderManifest('<x code="@VERSION_CODE@"/>', { versionName: '1', versionCode: 7, packageName: 'p' }), /code="7"/);
   assert.throws(
-    () => renderManifest('<manifest @FUTURE_FLAG@/>', { versionName: '1', versionCode: 1 }),
+    () => renderManifest('<manifest @FUTURE_FLAG@/>', { versionName: '1', versionCode: 1, packageName: 'p' }),
     /unresolved manifest placeholder: @FUTURE_FLAG@/
   );
+});
+
+test('the package comes from brand.json through the one renderer', () => {
+  const xml = renderManifest(read('android/AndroidManifest.template.xml'), {
+    versionName: '1.0.0',
+    versionCode: 10000,
+    packageName: brand.appId,
+  });
+  assert.match(xml, new RegExp(`package="${brand.appId.replace(/\./g, '\\.')}"`));
+  assert.equal((xml.match(/\.MainActivity/g) ?? []).length, 1, 'the activity name is still relative to the package');
 });
 
 test('the file the build writes is the rendered manifest, not a later edit', async (t) => {
@@ -42,16 +54,18 @@ test('the file the build writes is the rendered manifest, not a later edit', asy
     buildDir: join(directory, 'build'),
     versionName: '2.0.0',
     versionCode: 20000,
+    packageName: 'dev.example.labels',
   });
   const xml = await readFile(written, 'utf8');
   assert.match(xml, /android:versionName="2\.0\.0"/, 'the written file carries pkg.version');
   assert.match(xml, /android:versionCode="20000"/);
+  assert.match(xml, /package="dev\.example\.labels"/, 'the written file carries the caller package');
   assert.doesNotMatch(xml, /9\.9\.9/, 'no post-render replacement reached the file');
   assert.doesNotMatch(xml, /@[A-Z][A-Z0-9_]*@/);
 });
 
 test('the manifest declares the exact permission set and no component it does not need', () => {
-  const xml = renderManifest(read('android/AndroidManifest.template.xml'), { versionName: '1.0.0', versionCode: 10000 });
+  const xml = renderManifest(read('android/AndroidManifest.template.xml'), { versionName: '1.0.0', versionCode: 10000, packageName: brand.appId });
 
   const permissions = [...xml.matchAll(/<uses-permission\s+android:name="([^"]+)"/g)].map((match) => match[1]).sort();
   assert.deepEqual(permissions, [
@@ -76,7 +90,7 @@ test('the manifest declares the exact permission set and no component it does no
 });
 
 test('the app is not backed up anywhere', () => {
-  const xml = renderManifest(read('android/AndroidManifest.template.xml'), { versionName: '1.0.0', versionCode: 10000 });
+  const xml = renderManifest(read('android/AndroidManifest.template.xml'), { versionName: '1.0.0', versionCode: 10000, packageName: brand.appId });
   assert.match(xml, /android:allowBackup="false"/, 'no cloud or device-to-device copy of the labels or the BLE address');
   assert.doesNotMatch(xml, /android:allowBackup="true"/);
   assert.doesNotMatch(xml, /fullBackupContent|dataExtractionRules/, 'no backup rules are configured either');
@@ -84,10 +98,14 @@ test('the app is not backed up anywhere', () => {
 
 test('the build resolves the manifest through the one writer', () => {
   const build = read('scripts/build-android.mjs');
-  assert.match(build, /await writeManifest\(\{ androidDir, buildDir: staging, versionName: pkg\.version, versionCode \}\)/);
   assert.match(
     build,
-    /await writeFile\(output, renderManifest\(template, \{ versionName, versionCode \}\)\)/,
+    /await writeManifest\(\{\s*androidDir,\s*buildDir: staging,\s*versionName: pkg\.version,\s*versionCode,\s*packageName: brand\.appId,?\s*\}\)/,
+    'the build passes the brand package and the package version'
+  );
+  assert.match(
+    build,
+    /await writeFile\(output, renderManifest\(template, \{ versionName, versionCode, packageName \}\)\)/,
     'writeManifest is the only code that writes the manifest'
   );
   assert.equal((build.match(/await writeFile\(join\(buildDir, 'AndroidManifest\.xml'\)/g) ?? []).length, 0, 'main writes nothing itself');
@@ -95,4 +113,6 @@ test('the build resolves the manifest through the one writer', () => {
   // would be exactly the drift this test exists to catch.
   assert.equal((build.match(/@VERSION_NAME@/g) ?? []).length, 1);
   assert.equal((build.match(/@VERSION_CODE@/g) ?? []).length, 1);
+  assert.equal((build.match(/@PACKAGE@/g) ?? []).length, 1);
+  assert.match(read('android/AndroidManifest.template.xml'), /package="@PACKAGE@"/, 'the template has no second package owner');
 });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import brand from '../brand.json' with { type: 'json' };
 import { CONFIG } from '../src/core/config.js';
 import { SETTINGS_SCHEMA, printSettingsSnapshot } from '../src/core/settings.js';
 import { INFO_PROJECTION } from '../src/device/manager.js';
@@ -203,10 +204,27 @@ test('history compares documents through one function', () => {
 
 /* ---------------- README contracts ---------------- */
 
-test('every npm command documented in the README exists in package.json', () => {
-  const documented = new Set([...readme.matchAll(/^npm (?:run )?([\w:.-]+)/gm)].map((match) => match[1]));
-  for (const script of documented) assert.ok(pkg.scripts[script], `README documents npm script "${script}"`);
+test('the README command table is generated from package.json', () => {
+  const start = readme.indexOf('<!-- generated:scripts -->');
+  const end = readme.indexOf('<!-- /generated:scripts -->');
+  assert.ok(start >= 0 && end > start, 'the command table has its generated markers');
+
+  // The table is the generated block, so it lists the scripts exactly once and
+  // in the owner's order. docs-generated.test.mjs proves the bytes are current.
+  const block = readme.slice(start, end);
+  const documented = new Set([...block.matchAll(/^\| `npm (?:run )?([\w:.-]+)`/gm)].map((match) => match[1]));
   assert.deepEqual([...documented].sort(), Object.keys(pkg.scripts).sort(), 'every script is documented');
+
+  // Prose may name a script but not invent one. `npm install` and `npm ci` are
+  // package-manager commands, not package.json scripts, so only script-shaped
+  // invocations are considered.
+  const prose = readme.slice(0, start) + readme.slice(end);
+  for (const match of prose.matchAll(/npm run ([\w:.-]+)/g)) {
+    assert.ok(pkg.scripts[match[1]], `README names npm script "${match[1]}"`);
+  }
+  for (const match of prose.matchAll(/npm (start|stop|test)\b/g)) {
+    assert.ok(pkg.scripts[match[1]], `README names npm script "${match[1]}"`);
+  }
 });
 
 const SHORTCUT_EXPECTATIONS = Object.freeze({
@@ -464,8 +482,8 @@ test('ANDROID.md keeps the signing, asset and filename contracts', () => {
 
   assert.match(doc, /Changing the signing key costs one uninstall/);
   assert.match(doc, /different key/);
-  const packageName = read('android/AndroidManifest.template.xml').match(/package="([^"]+)"/)?.[1];
-  assert.ok(packageName, 'the manifest names the package');
+  const packageName = brand.appId;
+  assert.match(read('android/AndroidManifest.template.xml'), /package="@PACKAGE@"/, 'the template has no second package owner');
   assert.ok(doc.includes(`adb uninstall ${packageName}`), 'the documented uninstall command names the real package');
   assert.match(build, /const dir = join\(androidDir, 'keystore'\)/);
   assert.match(build, /const store = env\.ANDROID_KEYSTORE_FILE \|\| join\(directory, 'drypoint-release\.jks'\)/);

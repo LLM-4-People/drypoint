@@ -9,7 +9,13 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { partitionTests, testPaths } from '../scripts/test-suites.mjs';
+import {
+  browserConcurrency,
+  browserSuite,
+  partitionTests,
+  testCountOf,
+  testPaths,
+} from '../scripts/test-suites.mjs';
 
 test('every test file is in exactly one suite', () => {
   const { unit, browser, all } = partitionTests();
@@ -37,6 +43,28 @@ test('testPaths refuses an unknown suite and keeps unit free of Chromium', () =>
   assert.throws(() => testPaths('nope'), /unknown suite/);
   const unit = testPaths('unit');
   for (const file of unit) assert.equal(file.includes('browser'), false, `${file} does not need Chromium`);
+});
+
+test('the browser suite summary is the partition and the declared test counts', () => {
+  const { browser } = partitionTests();
+  const suite = browserSuite();
+  assert.deepEqual(suite.files.map((entry) => entry.file), browser, 'one entry per browser file, in order');
+  assert.equal(
+    suite.tests,
+    suite.files.reduce((total, entry) => total + entry.tests, 0),
+    'the total is the sum of the files, not a second count'
+  );
+  assert.ok(suite.tests > 0, 'the browser suite declares its tests');
+  assert.equal(testCountOf('actionbar-clearance.test.mjs'), 1, 'a simple suite file counts one top-level test');
+});
+
+test('browser concurrency defaults to two and accepts only a positive integer', () => {
+  assert.equal(browserConcurrency({}), 2);
+  assert.equal(browserConcurrency({ D110_BROWSER_CONCURRENCY: '' }), 2);
+  assert.equal(browserConcurrency({ D110_BROWSER_CONCURRENCY: '4' }), 4);
+  for (const value of ['0', '-1', '1.5', 'two']) {
+    assert.throws(() => browserConcurrency({ D110_BROWSER_CONCURRENCY: value }), /positive integer/);
+  }
 });
 
 test('a planted browser test is classified without editing a list', async (t) => {

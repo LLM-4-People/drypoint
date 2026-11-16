@@ -95,7 +95,9 @@ scripts/
   android-sdk.sh           the pinned SDK packages and licence handling both workflows use
   build-brand.mjs          brand.json + package.json → manifest, strings.xml, BRAND/version modules, icon
   build-android.mjs        APK pipeline: precache → aapt2 → javac → d8 → sign
+  build-docs.mjs           renders README/CONTRIBUTING marker blocks from their owners
   build-pages.mjs          Pages staging: runtime list + worker + 404 + .nojekyll + notices
+  check-apk.mjs            artifact check: assets/www, no INTERNET, allowBackup=false
   check-docs.mjs           Markdown and issue-template links, heading anchors and images
   check-privacy.mjs        the one deny list for the published tree
   check-workflows.mjs      pinned actions, permissions, timeouts, one aggregate gate
@@ -541,9 +543,11 @@ itself: `v<version>` on a commit in `main`.
    ```
 
 4. `.github/workflows/release.yml` runs on the tag only:
-   - `npm run verify:all` is the same gate a pull request passes — brand,
-     precache, privacy, unit tests, docs, workflow policy and the measured
-     browser suites — so a tag cannot publish a red commit;
+   - `npm run verify:all` covers brand, precache, privacy, unit tests, generated
+     docs, docs links, workflow policy and the measured browser suites. A pull
+     request also has the Android APK leg and the clean-tree checks, so the
+     release additionally runs the artifact check and those clean-tree steps;
+     a tag cannot publish a red commit;
    - `node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME"` fails unless the
      tag is exactly `v<package.json version>` and the changelog has that section;
    - `ANDROID_KEYSTORE_BASE64` is decoded into `$RUNNER_TEMP`, the password and
@@ -571,17 +575,23 @@ itself: `v<version>` on a commit in `main`.
 
 The Pages deployment is separate. `.github/workflows/pages.yml` runs when the
 `Checks` workflow completes successfully for `main` — never on a red run and
-never on a tag. It checks out `github.event.workflow_run.head_sha` (the commit
-that run validated, not whatever `main` points at now), stages `_site/` from
-`collectFiles()` plus `sw.js`, the generated `404.html`, `.nojekyll` and the
-notices, and then smoke-tests **every** URL in `assets/precache.js` plus `/`:
-`node scripts/smoke-pages.mjs` retries each one a bounded number of times,
-fails on any non-200, and requires the manifest to be served as
-`application/manifest+json`. `workflow_dispatch` still deploys a named commit
-by hand.
+never on a tag. The build and smoke jobs check out `main` and then assert that
+`git rev-parse HEAD` is exactly `github.event.workflow_run.head_sha`, the commit
+that run validated. If `main` moved, the assertion fails loudly instead of
+deploying the wrong commit; the newer Checks run deploys the newer commit. The
+site is staged from `collectFiles()` plus `sw.js`, the generated `404.html`,
+`.nojekyll` and the notices, then smoke-tests **every** URL in
+`assets/precache.js` plus `/`: `node scripts/smoke-pages.mjs` retries each one
+a bounded number of times, fails on any non-200, and requires the manifest to
+be served as `application/manifest+json`.
+
+`workflow_dispatch` is the deliberate operator override: it checks out the
+constant `refs/heads/main` and deploys the current `main` without a `Checks`
+run. It exists to recover a deployment, not to prove a commit.
 
 Every workflow pins each action to a commit SHA, declares explicit
 `permissions`, a `concurrency` group and a job `timeout-minutes`, and sets
 `persist-credentials: false` on every checkout. `npm run workflows:check`
-enforces that policy locally and in CI; `actionlint.yml` runs the pinned
-actionlint for the YAML and expression rules a script cannot see.
+enforces that policy locally and in CI; `actionlint.yml` downloads actionlint
+1.7.12 directly, verifies the archive's SHA-256 before extraction, and runs it
+for the YAML and expression rules a script cannot see.

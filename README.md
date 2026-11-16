@@ -264,15 +264,16 @@ when its head width is unknown, the app uses the configured fallback (203 dpi,
 ## Development
 
 The app has **no dependencies at all** — only `node:` built-ins. There is no
-lockfile and no `npm install` step; `npm ci` does not apply. CI runs `npm test`
-directly.
+lockfile and no `npm install` step; `npm ci` does not apply. CI runs
+`npm run test:unit`, `npm run test:browser` and the Android build, then proves
+the tree is clean.
 
 Requirements:
 
 - **Node.js 22 or newer** for the scripts and the test runner (`.node-version`
   pins the version the project develops on). `import.meta.dirname` needs
   20.11+, and the suite relies on the modern `node --test` glob runner.
-- **Chromium** for the three measured layout suites. The helper looks at
+- **Chromium** for the measured browser suites. The helper looks at
   `D110_CHROME`, then `CHROME_PATH`, then `google-chrome`/`chromium`/
   `chromium-browser` on `PATH`, then the Playwright browser cache. A missing
   browser skips those suites locally and **fails** them when `CI=true`.
@@ -283,23 +284,34 @@ Requirements:
 
 Commands:
 
-```bash
-npm start                        # dev server on http://127.0.0.1:8080
-npm stop                         # stop the server tracked for that port
-npm test                         # node --test "test/*.test.mjs"
-npm run test:unit                # every suite that does not need Chromium
-npm run test:browser             # the measured browser/layout suites
-npm run build                    # regenerate assets/precache.js and stamp sw.js
-npm run check:precache           # fail if the generated offline file is stale
-npm run build:brand -- --check   # fail if a generated brand file drifted
-npm run build:android            # sideloadable APK in android/build/
-npm run docs:check               # Markdown and issue-template links resolve
-npm run privacy:check            # no private host, home path, serial or foreign e-mail
-npm run workflows:check          # pinned actions, permissions, timeouts
-npm run pages:build              # stage the deployment in _site/
-npm run verify                   # brand + precache + privacy + unit tests + docs + workflows
-npm run verify:all               # verify, then the measured browser suites
-```
+The table is generated from `package.json`; edit the script there and run
+`npm run docs:generate`. The prose below the block explains the two gates.
+
+<!-- generated:scripts -->
+| Command | Runs |
+| --- | --- |
+| `npm start` | `node scripts/serve.mjs` |
+| `npm stop` | `node scripts/stop.mjs` |
+| `npm run build` | `node scripts/precache.mjs --write` |
+| `npm run check:precache` | `node scripts/precache.mjs --check` |
+| `npm run build:brand` | `node scripts/build-brand.mjs` |
+| `npm run build:android` | `node scripts/build-android.mjs` |
+| `npm run pages:build` | `node scripts/build-pages.mjs` |
+| `npm run docs:check` | `node scripts/check-docs.mjs` |
+| `npm run docs:generate` | `node scripts/build-docs.mjs --write` |
+| `npm run privacy:check` | `node scripts/check-privacy.mjs` |
+| `npm run workflows:check` | `node scripts/check-workflows.mjs` |
+| `npm test` | `node --test "test/*.test.mjs"` |
+| `npm run test:browser` | `node scripts/test-suites.mjs browser` |
+| `npm run verify` | `npm run build:brand -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
+| `npm run test:unit` | `node scripts/test-suites.mjs unit` |
+| `npm run verify:all` | `npm run verify && npm run test:browser` |
+<!-- /generated:scripts -->
+
+`npm run verify` is the **unit gate**: brand and precache drift, privacy, the
+unit suite, generated documentation and link checks, and workflow policy.
+`npm run verify:all` adds the measured browser suites. CI additionally builds
+and signs the APK and proves that the build left no tracked or untracked change.
 
 `npm start` serves the app with Node's standard library only; there is nothing
 to install. It binds to `127.0.0.1` and serves only the app surface — the files

@@ -295,17 +295,18 @@ export async function publishApkPair({
 }
 
 /**
- * Fill the Android manifest template. This is the only place the version
- * placeholders are resolved, and the result is checked: a template that gains a
- * placeholder the builder does not know fails the build instead of shipping a
- * literal version placeholder to the package manager.
+ * Fill the Android manifest template. This is the only place the brand package
+ * and version placeholders are resolved, and the result is checked: a template
+ * that gains a placeholder the builder does not know fails the build instead of
+ * shipping a literal placeholder to the package manager.
  *
  * @param {string} template the checked-in AndroidManifest.template.xml
- * @param {{versionName:string, versionCode:number}} version
+ * @param {{versionName:string, versionCode:number, packageName:string}} values
  * @returns {string} the rendered AndroidManifest.xml
  */
-export function renderManifest(template, { versionName, versionCode }) {
+export function renderManifest(template, { versionName, versionCode, packageName }) {
   const rendered = template
+    .replaceAll('@PACKAGE@', String(packageName))
     .replaceAll('@VERSION_NAME@', String(versionName))
     .replaceAll('@VERSION_CODE@', String(versionCode));
   const unresolved = rendered.match(/@[A-Z][A-Z0-9_]*@/g);
@@ -320,13 +321,13 @@ export function renderManifest(template, { versionName, versionCode }) {
  * the renderer's output: a second replacement in `main()` cannot disagree with
  * what the tests verify.
  *
- * @param {{androidDir: string, buildDir: string, versionName: string, versionCode: number}} options
+ * @param {{androidDir: string, buildDir: string, versionName: string, versionCode: number, packageName: string}} options
  * @returns {Promise<string>} the written file
  */
-export async function writeManifest({ androidDir, buildDir, versionName, versionCode }) {
+export async function writeManifest({ androidDir, buildDir, versionName, versionCode, packageName }) {
   const template = await readFile(join(androidDir, 'AndroidManifest.template.xml'), 'utf8');
   const output = join(buildDir, 'AndroidManifest.xml');
-  await writeFile(output, renderManifest(template, { versionName, versionCode }));
+  await writeFile(output, renderManifest(template, { versionName, versionCode, packageName }));
   return output;
 }
 
@@ -660,7 +661,13 @@ async function main() {
     await syncAssets(manifest, assetsRoot);
     await syncResources(staging);
 
-    const manifestPath = await writeManifest({ androidDir, buildDir: staging, versionName: pkg.version, versionCode });
+    const manifestPath = await writeManifest({
+      androidDir,
+      buildDir: staging,
+      versionName: pkg.version,
+      versionCode,
+      packageName: brand.appId,
+    });
     const minSdkVersion = minSdkVersionOf(await readFile(manifestPath, 'utf8'));
 
     run(

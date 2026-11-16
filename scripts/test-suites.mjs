@@ -39,6 +39,40 @@ export function partitionTests(directory = join(ROOT, 'test')) {
   return { unit, browser, all: names };
 }
 
+/** Count the top-level `test(...)` declarations in one suite file. */
+export function testCountOf(file, directory = join(ROOT, 'test')) {
+  const source = readFileSync(join(directory, file), 'utf8');
+  return (source.match(/^test\(/gm) ?? []).length;
+}
+
+/**
+ * The browser files and their declared test count. `--list` and the generated
+ * CONTRIBUTING block read this one summary; neither keeps a second list.
+ */
+export function browserSuite(directory = join(ROOT, 'test')) {
+  const { browser } = partitionTests(directory);
+  const files = browser.map((file) => ({ file, tests: testCountOf(file, directory) }));
+  return { files, tests: files.reduce((total, entry) => total + entry.tests, 0) };
+}
+
+/**
+ * How many browser test files Node runs at once. Chromium is the expensive
+ * resource; five parallel browsers on a two-core CI runner caused start-up
+ * timeouts and flaky measured values. Unit tests keep Node's own default.
+ *
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {number}
+ */
+export function browserConcurrency(env = process.env) {
+  const raw = env.D110_BROWSER_CONCURRENCY;
+  if (raw === undefined || raw === '') return 2;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('D110_BROWSER_CONCURRENCY must be a positive integer');
+  }
+  return value;
+}
+
 /** @param {'unit'|'browser'|'all'} kind */
 export function testPaths(kind) {
   const { unit, browser, all } = partitionTests();
@@ -54,22 +88,28 @@ export function testPaths(kind) {
 function main(argv) {
   const kind = argv[0];
   if (kind === '--list') {
-    const { unit, browser } = partitionTests();
+    const { unit } = partitionTests();
+    const suite = browserSuite();
     console.log(`unit (${unit.length}): ${unit.join(' ')}`);
-    console.log(`browser (${browser.length}): ${browser.join(' ')}`);
+    console.log(
+      `browser (${suite.files.length} files, ${suite.tests} tests): ` +
+        suite.files.map((entry) => `${entry.file} (${entry.tests})`).join(' ')
+    );
     return 0;
   }
   let paths;
+  let concurrency;
   try {
     paths = testPaths(kind);
+    if (kind === 'browser') concurrency = browserConcurrency();
   } catch (error) {
     console.error(`tests: ${error.message}`);
     return 2;
   }
-  const result = spawnSync(process.execPath, ['--test', ...paths.map((path) => join('test', path))], {
-    cwd: ROOT,
-    stdio: 'inherit',
-  });
+  const args = ['--test'];
+  if (concurrency) args.push(`--test-concurrency=${concurrency}`);
+  args.push(...paths.map((path) => join('test', path)));
+  const result = spawnSync(process.execPath, args, { cwd: ROOT, stdio: 'inherit' });
   return result.status ?? 1;
 }
 
