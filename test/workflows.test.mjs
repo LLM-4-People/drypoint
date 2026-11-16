@@ -493,32 +493,49 @@ test('the release build proves a clean unsigned tree and the sign job proves the
   assert.doesNotMatch(release, /command -v google-chrome/);
 });
 
-test('every required leg runs on pull requests, main and tags', async () => {
+test('the policy job runs on pull requests, main and tags, and every leg runs on a tag', async () => {
   const checksText = await readFile(join(projectRoot, WORKFLOW_DIR, 'checks.yml'), 'utf8');
   const parsed = parseWorkflow(checksText).workflow;
   assert.ok(parsed.on.push.tags.includes('v*'), 'Checks runs for a tag');
   assert.ok(parsed.on.push.branches.includes('main'), 'Checks runs for main');
   assert.ok(Object.hasOwn(parsed.on, 'pull_request'), 'Checks runs for pull requests');
-  assert.deepEqual(jobNames(parsed), ['web', 'browser', 'android', 'required']);
-  assert.deepEqual(parsed.jobs.required.needs, ['web', 'browser', 'android']);
+  const policy = parsed.jobs.policy;
+  assert.equal(policy.if, undefined, 'the policy job has no event filter');
+  assert.deepEqual(jobNames(parsed), ['web', 'browser', 'android', 'policy', 'required']);
+  assert.deepEqual(parsed.jobs.required.needs, ['web', 'browser', 'android', 'policy']);
   for (const name of parsed.jobs.required.needs) {
     const leg = parsed.jobs[name];
     assert.ok(leg, `${name} exists`);
+    if (name === 'required') continue;
     assert.equal(leg.if, undefined, `${name} has no event filter that would skip a tag`);
+  }
+  // The only conditions in policy select which tree is data: PR or push. A tag
+  // is a push, so the gate step still runs.
+  const conditions = policy.steps.filter((step) => step.if != null).map((step) => step.if);
+  assert.deepEqual(conditions.sort(), ["github.event_name == 'pull_request'", "github.event_name == 'push'"]);
+  const gate = policy.steps.find((step) => String(step.run ?? '').includes('check-workflows.mjs --workflows'));
+  assert.ok(gate, 'the gate step exists');
+  assert.equal(gate.if, undefined, 'the gate step is not conditional');
+  assert.match(gate.env.PR_TREE, /github\.event_name == 'push'/, 'a push (including a tag) parses the pushed tree');
+
+  // The trusted copies: required and policy both check out main, never the PR.
+  for (const name of ['required', 'policy']) {
+    const checkout = parsed.jobs[name].steps.find((step) => String(step.uses ?? '').startsWith('actions/checkout@'));
+    assert.equal(checkout.with.ref, 'main', `${name} runs main's scripts`);
+    assert.equal(checkout.with['persist-credentials'], false);
   }
   const required = parsed.jobs.required;
   assert.equal(required.if, 'always()');
-  const checkout = required.steps.find((step) => String(step.uses ?? '').startsWith('actions/checkout@'));
-  assert.equal(checkout.with.ref, undefined, 'A1 reads the candidate tree; A2 moves this to main');
-  assert.equal(checkout.with['persist-credentials'], false);
   const aggregate = required.steps.find((step) => String(step.run ?? '').includes('check-required.mjs'));
   assert.equal(aggregate.env.NEEDS, '${{ toJSON(needs) }}');
 
-  const allSuccess = JSON.stringify({ web: { result: 'success' }, browser: { result: 'success' }, android: { result: 'success' } });
+  // The aggregate passes when every leg (including policy) succeeds, whatever
+  // the trigger; the script has no event knowledge by design.
+  const allSuccess = JSON.stringify({ web: { result: 'success' }, browser: { result: 'success' }, android: { result: 'success' }, policy: { result: 'success' } });
   const run = join(projectRoot, 'scripts', 'check-required.mjs');
   assert.equal(
     execFileSync(process.execPath, [run], { env: { ...process.env, NEEDS: allSuccess }, encoding: 'utf8', stdio: 'pipe' }).trim(),
-    'required: web, browser, android all succeeded'
+    'required: web, browser, android, policy all succeeded'
   );
 });
 
@@ -565,6 +582,7 @@ test('every planted bypass exits nonzero and the real tree passes', async (t) =>
     },
     echo: { 'checks.yml': checks.replace('run: npm run test:unit', 'run: echo "npm run test:unit"') },
     'no-op aggregate': { 'checks.yml': checks.replace('run: node scripts/check-required.mjs', 'run: exit 0') },
+    'policy skips tags': { 'checks.yml': checks.replace('  policy:\n', "  policy:\n    if: github.event_name == 'pull_request'\n") },
     'duplicate key': {
       'checks.yml': checks.replace('permissions:\n  contents: read', 'permissions:\n  contents: read\npermissions:\n  contents: read'),
     },

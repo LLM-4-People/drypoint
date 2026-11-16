@@ -44,9 +44,11 @@ jobs:
       - name: Unit test suite (the browser suites have their own job)
         run: npm run test:unit
       - name: Documentation, generated docs and workflow policy
-        # All three are gates, so all three run in the merge gate on every web
+        # All four are gates, so all four run in the merge gate on every web
         # leg. There is no separate path-filtered Docs workflow: a docs-only
-        # pull request gets the same checks here.
+        # pull request gets the same checks here. The trusted copy of the
+        # workflow policy runs in the `policy` job; this leg gives a pull
+        # request the same answer without waiting for it.
         run: |
           set -euo pipefail
           node scripts/build-docs.mjs --check
@@ -171,19 +173,68 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  policy:
+    name: policy (trusted gate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main (trusted policy scripts)
+        # The org rule runs this workflow from main, but a pull request can
+        # edit the scripts the steps would execute. The trusted copy comes
+        # from main; the pull request is inspected as data below.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Use the pinned Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Install the one dev-only dependency
+        run: npm ci
+      - name: Checkout the pull request as data
+        # Never executed: main's scripts read this tree. `path` is relative to
+        # the workspace, so the checkout lands beside the trusted tree.
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Checkout the pushed commit as data
+        # A branch or tag push is inspected as data too. On a tag this parses
+        # the tagged tree, not main; a weakened tag workflow is the known
+        # tag-source residual, and the release build holds no secret.
+        if: github.event_name == 'push'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: data
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Workflow policy and privacy on the candidate tree
+        env:
+          PR_TREE: ${{ github.event_name == 'pull_request' && format('{0}/pr', github.workspace) || github.event_name == 'push' && format('{0}/data', github.workspace) || github.workspace }}
+        run: |
+          set -euo pipefail
+          node scripts/check-workflows.mjs --workflows "$PR_TREE/.github/workflows"
+          node scripts/check-privacy.mjs --root "$PR_TREE"
+
   required:
     name: required
     if: always()
-    needs: [web, browser, android]
+    needs: [web, browser, android, policy]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Checkout
-        # The bootstrap aggregate reads the candidate tree. A2 moves this
-        # checkout to main so a pull request cannot replace the script that
-        # decides its own required check.
+      - name: Checkout main (trusted aggregate)
+        # A pull request can edit scripts/check-required.mjs. The aggregate
+        # that decides this check must be main's copy, not the candidate's.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           persist-credentials: false
           fetch-depth: 1
       - name: Every leg must have succeeded
