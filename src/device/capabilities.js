@@ -57,8 +57,10 @@ export function describeDeviceStatus(state = {}) {
   const status = CONNECTION_STATUSES.includes(state.status) ? state.status : 'idle';
   if (status === 'connected') {
     // A printer that never named its model is still a printer: naming a made-up
-    // model would be a fabricated fact in the header and the panel.
-    const model = state.capabilities?.model ?? 'Printer';
+    // model would be a fabricated fact in the header and the panel. A reported
+    // id outside the table is not a model name either: say "Unknown model".
+    const reportedModel = state.capabilities?.model;
+    const model = reportedModel === 'Unknown' ? 'Unknown model' : reportedModel ?? 'Printer';
     const serial = state.capabilities?.serial;
     const label = `${model}${serial ? ` · ${serial}` : ''}`;
     const transport = state.transportLabel ? ` · ${state.transportLabel}` : '';
@@ -295,29 +297,49 @@ export function autoShutdownOptions(capabilities) {
 }
 
 /**
- * Why a job must not start, or null when it may.
+ * The one support gate. It answers whether this app may operate the printer,
+ * and when it may not, why and which class of fact blocked it.
  *
- * The model gate is first: an unsupported model can never print, and an
+ * The model gate is first: an unsupported model can never be used, and an
  * unknown model or a guessed head width is not a basis for a raster. Sensors
- * and battery are only enforced when the printer actually reported them. The
- * whole function is defensive: a hostile capability object blocks, it never
- * throws.
+ * and battery are paper prerequisites, so they apply only when the caller asks
+ * for them (`requiresPaper`); configuration commands still need a model and
+ * real geometry. Sensors and battery are enforced only when the printer
+ * actually reported them. The whole function is defensive: a hostile
+ * capability object blocks, it never throws.
+ *
+ * @param {object|null|undefined} capabilities
+ * @param {{requiresPaper?: boolean}} [options]
+ * @returns {{allowed: boolean, reason: string|null, kind: 'model'|'geometry'|'sensor'|null}}
  */
-export function printBlockReason(capabilities) {
+export function supportGate(capabilities, { requiresPaper = true } = {}) {
+  const blocked = (reason, kind) => ({ allowed: false, reason, kind });
+  const allowed = { allowed: true, reason: null, kind: null };
   const support = capabilities?.modelSupport ?? 'unknown';
   if (support === 'unsupported') {
-    return `${capabilities?.model ?? 'This printer'} is not supported. ${CONFIG.device.printGate.unsupported}`;
+    return blocked(`${capabilities?.model ?? 'This printer'} is not supported. ${CONFIG.device.printGate.unsupported}`, 'model');
   }
-  if (!capabilities?.model || support === 'unknown') return CONFIG.device.printGate.unknownModel;
-  if (capabilities?.source?.geometry !== 'reported') return CONFIG.device.printGate.guessedGeometry;
+  if (!capabilities?.model || support === 'unknown') return blocked(CONFIG.device.printGate.unknownModel, 'model');
+  if (capabilities?.source?.geometry !== 'reported') return blocked(CONFIG.device.printGate.guessedGeometry, 'geometry');
+  if (!requiresPaper) return allowed;
   const sensors = capabilities?.sensors;
   if (sensors) {
-    if (!sensors.lidClosed) return 'Close the printer lid before printing';
-    if (!sensors.paperPresent) return 'Load a label roll before printing';
+    if (!sensors.lidClosed) return blocked('Close the printer lid before printing; nothing was printed.', 'sensor');
+    if (!sensors.paperPresent) return blocked('Load a label roll before printing; nothing was printed.', 'sensor');
   }
   const percent = capabilities?.battery?.percent;
   if (percent != null && percent <= CONFIG.device.battery.criticalPercent) {
-    return `Battery is too low to print (${percent}%)`;
+    return blocked(`Battery is too low to print (${percent}%); nothing was printed.`, 'sensor');
   }
-  return null;
+  return allowed;
+}
+
+/**
+ * Why a print job must not start, or null when it may.
+ *
+ * This stays the single print answer: it delegates to the one support gate and
+ * quotes its reason, so the manager, the flow and the buttons cannot drift.
+ */
+export function printBlockReason(capabilities) {
+  return supportGate(capabilities).reason;
 }

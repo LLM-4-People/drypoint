@@ -36,8 +36,8 @@ public place too. A maintainer may edit or redact a report that contains them.
 ## Supported models
 
 Only the D110_M is tested; the D11_H is experimental; every other known model is
-named and refused before a frame is sent. A request to support another model is
-welcome, but it needs evidence — see
+named and every write is refused before a frame is sent. A request to support
+another model is welcome, but it needs evidence — see
 [the support policy](docs/PRINTERS.md#how-to-propose-a-new-model). "It looks the
 same" is not evidence, because a wrong print sequence can jam a head.
 

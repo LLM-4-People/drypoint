@@ -16,9 +16,9 @@ hardware you already own; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 | Model | Status | What that means |
 | --- | --- | --- |
 | **D110_M** | Tested | The reference unit: discovery, the print sequence and every fact below were captured from and verified on retail hardware. |
-| **D11_H** | Experimental | Same protocol family, but the D110M V4 print sequence has not been verified on this model. The app asks for confirmation before it prints. |
-| Every other known NIIMBOT model | Not supported | The model is recognised and named, and the app refuses to send a frame. |
-| Any model the printer reports outside the table | Unknown | Printing stays disabled: the app never guesses a model. |
+| **D11_H** | Experimental | Same protocol family, but the D110M V4 print sequence has not been verified on this model. The app asks for confirmation before it prints or runs the self-test. |
+| Every other known NIIMBOT model | Not supported | The model is recognised and named; every command that writes to the printer is refused before a frame, while read-only diagnostics remain available. |
+| Any model the printer reports outside the table | Unknown | Every write stays disabled: the app never guesses a model. |
 
 The full table — ids, head widths, pitches, tape widths and what each model
 would need — is in [docs/PRINTERS.md](docs/PRINTERS.md).
@@ -84,14 +84,19 @@ view the app but cannot reach a printer.
   settings.
 - Diagnostics: paper-info and print-history replies (shown as raw bytes while
   their layout is unverified), log level, log viewer and JSON export.
-- Print is gated on a live connection, at least one element, a supported model
-  and a head width the printer actually reported: an unsupported model is named
-  and refused, an unknown model or a guessed head disables printing, and an
-  experimental model asks for confirmation before it prints. Lid, paper and
-  battery are checked from the job's own fresh heartbeat, and each applies only
-  when the printer reported it. If the printer reported sensors but the
-  heartbeat goes unanswered, the print is refused instead of assuming the
-  previous reading is still true.
+- Print also needs a live connection and at least one visible element. Every
+  command that writes to the printer — print, test print, self-test, feed,
+  reset, clock, density, tape type, auto power-off and sound — is gated on a
+  supplied model and a head width the printer actually reported. An
+  unsupported or unknown model or a guessed head writes no frame at all; reads
+  (identity, battery, sensors, roll and diagnostics) stay available. An
+  experimental model asks for confirmation before it prints or runs the
+  self-test. Lid, paper and battery are checked from the job's own fresh
+  heartbeat, and each applies only when the printer reported it. A sensor
+  refusal reads that heartbeat once, then stops without discovery and says
+  nothing was printed. If the printer reported sensors but the heartbeat goes
+  unanswered, the print is refused instead of assuming the previous reading is
+  still true.
 - Roll profiles: after a successful print the roll's RFID barcode remembers the
   label length and tape type, and reapplies them when that roll is seen again.
 

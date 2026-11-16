@@ -11,11 +11,11 @@ page with it, so an invented name or a mismatched state fails the build.
 | State | Behaviour |
 | --- | --- |
 | **Tested** | Discovery, the print sequence, sensors, battery and the roll tag were captured from and verified on retail hardware. |
-| **Experimental** | The model reports a known id and shares the protocol family, but the D110M V4 print sequence has not been verified on it. The app asks for confirmation before it prints. |
-| **Not supported** | The id is recognised and named, and the app refuses to send a frame. |
+| **Experimental** | The model reports a known id and shares the protocol family, but the D110M V4 print sequence has not been verified on it. The app asks for confirmation before it prints or runs the self-test. |
+| **Not supported** | The id is recognised and named; every command that writes to the printer is refused before a frame. Read-only diagnostics stay available. |
 
 A model id outside the table is **unknown**. The app never guesses a model, and
-printing stays disabled until the printer reports one it knows.
+every mutating command stays disabled until the printer reports one it knows.
 
 ## Support matrix
 
@@ -88,6 +88,7 @@ request that adds one should carry:
 5. The change in `src/protocol/models.js` plus this page, and a test that pins
    the new id.
 
-An unsupported id is not a bug. Refusing to print to a model whose task is
+An unsupported id is not a bug. Refusing every write to a model whose task is
 unknown is the safety property: a guessed sequence can feed the wrong rows to a
-head and produce an unreadable label or a jam.
+head and produce an unreadable label or a jam. Reads remain available so the
+operator and a report can still identify the printer.

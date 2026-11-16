@@ -11,6 +11,7 @@ import {
   emptyCapabilities,
   mergeCapabilities,
   printBlockReason,
+  supportGate,
 } from '../src/device/capabilities.js';
 import { decodeCapabilities } from '../src/protocol/replies.js';
 import { CONFIG } from '../src/core/config.js';
@@ -314,7 +315,40 @@ test('volatile readings are cleared when the link ends, identity and features st
 test('the battery gate blocks at the documented 15% boundary and allows 16%', () => {
   assert.equal(CONFIG.device.battery.criticalPercent, 15);
   const base = printable();
-  assert.equal(printBlockReason({ ...base, battery: { percent: 15 } }), 'Battery is too low to print (15%)');
+  assert.equal(printBlockReason({ ...base, battery: { percent: 15 } }), 'Battery is too low to print (15%); nothing was printed.');
   assert.equal(printBlockReason({ ...base, battery: { percent: 16 } }), null);
-  assert.equal(printBlockReason({ ...base, battery: { percent: 0 } }), 'Battery is too low to print (0%)');
+  assert.equal(printBlockReason({ ...base, battery: { percent: 0 } }), 'Battery is too low to print (0%); nothing was printed.');
+});
+
+test('the support gate is the one owner of allowed, reason and kind', () => {
+  const base = printable();
+  assert.deepEqual(supportGate(base), { allowed: true, reason: null, kind: null });
+  assert.deepEqual(supportGate(null), { allowed: false, reason: CONFIG.device.printGate.unknownModel, kind: 'model' });
+
+  const cases = [
+    ['unsupported model', printable({ info: { deviceType: 0x1000, model: 'B1', modelSupport: 'unsupported', task: 'd110mv4' } }), 'model'],
+    ['unknown model', { ...base, model: null, modelSupport: 'unknown' }, 'model'],
+    ['guessed head', { ...base, source: { ...base.source, geometry: 'default' } }, 'geometry'],
+    ['lid open', { ...base, sensors: { lidClosed: false, paperPresent: true } }, 'sensor'],
+    ['no paper', { ...base, sensors: { lidClosed: true, paperPresent: false } }, 'sensor'],
+    ['critical battery', { ...base, battery: { percent: 5 } }, 'sensor'],
+  ];
+  for (const [label, capabilities, kind] of cases) {
+    const gate = supportGate(capabilities);
+    assert.equal(gate.allowed, false, label);
+    assert.equal(gate.kind, kind, label);
+    assert.equal(typeof gate.reason, 'string', label);
+    assert.ok(gate.reason.length > 0, label);
+    assert.equal(printBlockReason(capabilities), gate.reason, `${label}: the print answer is the gate's reason`);
+  }
+
+  // A sensor prerequisite is scoped to paper-moving commands. A configuration
+  // write on a printer with the lid open is still model- and geometry-eligible.
+  const lidOpen = { ...base, sensors: { lidClosed: false, paperPresent: true } };
+  assert.deepEqual(supportGate(lidOpen, { requiresPaper: false }), { allowed: true, reason: null, kind: null });
+  assert.equal(printBlockReason(lidOpen), supportGate(lidOpen).reason, 'printing always asks for the paper prerequisites');
+  for (const reason of [supportGate(lidOpen).reason, supportGate({ ...base, battery: { percent: 5 } }).reason]) {
+    assert.match(reason, /nothing was printed/, 'a sensor refusal never claims nothing was sent');
+    assert.doesNotMatch(reason, /nothing was sent/);
+  }
 });

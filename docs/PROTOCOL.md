@@ -232,15 +232,21 @@ not a firmware guess:
 - **confirmed** — the D110M V4 sequence is verified on that hardware.
 - **experimental** — the sequence is offered, but the one pre-print confirmation
   says it is unverified on that model.
-- **not supported** — the model is named and refused before any frame is sent.
-- **unknown** — an id outside the table is `Unknown` and blocks printing.
+- **not supported** — the model is named and every mutating command is refused
+  before any frame is sent; reads stay available.
+- **unknown** — an id outside the table is `Unknown model` and blocks every
+  mutating command.
 
-`printBlockReason` runs at the print choke point and refuses, in order: an
-unsupported model (with its real name), an unknown or absent model, and a head
-width the printer did not report — including a malformed `0` or `65535` report,
-which never becomes geometry. An experimental model is allowed after the
-operator confirms. Lid, paper and battery checks follow and apply only when the
-printer reported them.
+`supportGate` runs at the write choke point for every mutating command and
+answers `{ allowed, reason, kind }`, where `kind` is `model`, `geometry` or
+`sensor`. `printBlockReason` stays the single print answer and delegates to it.
+The gate refuses, in order: an unsupported model (with its real name), an
+unknown or absent model, and a head width the printer did not report — including
+a malformed `0` or `65535` report, which never becomes geometry. An experimental
+model is allowed after the operator confirms. Lid, paper and battery checks
+follow for commands that move or print paper and apply only when the printer
+reported them; configuration writes such as the clock or density still need a
+supported model and real geometry, not a sensor reading.
 
 The print task is named by behaviour: the app implements the **D110M V4**
 sequence and never derives a task name from the protocol build number.
@@ -265,12 +271,15 @@ PrintEnd
 
 1. **HeartbeatAdvanced** and the first **PrintStatus** are optional probes: an
    unsupported reply or a timeout is swallowed. Every other step is mandatory.
-   The manager decides `printBlockReason` on the decoded heartbeat (lid, paper,
+   The manager decides the support gate on the decoded heartbeat (lid, paper,
    battery) *inside* the job lock, before `SetLabelType`; discovery-time
-   readings never gate a job. When the printer has reported sensors, an
-   unanswered job heartbeat refuses the job ("The printer did not report its
-   sensors; refusing to print") instead of falling back to the discovery-time
-   model: "no answer" is not "all clear".
+   readings never gate a job. A sensor refusal sends that one heartbeat frame,
+   stops, and runs no post-refusal discovery, so its message says nothing was
+   printed rather than nothing was sent. When the printer has reported sensors,
+   an unanswered job heartbeat refuses the job ("The printer did not report its
+   sensors, so nothing was printed.") instead of falling back to the
+   discovery-time model: "no answer" is not "all clear". A model or geometry
+   refusal is decided before the job lock, so it sends no frame at all.
 2. **PrintStart** carries the copy count and speed. After this point a failure
    or user cancel must send exactly one **CancelPrint** (`0xDA`).
 3. **SetPageSize** sends `rows = raster.height`, `cols = raster.width`,

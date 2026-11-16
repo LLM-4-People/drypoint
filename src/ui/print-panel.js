@@ -19,6 +19,7 @@ import {
   clampToRange,
   describeDeviceStatus,
   labelTypeName,
+  supportGate,
   CAPABILITY_GROUP_LABELS,
 } from '../device/capabilities.js';
 import { actionButton, group, isTextEntry, numberField, select, statRow, toggle } from './controls.js';
@@ -56,6 +57,8 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
   const fields = [];
   /** Controls that only work against a live printer. */
   let deviceOnly = [];
+  /** Controls whose activation writes to the printer, with their gate scope. */
+  let mutatingControls = [];
   /** Actions that work offline but not while a job or a connection owns the link. */
   let pendingOnly = [];
   let jobControls = [];
@@ -68,6 +71,12 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
   function register(control, getValue) {
     fields.push({ control, getValue, node: control.node });
     return control.node;
+  }
+
+  /** Put the refusal reason on the control the operator actually presses. */
+  function setControlTitle(control, title) {
+    const node = control.element ?? control.node.querySelector?.('button, input, select') ?? control.node;
+    node.title = title;
   }
 
   function batteryLabel() {
@@ -156,6 +165,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
     container.textContent = '';
     fields.length = 0;
     deviceOnly = [];
+    mutatingControls = [];
     pendingOnly = [];
     jobControls = [];
     soundControls = [];
@@ -199,11 +209,16 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
       register(statRow('Transport'), () => device.state.transportLabel ?? '—'),
       register(statRow('Model'), () => {
         const live = device.state.capabilities;
+        const id = live.deviceType ? ` · 0x${live.deviceType.toString(16).padStart(4, '0').toUpperCase()}` : '';
+        // An unrecognised model is not named "Unknown — unknown": that reads
+        // like a model and repeats the support state. Before discovery the
+        // row stays empty instead of claiming an unknown printer.
+        if (live.modelSupport === 'unknown') return `Unknown model${id}`;
         if (!live.model) return '—';
         // The support state is part of the truth: a resolved name alone would
         // suggest every named model can print.
         const support = live.modelSupport ? ` — ${supportLabel(live.modelSupport)}` : '';
-        return `${live.model}${support}${live.deviceType ? ` · 0x${live.deviceType.toString(16).padStart(4, '0').toUpperCase()}` : ''}`;
+        return `${live.model}${support}${id}`;
       }),
       register(statRow('Serial'), () => device.state.capabilities.serial ?? '—'),
       register(statRow('Firmware'), () => {
@@ -212,6 +227,11 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
       }),
       register(statRow('Protocol'), () => {
         const live = device.state.capabilities;
+        // Only a model this app may drive has a print task. An unsupported or
+        // unknown model must not display a capability it does not have.
+        if (live.modelSupport !== 'confirmed' && live.modelSupport !== 'experimental') {
+          return 'Print task not available for this model';
+        }
         // The job is the D110M V4 sequence by behaviour; a build number is
         // context, never a task name of its own.
         const task = taskName(live.task);
@@ -384,13 +404,10 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
           // Only a value the printer stores is pushed now; the rest travels in
           // the next job header.
           if (!definition.live || !device.connected) return;
-          device.pushSetting(definition.key, value).catch((error) =>
-            reportError(
-              `${definition.key} push failed`,
-              error,
-              `${definition.label} was not sent to the printer; the next print retries it.`
-            )
-          );
+          // The manager's refusal is the specific reason (unsupported model,
+          // guessed geometry, busy link); never replace it with a generic
+          // "the next print retries it" claim that the gate makes false.
+          device.pushSetting(definition.key, value).catch((error) => reportError(`${definition.key} push failed`, error));
         },
       });
       register(control, () => jobValue(definition, caps));
@@ -453,12 +470,19 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
       },
     });
 
+    const experimental = caps.modelSupport === 'experimental';
     const selfTest = actionButton('Self-test page', {
       onClick: async () => {
-        const confirmed = await confirm('Print the self-test page?', 'The printer prints its built-in test label. This uses paper.', {
-          confirmLabel: 'Print test',
-          tone: 'primary',
-        });
+        // The self-test prints paper too, so an experimental model gets the
+        // same explicit warning as a normal print, not only the paper prompt.
+        const experimentalText = experimental
+          ? `${caps.model ?? 'This printer'} — ${CONFIG.device.printGate.experimental}`
+          : null;
+        const confirmed = await confirm(
+          experimental ? 'Print the self-test page on an experimental model?' : 'Print the self-test page?',
+          [experimentalText, 'The printer prints its built-in test label. This uses paper.'].filter(Boolean).join('\n\n'),
+          { confirmLabel: 'Print test', tone: 'primary' }
+        );
         if (!confirmed) return;
         try {
           await device.testPage();
@@ -492,10 +516,12 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
               ? 'The printer did not report clock support; the command may be rejected'
               : '';
           deviceOnly.push(button);
+          mutatingControls.push({ control: button, requiresPaper: false });
           return button;
         })();
 
     deviceOnly.push(feed, selfTest);
+    mutatingControls.push({ control: feed, requiresPaper: true }, { control: selfTest, requiresPaper: true });
     return group('Maintenance', [feed.node, selfTest.node, clock.node]);
   }
 
@@ -520,6 +546,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
         },
       });
       register(shutdown, () => String(shutdownValue()));
+      mutatingControls.push({ control: shutdown, requiresPaper: false });
       settingsControls.push(shutdown.node);
     } else {
       settingsControls.push(statRow('Auto power-off', 'Not reported').node);
@@ -532,6 +559,10 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
       const soundBt = soundSwitch(SOUND_ITEMS.bluetooth, 'Bluetooth sound');
       const soundPower = soundSwitch(SOUND_ITEMS.power, 'Power sound');
       soundControls = [soundBt, soundPower];
+      mutatingControls.push(
+        { control: soundBt.control, requiresPaper: false },
+        { control: soundPower.control, requiresPaper: false }
+      );
       soundHint = el('div', { class: 'hint', id: 'soundHint' }, '');
       soundHint.hidden = true;
       settingsControls.push(soundBt.control.node, soundPower.control.node, soundHint);
@@ -750,6 +781,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
     });
 
     deviceOnly.push(paperInfo, history, capabilities, deviceInfo, reset);
+    mutatingControls.push({ control: reset, requiresPaper: false });
     return group('Device commands', [paperInfo.node, history.node, capabilities.node, deviceInfo.node, reset.node]);
   }
 
@@ -782,6 +814,10 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
     // panel's read state.
     const busy = Boolean(device.state.printing) || Boolean(device.state.readingInfo) || soundState === 'reading';
     const status = device.state.status;
+    // Configuration writes need a supported model with real geometry; a sensor
+    // reading only restricts commands that move or print paper.
+    const configGate = supportGate(device.state.capabilities, { requiresPaper: false });
+    const configBlocked = !configGate.allowed;
     for (const field of fields) {
       // Only a caret-owning control keeps its own value. A focused switch or
       // segmented control must still follow the model after an undo.
@@ -800,18 +836,30 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
       // An empty printer/schema intersection has no honest editable value: the
       // hint names the value the job will send, so the control stays disabled.
       const unsupported = definition.key === 'print.density' && densityBounds(definition, device.state.capabilities).unsupported;
-      control.setDisabled?.(unsupported || (Boolean(definition.live) && (!connected || busy)));
+      control.setDisabled?.(unsupported || (Boolean(definition.live) && (!connected || busy || configBlocked)));
+      if (definition.live) setControlTitle(control, configBlocked ? configGate.reason : '');
     }
-    shutdown?.setDisabled?.(!connected || busy);
+    shutdown?.setDisabled?.(!connected || busy || configBlocked);
+    if (shutdown) setControlTitle(shutdown, configBlocked ? configGate.reason : '');
     refreshButton?.setDisabled?.(!connected || busy);
     connectButton?.setDisabled?.(status === 'connecting' || busy);
     for (const control of pendingOnly) control.setDisabled?.(status === 'connecting' || busy);
     // Every live control (clock, feed, self-test, diagnostics, reset) is
     // registered in deviceOnly, which owns the connected-only gate.
     for (const control of deviceOnly) control.setDisabled?.(!connected || busy);
+    // Every mutating control additionally follows the one support gate before
+    // the operator can reach the manager. Reads stay enabled.
+    for (const { control, requiresPaper } of mutatingControls) {
+      const gate = supportGate(device.state.capabilities, { requiresPaper });
+      control.setDisabled?.(!connected || busy || !gate.allowed);
+      setControlTitle(control, gate.allowed ? '' : gate.reason);
+    }
     // A sound switch is only editable when the printer confirmed that one
     // switch; another switch's read says nothing about it.
-    for (const entry of soundControls) entry.control.setDisabled?.(!connected || busy || entry.state !== 'known');
+    for (const entry of soundControls) {
+      entry.control.setDisabled?.(!connected || busy || configBlocked || entry.state !== 'known');
+      setControlTitle(entry.control, configBlocked ? configGate.reason : '');
+    }
   }
 
   function render() {

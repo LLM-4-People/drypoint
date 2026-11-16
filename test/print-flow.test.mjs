@@ -441,30 +441,34 @@ test('a document inside the printer limits is not revalidated', async () => {
 
 test('one pure function owns the Print and Test button state', () => {
   const base = { printing: false, finishing: false, empty: false, offline: false, reading: false };
-  assert.deepEqual(printButtonState(base), { disabled: false, title: '', testDisabled: false, testTitle: '' });
+  assert.deepEqual(printButtonState(base), { disabled: false, title: '', testDisabled: false, testTitle: '', supportBlocked: '' });
   assert.deepEqual(printButtonState({ ...base, offline: true }), {
     disabled: true,
     title: 'Connect the printer to print',
     testDisabled: true,
     testTitle: 'Connect the printer first',
+    supportBlocked: '',
   });
   assert.deepEqual(printButtonState({ ...base, empty: true }), {
     disabled: true,
     title: 'Show at least one element before printing',
     testDisabled: false,
     testTitle: '',
+    supportBlocked: '',
   });
   assert.deepEqual(printButtonState({ ...base, reading: true }), {
     disabled: true,
     title: 'Wait for the device info read to finish',
     testDisabled: true,
     testTitle: 'Wait for the device info read to finish',
+    supportBlocked: '',
   });
   assert.deepEqual(printButtonState({ ...base, oversized: true }), {
     disabled: false,
     title: 'The label is larger than the printer; it will be shortened to fit',
     testDisabled: false,
     testTitle: '',
+    supportBlocked: '',
   });
   // A running job is the cancel control, whatever the document looks like.
   assert.deepEqual(printButtonState({ ...base, printing: true, empty: true, offline: true }), {
@@ -472,6 +476,7 @@ test('one pure function owns the Print and Test button state', () => {
     title: 'Cancel the running print',
     testDisabled: true,
     testTitle: '',
+    supportBlocked: '',
   });
   // Once the outcome is settled, even Cancel is gone.
   assert.deepEqual(printButtonState({ ...base, printing: true, finishing: true }), {
@@ -479,7 +484,22 @@ test('one pure function owns the Print and Test button state', () => {
     title: 'The printer is finishing; nothing can be cancelled',
     testDisabled: true,
     testTitle: '',
+    supportBlocked: '',
   });
+});
+
+test('the support gate disables both buttons only for model and geometry refusals', () => {
+  const base = { printing: false, finishing: false, empty: false, offline: false, reading: false };
+  const reason = 'B1 is not supported. This app prints 12 mm labels on the NIIMBOT D110 family; no frame was sent.';
+  for (const kind of ['model', 'geometry']) {
+    const state = printButtonState({ ...base, gate: { allowed: false, reason, kind } });
+    assert.deepEqual(state, { disabled: true, title: reason, testDisabled: true, testTitle: reason, supportBlocked: reason });
+  }
+  // A sensor refusal is a press-time message: the controls stay available.
+  const sensor = printButtonState({ ...base, gate: { allowed: false, reason: 'Close the printer lid before printing; nothing was printed.', kind: 'sensor' } });
+  assert.deepEqual(sensor, { disabled: false, title: '', testDisabled: false, testTitle: '', supportBlocked: '' });
+  // An allowed gate never adds a support claim.
+  assert.equal(printButtonState({ ...base, gate: { allowed: true, reason: null, kind: null } }).supportBlocked, '');
 });
 
 /* ---------------- a cancelled print (R5G-7) ---------------- */
