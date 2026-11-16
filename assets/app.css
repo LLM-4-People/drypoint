@@ -152,8 +152,58 @@ h3 {
      the content's min-content width (431px with 44px safe-area insets on a
      390px phone) and the clipped right edge cannot be scrolled back. */
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* top bar, the storage alert (zero height while hidden), workspace, action
+     bar. The alert row is explicitly named so adding it cannot move the
+     workspace into the flexible row. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   height: 100dvh;
+}
+
+/* ---------------- storage alert ---------------- */
+
+/* An unreadable stored label is kept, not replaced: the banner stays until the
+   operator exports the raw value or resets the label, and it is the one reason
+   the app refuses to save. */
+.storage-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--danger-border, var(--line-2));
+  background: color-mix(in srgb, var(--danger, #e5484d) 14%, var(--surface));
+  color: var(--text);
+}
+
+.storage-alert[hidden] {
+  display: none;
+}
+
+.storage-alert-text {
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.storage-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.storage-alert-actions button {
+  padding: 7px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.storage-alert-actions button:hover {
+  border-color: var(--accent);
 }
 
 /* ---------------- top bar ---------------- */

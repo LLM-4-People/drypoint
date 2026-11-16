@@ -5,7 +5,7 @@
 
 import { CONFIG, storageKey } from './core/config.js';
 import { geometry } from './core/geometry.js';
-import { $, on, el, downloadJson, captureFocus, restoreFocus, movePreservingFocus, setText } from './core/dom.js';
+import { $, on, el, downloadJson, downloadText, captureFocus, restoreFocus, movePreservingFocus, setText } from './core/dom.js';
 import { round1 } from './core/format.js';
 import { createLogger, setLogLevel, getLogEntries, exportLogReport } from './core/log.js';
 import { bootOfflineShell } from './core/precache-status.js';
@@ -27,11 +27,12 @@ import { reportDisconnect } from './ui/disconnect-report.js';
 import { openSettingsSheet } from './ui/settings-sheet.js';
 import { applyTheme as applyThemeSetting } from './ui/theme.js';
 import { createSaveFailureNotice } from './ui/save-failure.js';
+import { createStorageAlert } from './ui/storage-alert.js';
 import { createDeviceManager } from './device/manager.js';
 import { applyRollProfile } from './device/roll-profiles.js';
 import { describeDeviceStatus, labelTypeName, supportGate } from './device/capabilities.js';
 import { resolveRenderOptions } from './device/print-options.js';
-import { createDocument, createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, migrateDocument, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
+import { createDocument, createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, hydrateStoredDocument, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
 import { summariseWarnings } from './label/render.js';
 import { TEMPLATES, testDocument } from './label/templates.js';
 import { barcodeFitMessage, barcodeFrame } from './label/barcode.js';
@@ -79,17 +80,42 @@ const ui = {
 /** One owner of "the label is not being saved", shared by every failure. */
 const saveFailure = createSaveFailureNotice();
 /**
+ * The stored label could not be read: keep the raw text and refuse to write
+ * until the operator exports it or resets the label. Created before the store,
+ * because the store's load failure is what fills it.
+ */
+const storageAlert = createStorageAlert({
+  container: $('#storageAlert'),
+  textNode: $('#storageAlertText'),
+  exportButton: $('#storageExportRaw'),
+  resetButton: $('#storageReset'),
+  // The raw value is written exactly as storage held it: JSON.stringify would
+  // refuse to round-trip the truncation that made it unreadable.
+  exportRaw: (filename) => downloadText(filename, storageAlert.raw ?? '', 'application/json'),
+  onReset: () => {
+    // The operator answered: the current label replaces the unreadable value,
+    // as one write, now.
+    documentStore.replace(controller.documentForDisplay());
+    toast('The unreadable label was reset', { tone: 'ok' });
+  },
+  toast,
+});
+/**
  * The label is persisted raw (no version envelope) through the shared store:
  * one debounce, one failure channel, and a dirty flag that pagehide can trust.
  */
 const documentStore = createStore(createDocument(), {
   key: storageKey('document'),
   envelope: false,
-  hydrate: (data) => migrateDocument(data),
+  // Storage is a trust boundary: a value that is not a label is refused, and
+  // its raw text is quarantined instead of being replaced by a fresh label.
+  hydrate: (data) => hydrateStoredDocument(data),
   persistMs: CONFIG.ui.debounceMs,
-  onError: (error, phase) => {
+  // No write may overwrite a value the operator has not answered yet.
+  canPersist: () => !storageAlert.active,
+  onError: (error, phase, context) => {
     if (phase === 'persist') saveFailure.report(error);
-    else log.warn('stored label could not be read', { message: error.message });
+    else if (!storageAlert.capture(context?.raw ?? null, error)) log.warn('stored label could not be read', { message: error.message });
   },
   onPersist: saveFailure.clear,
 });

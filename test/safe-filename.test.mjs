@@ -101,7 +101,7 @@ test('BleBridge delegates the filename rule and the docs name the real caller', 
   assert.match(bridge, /SafeFileName\.isSafe\(name\)/);
 
   const doc = readProjectFile('docs/ANDROID.md');
-  assert.match(doc, /`src\/core\/dom\.js` \(`downloadJson`\) is the only `saveFile` caller/);
+  assert.match(doc, /`src\/core\/dom\.js` \(`downloadText`, which `downloadJson` wraps\) is the only\s+`saveFile` caller/);
   assert.match(doc, /Bluetooth connection failed \(status N\)/);
   assert.doesNotMatch(doc, /shows "Connect failed"/, 'the doc quotes a message the Java never emits');
 });

@@ -163,8 +163,9 @@ with the same key.
 ## Bridge contract
 
 `src/device/transports/android.js` owns the connection bridge;
-`src/core/dom.js` (`downloadJson`) is the only `saveFile` caller, used by the
-diagnostics and label exports. `BleBridge.java` is the only implementation. Both
+`src/core/dom.js` (`downloadText`, which `downloadJson` wraps) is the only
+`saveFile` caller, used by the diagnostics export, the label export and the raw
+copy of an unreadable stored label. `BleBridge.java` is the only implementation. Both
 sides own half of every rule, and neither guesses:
 
 | Concern | Web side | Java side |

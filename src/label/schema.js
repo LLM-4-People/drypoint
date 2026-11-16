@@ -522,6 +522,23 @@ function documentVersionOf(value) {
 }
 
 /**
+ * Hydrate a stored label.
+ *
+ * Storage is a trust boundary like an import: a value that is not a label
+ * document is refused with the shape owner's one message instead of being
+ * replaced by a fresh label. The caller keeps the raw text, so a corrupt stored
+ * value can be exported and reset explicitly rather than overwritten by the
+ * next keystroke.
+ *
+ * @param {unknown} value the parsed stored value
+ * @returns {object} a validated label document
+ */
+export function hydrateStoredDocument(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
+  return migrateDocument(value);
+}
+
+/**
  * v4 moved the model from portrait (96 wide) to landscape (length wide).
  * Portrait x runs along the print head and maps to landscape y, so with the
  * existing +270° rotation the position pair is x' = y, y' = headWidth - x - w.
