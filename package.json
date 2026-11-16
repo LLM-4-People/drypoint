@@ -41,7 +41,9 @@
     "privacy:check": "node scripts/check-privacy.mjs",
     "workflows:check": "node scripts/check-workflows.mjs",
     "test": "node --test \"test/*.test.mjs\"",
-    "test:browser": "node --test test/actionbar-clearance.test.mjs test/content-security.test.mjs test/layout-edges.test.mjs test/stage-hint.test.mjs test/toast-overlay.test.mjs",
-    "verify": "npm run build:brand -- --check && npm run check:precache && npm run privacy:check && npm test && npm run docs:check && npm run workflows:check"
+    "test:browser": "node scripts/test-suites.mjs browser",
+    "verify": "npm run build:brand -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && npm run docs:check && npm run workflows:check",
+    "test:unit": "node scripts/test-suites.mjs unit",
+    "verify:all": "npm run verify && npm run test:browser"
   }
 }

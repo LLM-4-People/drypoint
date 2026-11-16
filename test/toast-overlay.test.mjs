@@ -10,13 +10,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { delay, withPage } from './helpers/browser-page.mjs';
+import { openApp, withPage } from './helpers/browser-page.mjs';
 
 test('a toast raised from a dialog is painted above the dialog', async (t) => {
   await withPage(t, async ({ cdp, port }) => {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
-    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
-    await delay(1300);
+    await openApp(cdp, port);
 
     const state = await cdp.evaluate(`(async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

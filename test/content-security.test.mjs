@@ -12,7 +12,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { delay, withPage } from './helpers/browser-page.mjs';
+import { openApp, withPage } from './helpers/browser-page.mjs';
 
 /** Collected before the document parses, so no violation can be missed. */
 const LISTENER = `
@@ -29,8 +29,7 @@ const LISTENER = `
 test('the app boots with no Content-Security-Policy violation', async (t) => {
   await withPage(t, async ({ cdp, port }) => {
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: LISTENER });
-    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
-    await delay(1500);
+    await openApp(cdp, port);
 
     const booted = await cdp.evaluate(`(() => {
       const app = document.querySelector('#app');
@@ -59,8 +58,7 @@ test('the app boots with no Content-Security-Policy violation', async (t) => {
 test('the policy refuses a remote script', async (t) => {
   await withPage(t, async ({ cdp, port }) => {
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: LISTENER });
-    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
-    await delay(800);
+    await openApp(cdp, port);
 
     const blocked = await cdp.evaluate(`(async () => {
       const script = document.createElement('script');

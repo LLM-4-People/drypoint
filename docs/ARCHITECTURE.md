@@ -95,6 +95,7 @@ scripts/
   check-workflows.mjs      pinned actions, permissions, timeouts, one aggregate gate
   release-notes.mjs        tag ↔ package.json version, CHANGELOG section → notes
   smoke-pages.mjs          headless check that every precached URL answers 200
+  test-suites.mjs          splits unit and Chromium suites from the real imports
   lib/distribution.mjs     the licence and notices every distribution ships
   lib/js-scan.mjs          shared comment/string/template/regex lexer
   lib/server-state.mjs     pid file, liveness, command verification

@@ -215,6 +215,34 @@ async function connect(port, timeoutMs = 10000) {
 }
 
 /**
+ * Navigate to the served app and wait until the editor has actually mounted.
+ *
+ * A fixed delay after `Page.navigate` is a race: a cold, loaded CI runner can
+ * spend longer than the delay booting the module graph, and the test then
+ * inspects a half-built page. Readiness is the real contract every layout test
+ * depends on, so it lives here rather than in each test's sleep.
+ *
+ * @param {{send: Function, evaluate: Function}} cdp
+ * @param {number} port
+ * @param {{timeoutMs?: number}} [options]
+ */
+export async function openApp(cdp, port, { timeoutMs = 15000 } = {}) {
+  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await cdp.evaluate(`(() => ({
+      ready: document.readyState,
+      tools: document.querySelectorAll('#toolRail button').length,
+      title: document.title,
+    }))()`);
+    if (state?.ready === 'complete' && state.tools > 0) return state;
+    await delay(100);
+  }
+  const dump = await cdp.evaluate('document.body ? document.body.innerText.slice(0, 200) : ""');
+  throw new Error(`the editor did not mount within ${timeoutMs} ms (body: ${JSON.stringify(dump)})`);
+}
+
+/**
  * Run `body({ cdp, port })` against a fresh headless Chromium. Skips the test
  * when no Chromium binary is available.
  */

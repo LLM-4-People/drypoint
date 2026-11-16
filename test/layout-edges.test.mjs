@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { delay, withPage } from './helpers/browser-page.mjs';
+import { openApp, withPage } from './helpers/browser-page.mjs';
 
 const WIDTHS = [901, 1000, 1100];
 
@@ -17,8 +17,7 @@ test('the boot zoom fits the stage from 901 to 1100 px and the 360 px pill stays
     const measureStage = async (width) => {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile: false });
       await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 0, left: 0, bottom: 0, right: 0 } });
-      await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
-      await delay(1200);
+      await openApp(cdp, port);
       return cdp.evaluate(`(() => {
         const stage = document.querySelector('#stageScroll');
         const canvas = document.querySelector('#labelCanvas');
@@ -48,8 +47,7 @@ test('the boot zoom fits the stage from 901 to 1100 px and the 360 px pill stays
 
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 740, deviceScaleFactor: 1, mobile: true });
     await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 44, left: 44, bottom: 34, right: 44 } });
-    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
-    await delay(1200);
+    await openApp(cdp, port);
     const pill = await cdp.evaluate(`(() => {
       const button = document.querySelector('#deviceButton');
       const full = document.querySelector('#deviceLabel');

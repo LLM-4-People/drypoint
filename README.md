@@ -275,6 +275,7 @@ Commands:
 npm start                        # dev server on http://127.0.0.1:8080
 npm stop                         # stop the server tracked for that port
 npm test                         # node --test "test/*.test.mjs"
+npm run test:unit                # every suite that does not need Chromium
 npm run test:browser             # the measured browser/layout suites
 npm run build                    # regenerate assets/precache.js and stamp sw.js
 npm run check:precache           # fail if the generated offline file is stale
@@ -284,7 +285,8 @@ npm run docs:check               # Markdown links, anchors and images resolve
 npm run privacy:check            # no private host, path, serial or address
 npm run workflows:check          # pinned actions, permissions, timeouts
 npm run pages:build              # stage the deployment in _site/
-npm run verify                   # brand + precache + privacy + tests + docs + workflows
+npm run verify                   # brand + precache + privacy + unit tests + docs + workflows
+npm run verify:all               # verify, then the measured browser suites
 ```
 
 `npm start` serves the app with Node's standard library only; there is nothing

@@ -9,7 +9,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { delay, withPage } from './helpers/browser-page.mjs';
+import { delay, openApp, withPage } from './helpers/browser-page.mjs';
 
 test('the toasts clear the measured action bar with a status line and insets', async (t) => {
   await withPage(t, async ({ cdp, port }) => {
@@ -17,8 +17,7 @@ test('the toasts clear the measured action bar with a status line and insets', a
       await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
       const applied = await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets });
       assert.equal(applied.error, undefined, 'this Chromium supports safe-area emulation');
-      await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
-      await delay(1300);
+      await openApp(cdp, port);
       const state = await cdp.evaluate('location.href + " | " + document.title + " | " + Boolean(document.querySelector("#status"))');
       assert.equal(state.endsWith('true'), true, `the app document is loaded: ${state}`);
       return cdp.evaluate(`(async () => {
