@@ -19,6 +19,7 @@ import {
   signatureFindings,
   surfaceFindings,
 } from '../scripts/check-apk.mjs';
+import { versionCodeOf } from '../scripts/build-android.mjs';
 import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
 import { projectRoot } from './helpers/project-files.mjs';
 
@@ -107,7 +108,7 @@ test('the badging must carry the exact package, versionCode and versionName', ()
   const pkg = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'));
   assert.equal(expected.package, 'dev.llm4people.drypoint', 'the package comes from brand.json');
   assert.equal(expected.versionName, pkg.version, 'the version name comes from package.json');
-  assert.equal(expected.versionCode, 10000 + Number(pkg.version.split('.')[1]) * 10 + Number(pkg.version.split('.')[2]), 'the version code is the one formula');
+  assert.equal(expected.versionCode, versionCodeOf(pkg.version), 'the version code comes from its one owner');
   assert.deepEqual(badgingFindings(BADGING, expected), []);
   const cases = [
     ['versionCode 1', BADGING.replace(`versionCode='${expected.versionCode}'`, "versionCode='1'"), new RegExp(`versionCode ${expected.versionCode}`)],
