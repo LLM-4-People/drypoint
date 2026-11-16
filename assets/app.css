@@ -153,9 +153,16 @@ h3 {
      390px phone) and the clipped right edge cannot be scrolled back. */
   grid-template-columns: minmax(0, 1fr);
   /* top bar, the storage alert (zero height while hidden), workspace, action
-     bar. The alert row is explicitly named so adding it cannot move the
-     workspace into the flexible row. */
+     bar. Every region names its area: the alert is `display:none` while
+     hidden, so auto-placement would otherwise put the workspace in the alert's
+     row and the action bar in the flexible row. The named rows keep each
+     region in place whether the alert exists or not. */
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'topbar'
+    'alert'
+    'workspace'
+    'actionbar';
   height: 100dvh;
 }
 
@@ -165,6 +172,7 @@ h3 {
    operator exports the raw value or resets the label, and it is the one reason
    the app refuses to save. */
 .storage-alert {
+  grid-area: alert;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -209,6 +217,7 @@ h3 {
 /* ---------------- top bar ---------------- */
 
 .topbar {
+  grid-area: topbar;
   display: grid;
   grid-template-columns: 1fr minmax(0, 320px) 1fr;
   align-items: center;
@@ -395,6 +404,7 @@ h3 {
 /* ---------------- workspace ---------------- */
 
 .workspace {
+  grid-area: workspace;
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr) 344px;
   min-height: 0;
@@ -1196,6 +1206,7 @@ input[type="range"]::-webkit-slider-thumb {
 /* ---------------- action bar ---------------- */
 
 .actionbar {
+  grid-area: actionbar;
   position: relative;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 88%, transparent);

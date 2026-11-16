@@ -144,3 +144,83 @@ test('a throttled first load keeps cumulative layout shift under 0.1', async (t)
     );
   });
 });
+
+/**
+ * The four desktop regions, as the browser lays them out. `rows` is kept for
+ * the failure message; it is the fact that regressed.
+ */
+const desktopBoxes = () => `(() => {
+  const box = (selector) => {
+    const node = document.querySelector(selector);
+    const rect = node.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, height: rect.height };
+  };
+  const app = document.querySelector('.app');
+  return {
+    viewport: innerHeight,
+    rows: getComputedStyle(app).gridTemplateRows,
+    alert: { ...box('#storageAlert'), display: getComputedStyle(document.querySelector('#storageAlert')).display },
+    workspace: box('.workspace'),
+    actionbar: box('.actionbar'),
+    print: box('#printButton'),
+    scrollHeight: document.documentElement.scrollHeight,
+  };
+})()`;
+
+function assertDesktopLayout(state, label, { minWorkspace, alertVisible = false }) {
+  assert.equal(state.alert.display, alertVisible ? 'flex' : 'none', `${label}: alert visibility`);
+  assert.ok(state.actionbar.top < state.viewport - 1, `${label}: the action bar starts inside the viewport (rows ${state.rows})`);
+  assert.ok(
+    state.actionbar.height > 0 && state.actionbar.height < 120,
+    `${label}: the action bar is its content height (${state.actionbar.height}), not the 1fr remainder`
+  );
+  assert.ok(
+    Math.abs(state.workspace.bottom - state.actionbar.top) <= 1,
+    `${label}: the workspace ends where the action bar starts (workspace ${state.workspace.bottom}, bar ${state.actionbar.top})`
+  );
+  assert.ok(state.workspace.height > minWorkspace, `${label}: the workspace takes the flexible remainder (${state.workspace.height})`);
+  assert.ok(state.print.bottom <= state.viewport, `${label}: Print is inside the viewport (${state.print.bottom} <= ${state.viewport})`);
+  assert.ok(state.scrollHeight <= state.viewport, `${label}: no forced page scroll (${state.scrollHeight} > ${state.viewport})`);
+  if (alertVisible) {
+    assert.ok(state.alert.height > 0, `${label}: the alert row has a real height`);
+    assert.ok(
+      Math.abs(state.alert.bottom - state.workspace.top) <= 1,
+      `${label}: the alert sits between the header and the workspace (${state.alert.bottom} vs ${state.workspace.top})`
+    );
+  }
+}
+
+test('the desktop grid keeps the action bar out of the flexible row', async (t) => {
+  // The alert is display:none while hidden, so auto-placement used to put the
+  // workspace in row 2 and the action bar in the 1fr row: the workspace shrank
+  // to its content, Print fell below the viewport and the page scrolled. Each
+  // region names its grid area, so the rows survive the missing item.
+  await withPage(t, async ({ cdp, port }) => {
+    for (const [width, height, minWorkspace] of [[1280, 900, 300], [1280, 800, 200]]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await openApp(cdp, port);
+      const state = await cdp.evaluate(desktopBoxes());
+      assertDesktopLayout(state, `${width}x${height}`, { minWorkspace });
+    }
+
+    // The quarantine banner is visible: the same four regions, one more row
+    // with content, and no overflow.
+    await cdp.evaluate("localStorage.setItem('drypoint.document', '{\"version\":3,\"lengthMm\":40,\"elements\":\"nope\"}')");
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await openApp(cdp, port);
+    const alerted = await cdp.evaluate(desktopBoxes());
+    assert.equal(alerted.alert.display, 'flex', 'the seeded value shows the banner');
+    assertDesktopLayout(alerted, 'alert 1280x900', { minWorkspace: 200, alertVisible: true });
+
+    // Pre-paint: the same placement with the module graph blocked.
+    await cdp.evaluate("localStorage.removeItem('drypoint.document')");
+    await blockScripts(cdp);
+    for (const [width, height, minWorkspace] of [[1280, 900, 300], [1280, 800, 200]]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
+      await waitForLoad(cdp);
+      const state = await cdp.evaluate(desktopBoxes());
+      assertDesktopLayout(state, `${width}x${height} pre-paint`, { minWorkspace });
+    }
+  });
+});
