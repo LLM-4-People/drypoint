@@ -19,9 +19,20 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ROOT, listFiles } from './lib/tree.mjs';
+import { dashFindings, doubleDashFindings, titleCaseFindings } from './lib/prose.mjs';
 
 /** An absolute link into a branch's blob view; a rename or a branch rename breaks it. */
 const BLOB_LINK = /^https?:\/\/(?:www\.)?github\.com\/[^/\s]+\/[^/\s]+\/blob\/(?:main|master)\//i;
+
+/**
+ * Every text file the prose rules scan. A typographic dash has no syntax
+ * meaning in these files, so the rule can cover source comments and
+ * documentation alike.
+ */
+const TEXT_FILE = /\.(?:md|ya?ml|json|html|css|m?js|java|xml|txt|svg|webmanifest)$/i;
+
+/** The licence is legal text and is never rewritten by a style rule. */
+const PROSE_SKIP = new Set(['LICENSE']);
 
 /** Issue templates: GitHub renders their Markdown on the new-issue page. */
 const ISSUE_TEMPLATE_DIR = '.github/ISSUE_TEMPLATE/';
@@ -260,9 +271,16 @@ export async function checkDocs({ root = ROOT, files } = {}) {
   };
   const repository = await githubRepository(root);
   const findings = [];
+  // A typographic dash is never syntax: scan every published text file, not
+  // only the Markdown, so a source comment cannot reintroduce it.
+  for (const file of all.filter((entry) => TEXT_FILE.test(entry) && !PROSE_SKIP.has(entry))) {
+    findings.push(...dashFindings(file, await read(file)));
+  }
   let links = 0;
   for (const file of [...markdown, ...templates]) {
     const text = await read(file);
+    findings.push(...doubleDashFindings(file, text));
+    if (file.toLowerCase().endsWith('.md')) findings.push(...titleCaseFindings(file, text));
     for (const link of markdownLinks(text)) {
       links++;
       if (isIssueTemplate(file)) {

@@ -119,7 +119,8 @@ test('the Android manifest requests the BLE permissions the bridge checks', () =
 
 test('the Android build bundles the generated precache list, not a copied file list', () => {
   const script = read('scripts/build-android.mjs');
-  assert.match(script, /__PRECACHE/);
+  assert.match(script, /readManifest/, 'the builder reads the manifest through its owner');
+  assert.doesNotMatch(script, /__PRECACHE/, 'the builder keeps no parser of its own');
   assert.match(script, /'-A', assetsRoot/, 'aapt2 packages the fresh staged assets root');
   assert.doesNotMatch(script, /join\(appDir, 'assets'\)/, 'the source tree is never the package root');
   assert.match(script, /await withStaging\(androidDir, async \(staging\) => \{/, 'the build happens in a scratch directory that is always removed');

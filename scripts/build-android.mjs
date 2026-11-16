@@ -17,7 +17,6 @@ import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } f
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
 
 import brand from '../brand.json' with { type: 'json' };
 import { DISTRIBUTION_FILES, resolveDistributionFile } from './lib/distribution.mjs';
