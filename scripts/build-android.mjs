@@ -123,6 +123,18 @@ function run(command, args, label) {
   execFileSync(command, args, { stdio: 'inherit' });
 }
 
+/**
+ * Run one command with a payload on its standard input.
+ *
+ * Used where a path must reach a helper without appearing in its arguments: the
+ * command line stays a constant program, so nothing a build step derived from
+ * the tree becomes part of another process's argv.
+ */
+function runWithInput(command, args, input, label) {
+  process.stdout.write(`android: ${label}\n`);
+  execFileSync(command, args, { input, stdio: ['pipe', 'inherit', 'inherit'] });
+}
+
 async function readPrecache() {
   const source = await readFile(join(root, 'assets', 'precache.js'), 'utf8');
   const sandbox = { self: {} };
@@ -518,27 +530,32 @@ export const APK_ENTRY_DATE_TIME = Object.freeze([1980, 1, 1, 0, 0, 0]);
  * explicit `ZipInfo` instead: the same 1980-01-01 timestamp aapt2 gives every
  * entry it emits, the same compression and the same permission bits. Python's
  * `zipfile` is the only zip writer here because Node has none without a
- * dependency. What this cannot pin is documented in docs/ANDROID.md.
+ * dependency.
+ *
+ * The two paths travel over stdin, never on the command line: the invocation
+ * stays `python3 -c <fixed program>`, so no path a caller controls is part of
+ * the process arguments. What this cannot pin is documented in docs/ANDROID.md.
  */
 const DEX_ENTRY_SCRIPT = [
-  'import sys, zipfile',
-  'stamp = tuple(int(part) for part in sys.argv[3].split(","))',
-  'with zipfile.ZipFile(sys.argv[1], "a", zipfile.ZIP_DEFLATED) as archive:',
+  'import json, sys, zipfile',
+  'request = json.load(sys.stdin)',
+  'stamp = tuple(int(part) for part in request["dateTime"])',
+  'with zipfile.ZipFile(request["apk"], "a", zipfile.ZIP_DEFLATED) as archive:',
   '    info = zipfile.ZipInfo("classes.dex", stamp)',
   '    info.compress_type = zipfile.ZIP_DEFLATED',
   '    info.create_system = 0',
   '    info.external_attr = 0o644 << 16',
-  '    with open(sys.argv[2], "rb") as source, archive.open(info, "w") as entry:',
+  '    with open(request["dex"], "rb") as source, archive.open(info, "w") as entry:',
   '        for chunk in iter(lambda: source.read(65536), b""):',
   '            entry.write(chunk)',
 ].join('\n');
 
 /**
  * @param {{apk: string, dex: string, dateTime?: number[], exec?: Function}} options
- *   `exec(command, args)` runs the writer; the tests inject a recorder.
+ *   `exec(command, args, options)` runs the writer; the tests inject a recorder.
  */
-export function addDexEntry({ apk, dex, dateTime = APK_ENTRY_DATE_TIME, exec = (command, args) => run(command, args, 'adding classes.dex') }) {
-  exec('python3', ['-c', DEX_ENTRY_SCRIPT, apk, dex, dateTime.join(',')]);
+export function addDexEntry({ apk, dex, dateTime = APK_ENTRY_DATE_TIME, exec = runWithInput }) {
+  exec('python3', ['-c', DEX_ENTRY_SCRIPT], JSON.stringify({ apk, dex, dateTime: [...dateTime] }), 'adding classes.dex');
 }
 
 /**

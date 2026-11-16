@@ -26,6 +26,24 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: Only this repository's main branch may deploy
+        # `workflow_run` runs with the default branch's workflow file, so the
+        # check that decides what code is built must itself come from main.
+        # This refuses a run from a fork or from another branch before any
+        # checkout happens, which is the trust boundary the workflow relies on.
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            head_repo='${{ github.event.workflow_run.head_repository.full_name }}'
+            head_branch='${{ github.event.workflow_run.head_branch }}'
+            if [ "$head_repo" != "$GITHUB_REPOSITORY" ] || [ "$head_branch" != "main" ]; then
+              echo "::error::a Checks run from ${head_repo}:${head_branch} may not deploy this site"
+              exit 1
+            fi
+          elif [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::a manual deploy must name refs/heads/main, not ${GITHUB_REF}"
+            exit 1
+          fi
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,6 +79,23 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Nothing is checked out and no shell runs here: the only job holding
+      # `pages: write` executes one pinned action, so no code from any commit
+      # can run with that token.
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  smoke:
+    name: smoke
+    needs: [build, deploy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,16 +106,13 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
       - name: Smoke-test every precached file
         env:
           RUN_ID: ${{ github.run_id }}
+          BASE_URL: ${{ needs.deploy.outputs.page_url }}
         run: |
           set -euo pipefail
-          base="${{ steps.deployment.outputs.page_url }}"
-          if [ -z "$base" ]; then
+          if [ -z "$BASE_URL" ]; then
             echo "::error::the deployment page_url is empty"
             exit 1
           fi
@@ -88,4 +120,4 @@ jobs:
           # a deployment that forgets one file fails here instead of on a
           # phone. Each URL is retried a bounded number of times and the
           # manifest's content type is checked too.
-          node scripts/smoke-pages.mjs --base "$base" --cache-bust "$RUN_ID"
+          node scripts/smoke-pages.mjs --base "$BASE_URL" --cache-bust "$RUN_ID"

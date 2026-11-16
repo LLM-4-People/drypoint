@@ -414,19 +414,36 @@ test('pages deploys only a successful Checks run for the commit it validated', a
   // commit checked out is the run's own head SHA.
   assert.match(pages, /github\.event\.workflow_run\.conclusion == 'success'/, 'a red run cannot deploy');
   assert.match(pages, /if: github\.event_name == 'workflow_dispatch' \|\| github\.event\.workflow_run\.conclusion == 'success'/);
-  for (const job of ['build', 'deploy']) {
-    const block = jobsOf(pages).find((entry) => entry.name === job).block;
-    assert.match(block, /ref: \$\{\{ github\.event\.workflow_run\.head_sha \|\| github\.sha \}\}/, `${job} checks out the validated commit`);
-  }
   assert.match(pages, /workflow_dispatch:/, 'a manual deploy is still possible');
+  // The trust boundary: only this repository, only main, before any checkout.
+  assert.match(pages, /github\.event\.workflow_run\.head_repository\.full_name/, 'a fork run cannot deploy');
+  assert.match(pages, /"\$head_branch" != "main"/, 'another branch cannot deploy');
+  assert.match(pages, /"\$GITHUB_REF" != "refs\/heads\/main"/, 'a manual deploy must name main');
 
-  const deploy = jobsOf(pages).find((job) => job.name === 'deploy').block;
+  const jobs = jobsOf(pages);
+  assert.deepEqual(jobs.map((job) => job.name), ['build', 'deploy', 'smoke']);
+  for (const name of ['build', 'smoke']) {
+    assert.match(
+      jobs.find((job) => job.name === name).block,
+      /ref: \$\{\{ github\.event\.workflow_run\.head_sha \|\| github\.sha \}\}/,
+      `${name} checks out the validated commit`
+    );
+  }
+
+  const deploy = jobs.find((job) => job.name === 'deploy').block;
   assert.match(deploy, /pages: write/);
   assert.match(deploy, /id-token: write/);
   assert.match(deploy, /name: github-pages/);
+  // The only job with `pages: write` runs one pinned action: it checks out no
+  // code and runs no shell, so no commit's code can reach that token.
+  assert.doesNotMatch(deploy, /actions\/checkout@/, 'the privileged job checks nothing out');
+  assert.doesNotMatch(deploy, /^\s+run:/m, 'the privileged job runs no shell');
+  assert.equal((deploy.match(/uses:/g) ?? []).length, 1, 'one action, the deploy');
+  assert.match(deploy, /outputs:\n\s+page_url:/, 'it reports the deployed URL to the smoke job');
+  assert.match(pages, /permissions:\n\s+contents: read\n\s+steps:/, 'the smoke job is read-only');
   assert.match(pages, /npm run pages:build/);
   assert.match(pages, /node scripts\/build-pages\.mjs --check/);
-  assert.match(pages, /node scripts\/smoke-pages\.mjs --base "\$base" --cache-bust "\$RUN_ID"/, 'the smoke test reads the worker manifest');
+  assert.match(pages, /node scripts\/smoke-pages\.mjs --base "\$BASE_URL" --cache-bust "\$RUN_ID"/, 'the smoke test reads the worker manifest');
 });
 
 test('the pages smoke test covers every precached file exactly once', async () => {

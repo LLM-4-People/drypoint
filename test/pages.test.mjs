@@ -253,10 +253,14 @@ test('the staged document carries the offline-only Content-Security-Policy', asy
     }
   }
   // No inline script: the policy would block it, and the app must not rely on
-  // an exemption it does not have.
-  const scripts = [...html.matchAll(/<script\b([^>]*)>/g)];
-  assert.ok(scripts.length >= 2, 'the vendor script and the module entry are both present');
-  for (const [, attributes] of scripts) assert.match(attributes, /\bsrc="/, 'every script has a src');
+  // an exemption it does not have. Counted by splitting on the lower-cased
+  // opening token rather than matching a tag regex, so the check is not case-
+  // or attribute-sensitive.
+  const lower = html.toLowerCase();
+  assert.equal(lower.split('<script').length - 1, 2, 'exactly the vendor script and the module entry');
+  assert.equal(lower.includes('<script>'), false, 'no script element without attributes');
+  assert.ok(html.includes('<script src="src/vendor/qrcode.js"></script>'), 'the vendor script is external');
+  assert.ok(html.includes('<script type="module" src="src/main.js"></script>'), 'the module entry is external');
 });
 
 test('the default output directory is the git-ignored _site', async () => {
