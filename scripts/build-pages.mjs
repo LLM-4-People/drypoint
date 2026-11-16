@@ -19,15 +19,23 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import brand from '../brand.json' with { type: 'json' };
-import { ROOT, checkPrecache } from './precache.mjs';
+import { OUTPUT, ROOT, SW_FILE, checkPrecache } from './precache.mjs';
 
 export const SITE_DIR = '_site';
-export const WORKER_FILE = 'sw.js';
+export const WORKER_FILE = SW_FILE;
+export const PRECACHE_FILE = OUTPUT;
 export const NOT_FOUND_FILE = '404.html';
 export const NO_JEKYLL_FILE = '.nojekyll';
 
-/** Files on top of the runtime surface; never a second runtime list. */
-export const SITE_ONLY_FILES = Object.freeze([WORKER_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE]);
+/**
+ * Files on top of the runtime surface; never a second runtime list.
+ *
+ * The worker and its imported manifest are not part of `collectFiles()` — a
+ * manifest cannot carry its own digest, and the worker is what loads it — so
+ * they are named here from the precache owner's own constants. Omitting either
+ * ships a worker that cannot install.
+ */
+export const SITE_ONLY_FILES = Object.freeze([WORKER_FILE, PRECACHE_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE]);
 
 /**
  * The path a Pages deployment is served from, derived from the one authored
@@ -95,6 +103,7 @@ export function siteEntries(runtimeFiles, { basePath = pagesBasePath() } = {}) {
   const entries = new Map();
   for (const path of runtimeFiles) entries.set(path, { path, content: null });
   entries.set(WORKER_FILE, { path: WORKER_FILE, content: null });
+  entries.set(PRECACHE_FILE, { path: PRECACHE_FILE, content: null });
   entries.set(NOT_FOUND_FILE, { path: NOT_FOUND_FILE, content: notFoundPage(basePath) });
   entries.set(NO_JEKYLL_FILE, { path: NO_JEKYLL_FILE, content: '' });
   // Codepoint order, like every other sorted list in the repository: a locale
