@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createLayersPanel } from '../src/ui/layers.js';
+import { CONFIG } from '../src/core/config.js';
 import { createDocument } from '../src/label/schema.js';
 import { installDom, setDisplayResolver } from './helpers/fake-dom.mjs';
 
@@ -352,4 +353,19 @@ test('the layer restack buttons move in the direction the shared spec names', ()
     [id, 1],
     [id, -1],
   ]);
+});
+
+test('a validated element id keeps the layer DOM attribute small', () => {
+  const { controller, container, panel } = harness();
+  controller.document = createDocument({
+    lengthMm: 40,
+    elements: [{ id: 'x'.repeat(1_000_000), type: 'text', text: 'Hi' }],
+  });
+  panel.render();
+  const id = controller.document.elements[0].id;
+  assert.equal(id.length, CONFIG.bounds.maxIdChars);
+  const actions = container.querySelector('.layer-actions');
+  assert.equal(actions.id, `layer-actions-${id}`);
+  assert.ok(actions.id.length <= CONFIG.bounds.maxIdChars + 'layer-actions-'.length, 'the controlled id is bounded');
+  assert.ok(container.querySelector(`[data-id="${id}"]`), 'the row still carries the capped id');
 });
