@@ -18,12 +18,12 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - **Android label import works again.** The 1.0.2 APK filtered its system file
   picker to images, so **Document → Import label** could not select a label
   `.json` file. The picker now accepts JSON documents and the imported label is
-  validated before it replaces the open one; the 1.0.2 APK limitation note
-  above stays as the record for that build.
+  validated before it replaces the open one; the 1.0.2 release notes record
+  that limitation for that build.
 - **A deep in-scope navigation loads its assets.** The document now carries the
   deployment base, so opening a deep path serves the app shell with its modules
-  and styles instead of 404s. The Android shell and the Pages deployment share
-  the same base rule.
+  and styles instead of 404s. The Pages deployment injects the shared base
+  rule; the Android shell needs none because it always loads the root document.
 - **The desktop layout keeps the action bar on screen.** The top bar, storage
   alert, workspace and action bar each own a grid row, so hiding the alert no
   longer pushes the workspace into the flexible row and the Print button below
@@ -81,9 +81,9 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - The workflow policy is now the one trusted gate: it rejects a release
   environment or secret outside the signing job, a masked aggregate command, a
   local action inside the trusted jobs, and any workflow file it does not own.
-- Documentation and release notes are generated from their owners, and the
-  public tables for printers, storage and browser support are contract-tested
-  against the code.
+- Release notes are generated from their owners; the repeated documentation
+  tables and marker blocks are generated or contract-tested against the code,
+  while the prose is maintained.
 
 ## [1.0.2] - 2026-11-16
 

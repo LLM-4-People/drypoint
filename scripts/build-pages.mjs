@@ -19,8 +19,8 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import brand from '../brand.json' with { type: 'json' };
-import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
-import { OUTPUT, ROOT, SW_FILE, checkPrecache } from './precache.mjs';
+import { DISTRIBUTION_FILES, resolveDistributionFile } from './lib/distribution.mjs';
+import { OUTPUT, ROOT, SW_FILE, checkPrecache, resolveSurfacePath } from './precache.mjs';
 
 export const SITE_DIR = '_site';
 export const WORKER_FILE = SW_FILE;
@@ -133,6 +133,22 @@ export function siteEntries(runtimeFiles, { basePath = pagesBasePath() } = {}) {
   return [...entries.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
+/**
+ * Resolve one staged source through the repository's one symlink rule.
+ *
+ * A runtime or site-only file must stay on that same surface; a notice must be
+ * a declared notice. The APK builder already uses the same two resolvers, so a
+ * symlinked LICENSE, worker or module cannot publish external bytes on either
+ * distribution.
+ */
+export async function resolveStagedSource(path, runtimeFiles, { root = ROOT } = {}) {
+  if (DISTRIBUTION_FILES.includes(path)) {
+    return (await resolveDistributionFile(path, { root })).real;
+  }
+  const allowed = (canonical) => runtimeFiles.includes(canonical) || SITE_ONLY_FILES.includes(canonical);
+  return (await resolveSurfacePath(path, { root, allowed })).real;
+}
+
 /** The generated files must be current before anything is staged. */
 export async function assertPrecacheFresh() {
   const result = await checkPrecache();
@@ -158,7 +174,7 @@ export async function buildPages({ out = join(ROOT, SITE_DIR), basePath = pagesB
   for (const entry of entries) {
     const to = join(out, entry.path);
     await mkdir(dirname(to), { recursive: true });
-    if (entry.content === null) await cp(join(ROOT, entry.path), to);
+    if (entry.content === null) await cp(await resolveStagedSource(entry.path, fresh.files), to);
     else await writeFile(to, entry.content);
   }
   return { out, entries, version: fresh.version };
@@ -185,7 +201,10 @@ export async function checkSite({ out = join(ROOT, SITE_DIR), basePath = pagesBa
   const fresh = await checkFresh();
   const expected = new Map();
   for (const entry of siteEntries(fresh.files, { basePath })) {
-    const bytes = entry.content === null ? await readFile(join(ROOT, entry.path)) : Buffer.from(entry.content);
+    const bytes =
+      entry.content === null
+        ? await readFile(await resolveStagedSource(entry.path, fresh.files))
+        : Buffer.from(entry.content);
     expected.set(entry.path, digest(bytes));
   }
   const staged = await walk(out);

@@ -369,6 +369,13 @@ export function minSdkVersionOf(manifestXml) {
   return Number(match[1]);
 }
 
+/** The template's target SDK, the one owner the artifact check reads. */
+export function targetSdkVersionOf(manifestXml) {
+  const match = /android:targetSdkVersion="(\d+)"/.exec(String(manifestXml));
+  if (!match) fail('the rendered manifest declares no android:targetSdkVersion');
+  return Number(match[1]);
+}
+
 /**
  * The signing schemes for one minimum SDK. This is the only rule: API 24 and
  * later verify the APK Signature Scheme v2, so the JAR (v1) signature is only

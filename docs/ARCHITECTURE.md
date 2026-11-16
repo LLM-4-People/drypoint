@@ -315,7 +315,12 @@ A document may also carry `notices`: operator-facing strings left by a
 migration that had to grow the tape or drop content the printer cannot hold
 (e.g. a legacy barcode with non-ASCII text). Notices are part of the label, not
 of one render, so `renderDocument` includes them in its warnings and they reach
-the same print confirmation as any layout problem.
+the same print confirmation as any layout problem. A refusal is recorded here
+on purpose, not only in a toast: it is a bounded fact about the label (for
+example, the source or history budget), so it survives reload and export; the
+list is capped by `CONFIG.bounds.maxNotices` and the oldest entry gives way
+only when the list is full, because the newer refusal is the one the operator
+has not seen.
 
 `renderDocument` runs one layout-warning pass before painting. It reports
 visible elements whose boxes overlap (a frame or background rect that fully
@@ -556,7 +561,7 @@ generated manifest, or the worker stamp disagree.
 
 ### Accepted deployment limits (1.0.3)
 
-Three facts are recorded as accepted for this release rather than fixed:
+Four facts are recorded as accepted for this release rather than fixed:
 
 - **Assets are not content-hashed.** GitHub Pages serves every asset with a
   ten-minute cache and cannot set custom headers, so a first or uncontrolled
@@ -579,6 +584,25 @@ Three facts are recorded as accepted for this release rather than fixed:
   Signed-Releases averages the last five releases, so v1.0.0 and v1.0.1 (which
   have no provenance assets) hold that score down until three more provenance
   releases exist. Both are recorded, not gamed with a second workflow.
+
+### Accepted interaction observations (1.0.3)
+
+Three interaction observations are recorded rather than "fixed", because the
+current behaviour is the deliberate one:
+
+- **A device-reported sensor refusal is a one-shot event.** The gate leaves
+  Print enabled, the print attempt is refused by the printer, and the one error
+  toast names the reason; the Print panel's Sensors row carries the current
+  state. A second persistent banner would duplicate the toast and imply the gate
+  can know a sensor before the job.
+- **Print stays enabled behind the pre-print confirmation.** The modal makes
+  the shell inert, so the action bar's Print button cannot be activated; its
+  `disabled` state is presentational while the modal is the only interactive
+  layer.
+- **A rotated element that extends past the tape edge is visibly clipped.** The
+  stage and the print preview show the same clip; the layout pass reports
+  overlaps and unreadable barcodes, not every geometric overhang. A dedicated
+  warning would duplicate the visible clip without changing the printed result.
 
 ## Logging
 
@@ -762,7 +786,7 @@ release are immutable; only its title, notes and pre-release flag can change.
 regenerated for comparison from the current changelog:
 
 ```bash
-gh api repos/LLM-4-People/drypoint/releases/tags/v1.0.0 --jq .body > /tmp/v1.0.0.published.md
+gh api repos/LLM-4-People/drypoint/releases/tags/v1.0.0 --template '{{.body}}' > /tmp/v1.0.0.published.md
 node scripts/release-notes.mjs --tag v1.0.0 --historical --out /tmp/v1.0.0.md
 diff -u /tmp/v1.0.0.published.md /tmp/v1.0.0.md
 ```

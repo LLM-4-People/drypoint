@@ -212,6 +212,44 @@ test('an over-size file is refused before JSON.parse', () => {
   assert.throws(() => parseDocument('x'), /not valid JSON/, 'a small non-JSON file still reaches the parser');
 });
 
+test('the over-size message distinguishes the file size from the limit', () => {
+  // Multi-byte text stays under the UTF-16 pre-check but exceeds the byte
+  // bound, so the exact byte count reaches the message.
+  const multi = 'é'.repeat(Math.ceil((TRANSFER_MAX_BYTES + 1) / 2));
+  const bytes = new TextEncoder().encode(multi).byteLength;
+  assert.ok(multi.length <= TRANSFER_MAX_BYTES, 'the UTF-16 pre-check does not fire');
+  assert.ok(bytes > TRANSFER_MAX_BYTES, 'the byte check fires');
+  assert.throws(
+    () => parseDocument(multi),
+    (error) => {
+      assert.match(error.message, /too large/);
+      assert.ok(error.message.includes(`${bytes} bytes`), 'the actual file size is exact');
+      assert.ok(error.message.includes(`${TRANSFER_MAX_BYTES} bytes`), 'the limit is exact');
+      return true;
+    }
+  );
+});
+
+test('a valid document nested past the clone depth is refused with one bounded message', () => {
+  // The hostile input is a string: JSON.stringify itself would overflow on the
+  // same nesting, which is exactly why the parser must not trust the shape.
+  const depth = 5000;
+  const text =
+    `{"format":${JSON.stringify(TRANSFER_FORMAT)},"version":${CONFIG.app.documentVersion},"document":` +
+    '{"child":'.repeat(depth) +
+    '{"lengthMm":40,"elements":[]}' +
+    '}'.repeat(depth) +
+    '}';
+  assert.throws(
+    () => parseDocument(text),
+    (error) => {
+      assert.equal(error.name, 'Error', 'no engine RangeError reaches the operator');
+      assert.match(error.message, /nested too deeply/);
+      return true;
+    }
+  );
+});
+
 test('a structurally wrong element list is refused with the shape owner’s message', () => {
   const text = JSON.stringify({
     format: TRANSFER_FORMAT,

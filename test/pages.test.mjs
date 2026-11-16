@@ -9,7 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import vm from 'node:vm';
@@ -25,6 +25,7 @@ import {
   checkSite,
   notFoundPage,
   pagesBasePath,
+  resolveStagedSource,
   siteEntries,
 } from '../scripts/build-pages.mjs';
 import { collectFiles } from '../scripts/precache.mjs';
@@ -298,4 +299,35 @@ test('siteEntries consumes the exported site-only file list', () => {
     /entries\.set\((?:WORKER_FILE|PRECACHE_FILE|NOT_FOUND_FILE|NO_JEKYLL_FILE)/,
     'no second copy of the file set'
   );
+});
+
+test('staging resolves every null-content source through the shared symlink rule', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'drypoint-pages-root-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const secret = join(root, 'secret.txt');
+  await writeFile(secret, 'AUDIT-SECRET-DO-NOT-PUBLISH\n');
+
+  // A notice that points outside the declared notice surface is refused.
+  await symlink(secret, join(root, 'LICENSE'));
+  await assert.rejects(resolveStagedSource('LICENSE', [], { root }), /outside the app surface|outside the repository/);
+  await unlink(join(root, 'LICENSE'));
+
+  // A runtime module that points outside the runtime surface is refused too.
+  await mkdir(join(root, 'assets'), { recursive: true });
+  await symlink(secret, join(root, 'assets/app.css'));
+  await assert.rejects(
+    resolveStagedSource('assets/app.css', ['assets/app.css'], { root }),
+    /outside the app surface|outside the repository/
+  );
+  await unlink(join(root, 'assets/app.css'));
+
+  // A regular file is accepted and its real path is returned.
+  await writeFile(join(root, 'LICENSE'), 'licence\n');
+  assert.equal(await resolveStagedSource('LICENSE', [], { root }), join(root, 'LICENSE'));
+});
+
+test('staging and checking both use the shared resolver', () => {
+  const source = readProjectFile('scripts/build-pages.mjs');
+  assert.match(source, /cp\(await resolveStagedSource\(entry\.path, fresh\.files\)/);
+  assert.match(source, /readFile\(await resolveStagedSource\(entry\.path, fresh\.files\)\)/);
 });

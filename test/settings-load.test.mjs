@@ -63,7 +63,7 @@ test('a malformed settings JSON shows one notice and persists clean defaults', a
 });
 
 test('a non-object settings payload is reported, not treated as empty', async () => {
-  for (const data of ['nope', 7, [], true]) {
+  for (const data of ['nope', 7, [], true, null]) {
     const storage = fakeStorage({ [KEY]: JSON.stringify({ version: 4, data }) });
     const settings = await freshSettings(storage);
     const issue = settings.takeSettingsLoadIssue();
@@ -72,6 +72,18 @@ test('a non-object settings payload is reported, not treated as empty', async ()
     settings.settingsStore.flush();
     assertCleanDefaults(settings, storage);
   }
+});
+
+test('a version-matching envelope with no data key is a load issue too', async () => {
+  // `?? {}` in the store used to turn both this and `data: null` into an
+  // empty object before the settings owner could judge them.
+  const storage = fakeStorage({ [KEY]: JSON.stringify({ version: 4 }) });
+  const settings = await freshSettings(storage);
+  const issue = settings.takeSettingsLoadIssue();
+  assert.ok(issue, 'the absent data key is reported');
+  assert.match(issue.message, /could not be read and were reset/);
+  settings.settingsStore.flush();
+  assertCleanDefaults(settings, storage);
 });
 
 test('a scalar envelope payload is a load issue, not a silent reset', async () => {

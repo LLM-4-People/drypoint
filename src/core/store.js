@@ -57,7 +57,11 @@ export function createStore(initialState, options = {}) {
       }
       // A version-matching payload is still untrusted: a hand-edited or
       // partially written value must be normalised, never merged raw.
-      if (hydrate) return { ...initialState, ...hydrate(parsed.data ?? {}, parsed.version) };
+      // `data` is passed through unchanged: a null or absent key is a corrupt
+      // payload, not an empty object. The hydrate owner reports it and the
+      // store writes clean defaults; `?? {}` here would make that guard
+      // unreachable and silently keep the corrupt value on disk.
+      if (hydrate) return { ...initialState, ...hydrate(parsed.data, parsed.version) };
       return parsed.version === version ? { ...initialState, ...parsed.data } : initialState;
     } catch (error) {
       onError?.(error, 'load', { raw });

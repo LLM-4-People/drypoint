@@ -330,14 +330,16 @@ test('the release runbook covers every failed or partial outcome', () => {
   assert.match(history, /never used by the release workflow/);
 });
 
-test('the issue templates target the current release line, not 1.0.0', () => {
+test('the issue templates point at the latest release, not a past version', () => {
   const bug = read('.github/ISSUE_TEMPLATE/bug_report.yml');
   const question = read('.github/ISSUE_TEMPLATE/question.yml');
-  assert.match(bug, /placeholder: 1\.0\.2 or a commit SHA/);
+  // A version-free placeholder cannot go stale: the description already sends
+  // the reporter to the Releases page for the latest tag.
+  assert.match(bug, /placeholder: The latest release tag, or a commit SHA/);
   assert.match(bug, /latest release tag from the Releases page/);
-  assert.doesNotMatch(bug, /placeholder: 1\.0\.0/);
-  assert.doesNotMatch(question, /placeholder: Web app 1\.0\.0/);
-  assert.match(question, /Web app 1\.0\.2/);
+  assert.doesNotMatch(bug, /placeholder: 1\.0\.\d/);
+  assert.doesNotMatch(question, /Web app 1\.0\.\d/);
+  assert.match(question, /Web app <release tag>/);
 });
 
 test('SECURITY.md does not present 1.0.0 as a supported install', () => {
