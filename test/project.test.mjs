@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 import brand from '../brand.json' with { type: 'json' };
 import { CONFIG } from '../src/core/config.js';
@@ -7,7 +10,7 @@ import { SETTINGS_SCHEMA, printSettingsSnapshot } from '../src/core/settings.js'
 import { INFO_PROJECTION } from '../src/device/manager.js';
 import { shortcutIntent } from '../src/editor/shortcuts.js';
 import { isIgnored, parseIgnore } from '../scripts/lib/tree.mjs';
-import { listProjectFiles, readProjectFile as read } from './helpers/project-files.mjs';
+import { listProjectFiles, projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
 
 const pkg = JSON.parse(read('package.json'));
 const indexHtml = read('index.html');
@@ -504,6 +507,22 @@ test('ANDROID.md keeps the signing, asset and filename contracts', () => {
   assert.match(doc, /\*\*Choose printer\*\*/);
   assert.match(doc, /\*\*Forget printer\*\*/);
   assert.match(doc, /the next connection asks\s+again/);
+});
+
+test('the one dev-only dependency is locked and tracked', () => {
+  // The app still ships no npm runtime dependency; the workflow policy is the
+  // only consumer of a package. `npm ci` reproduces it from the tracked lock.
+  assert.deepEqual(pkg.dependencies ?? {}, {}, 'the app has no runtime dependency');
+  assert.equal(pkg.devDependencies?.yaml, '^2.9.1', 'the workflow policy parses YAML with yaml@^2.9.1');
+  assert.equal(existsSync(join(projectRoot, 'package-lock.json')), true, 'the lockfile exists');
+  const lock = JSON.parse(read('package-lock.json'));
+  assert.equal(lock.packages?.['node_modules/yaml']?.version, '2.9.1');
+  assert.equal(lock.packages?.['node_modules/yaml']?.dev, true, 'yaml is dev-only');
+  const ignored = read('.gitignore').trim().split('\n');
+  assert.equal(ignored.includes('package-lock.json'), false, 'the lockfile is not ignored');
+  // A lockfile that is present but untracked gives `npm ci` a different tree on
+  // every clone. The test runs in the repository; no checkout means no build.
+  execFileSync('git', ['ls-files', '--error-unmatch', 'package-lock.json'], { cwd: projectRoot, stdio: 'ignore' });
 });
 
 test('.gitignore keeps every secret, artifact and local file out of git', () => {

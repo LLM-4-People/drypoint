@@ -93,7 +93,7 @@ test('package.json metadata mirrors the authored identity', () => {
   assert.equal(pkg.license, brandJson.license);
   assert.equal(pkg.author, brandJson.author);
   assert.deepEqual(pkg.dependencies ?? {}, {}, 'the app has no runtime dependencies');
-  assert.deepEqual(pkg.devDependencies ?? {}, {}, 'the app has no development dependencies');
+  assert.deepEqual(pkg.devDependencies ?? {}, { yaml: '^2.9.1' }, 'the one dev-only dependency is the workflow policy parser');
 });
 
 test('slug, application id and prefixes are lower-case and path-safe', () => {

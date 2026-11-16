@@ -10,12 +10,14 @@ run the suite, open a pull request.
 git clone https://github.com/LLM-4-People/drypoint.git
 cd drypoint
 node --version        # 22 or newer; .node-version pins the development version
-npm test              # nothing to install: only node: built-ins are used
+npm ci                # installs the one dev-only dependency from the tracked lockfile
+npm test              # the unit suite; the browser suites have their own command
 npm start             # http://127.0.0.1:8080
 ```
 
-There is no `npm install`: `package.json` has no dependencies and there is no
-lockfile, so `npm ci` does not apply.
+`npm ci` installs the one dev-only dependency from the tracked
+`package-lock.json`. The app itself ships no npm runtime dependency: only
+`node:` built-ins.
 
 ## What each test leg needs
 
