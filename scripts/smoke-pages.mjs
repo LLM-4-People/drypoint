@@ -13,16 +13,15 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
 
 import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
 import { contentTypeEssence, contentTypeProblem } from './lib/content-types.mjs';
+import { OUTPUT, parseManifest, readManifest } from './precache.mjs';
 
 export const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
-export const PRECACHE_FILE = 'assets/precache.js';
+export const PRECACHE_FILE = OUTPUT;
 
 /** The document root. A deployment is only alive if this answers. */
 export const ROOT_PATH = '/';
@@ -50,30 +49,6 @@ export const SITE_ONLY_FILES = Object.freeze(['sw.js', 'assets/precache.js', '40
 export const MANIFEST_PATH = '/manifest.webmanifest';
 export const MANIFEST_TYPE = 'application/manifest+json';
 
-/**
- * Parse the generated manifest from its source text. One owner: the same
- * fields `precache.mjs` writes, read without executing the checkout's file in
- * the page's realm.
- */
-export function parsePrecache(source, filename = PRECACHE_FILE) {
-  const sandbox = { self: {} };
-  vm.runInNewContext(source, sandbox, { filename });
-  const manifest = sandbox.self?.__PRECACHE;
-  if (!manifest || !Array.isArray(manifest.files) || manifest.files.length === 0) {
-    throw new Error(`${filename} has no file list`);
-  }
-  if (!manifest.digests || typeof manifest.digests !== 'object' || typeof manifest.version !== 'string') {
-    throw new Error(`${filename} has no digests and version`);
-  }
-  return manifest;
-}
-
-/** Read the generated manifest from a checkout. */
-export async function readPrecache(pathOrRoot = ROOT) {
-  const path = pathOrRoot.endsWith('.js') ? pathOrRoot : join(pathOrRoot, PRECACHE_FILE);
-  return parsePrecache(await readFile(path, 'utf8'), path);
-}
-
 /** The build stamp the worker installs with. */
 export function workerBuild(source) {
   const match = /const BUILD = '([0-9a-f]+)';/.exec(String(source));
@@ -83,7 +58,7 @@ export function workerBuild(source) {
 
 /** Every URL a deployment must answer, sorted, duplicates removed. */
 export async function smokePaths({ root = ROOT } = {}) {
-  const manifest = await readPrecache(join(root, PRECACHE_FILE));
+  const manifest = await readManifest(root);
   const files = manifest.files;
   const paths = new Set([ROOT_PATH]);
   for (const file of files) paths.add(file.startsWith('/') ? file : `/${file}`);
@@ -145,7 +120,7 @@ async function deployedBytes(base, path, options) {
  * the status and content type look right.
  */
 export async function verifyDeployment(base, { expectedVersion = null, query = '', fetchImpl = fetch } = {}) {
-  const manifest = parsePrecache(
+  const manifest = parseManifest(
     await deployedText(base, `/${PRECACHE_FILE}`, { query, fetchImpl }),
     `${base.replace(/\/+$/, '')}/${PRECACHE_FILE}`
   );
@@ -272,7 +247,7 @@ async function main(argv) {
     return 2;
   }
   try {
-    const local = await readPrecache(ROOT);
+    const local = await readManifest(ROOT);
     const paths = await smokePaths();
     // One cache-busting query for every URL: the CDN can answer the previous
     // build's copy of a file that changed in this deployment.

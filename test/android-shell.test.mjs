@@ -12,6 +12,7 @@ import {
   APK_ENTRY_DATE_TIME,
   apksignerArgs,
   certificateSha256,
+  ensureKeystore,
   keystoreAction,
   minSdkVersionOf,
   publishApkPair,
@@ -119,7 +120,8 @@ test('the Android manifest requests the BLE permissions the bridge checks', () =
 
 test('the Android build bundles the generated precache list, not a copied file list', () => {
   const script = read('scripts/build-android.mjs');
-  assert.match(script, /__PRECACHE/);
+  assert.match(script, /readManifest/, 'the builder reads the manifest through its owner');
+  assert.doesNotMatch(script, /__PRECACHE/, 'the builder keeps no parser of its own');
   assert.match(script, /'-A', assetsRoot/, 'aapt2 packages the fresh staged assets root');
   assert.doesNotMatch(script, /join\(appDir, 'assets'\)/, 'the source tree is never the package root');
   assert.match(script, /await withStaging\(androidDir, async \(staging\) => \{/, 'the build happens in a scratch directory that is always removed');
@@ -386,6 +388,28 @@ test('a failed build leaves no staging directory', async (t) => {
 });
 
 /* ---------------- version arithmetic and the signing identity ---------------- */
+
+test('a forbidden CI build refuses before writing a keystore password', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'drypoint-keystore-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await assert.rejects(
+    ensureKeystore({ requireKey: true, directory, env: {} }),
+    /never generate one/
+  );
+  assert.deepEqual(await readdir(directory), [], 'the failed run leaves no password file');
+});
+
+test('an existing password file without a password is not overwritten', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'drypoint-keystore-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, 'keystore.properties'), 'keyAlias=drypoint\n');
+  await assert.rejects(ensureKeystore({ directory, env: {} }), /set ANDROID_KEYSTORE_PASSWORD/);
+  assert.equal(
+    await readFile(join(directory, 'keystore.properties'), 'utf8'),
+    'keyAlias=drypoint\n',
+    'the malformed file is left for the operator, not replaced'
+  );
+});
 
 test('the versionCode arithmetic refuses a component that would collide', () => {
   assert.equal(versionCodeOf('1.0.0'), 10000);

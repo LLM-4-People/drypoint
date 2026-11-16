@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { checkDocs, headingSlugs, headingText, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
+import { dashFindings, doubleDashFindings, titleCaseFindings } from '../scripts/lib/prose.mjs';
 import { CONFIG } from '../src/core/config.js';
 import { MODELS } from '../src/protocol/models.js';
 import { listProjectFiles, readProjectFile as read } from './helpers/project-files.mjs';
@@ -431,4 +432,33 @@ test('the documentation index links every page in docs/', () => {
   for (const page of ['ARCHITECTURE.md', 'ANDROID.md', 'PRINTERS.md', 'PROTOCOL.md']) {
     assert.ok(index.includes(`(${page})`), `docs/README.md links ${page}`);
   }
+});
+
+/* ---------------- prose rules: dashes and sentence case ---------------- */
+
+test('the prose gate rejects every typographic dash', () => {
+  assert.deepEqual(dashFindings('x.md', 'plain text'), []);
+  for (const dash of ['\u2012', '\u2013', '\u2014', '\u2015']) {
+    const findings = dashFindings('x.md', `before ${dash} after`);
+    assert.equal(findings.length, 1, JSON.stringify(dash));
+    assert.equal(findings[0].line, 1);
+    assert.match(findings[0].message, /not allowed/);
+  }
+});
+
+test('the prose gate allows CLI options and Markdown rules', () => {
+  for (const text of ['npm run build -- --check', 'node script.mjs --flag', '---', '|---|---|', 'x-y']) {
+    assert.deepEqual(doubleDashFindings('x.md', text), [], text);
+  }
+  for (const text of ['a -- b', 'word--word', 'a --']) {
+    assert.equal(doubleDashFindings('x.md', text).length, 1, text);
+  }
+});
+
+test('the prose gate enforces sentence-case headings', () => {
+  assert.deepEqual(titleCaseFindings('x.md', '## Build the Android APK'), []);
+  assert.equal(titleCaseFindings('x.md', '## Build The Android APK').length, 1);
+  assert.deepEqual(titleCaseFindings('x.md', '## GitHub Pages'), [], 'a proper name is not Title Case');
+  assert.deepEqual(titleCaseFindings('x.md', '## Drypoint Android app'), []);
+  assert.deepEqual(titleCaseFindings('x.md', '## A heading with `Code` inline'), []);
 });

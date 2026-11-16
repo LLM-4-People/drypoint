@@ -385,3 +385,39 @@ test('the content-type block is stamped into sw.js exactly once', async () => {
   const missing = sw.replace(/\/\/ BEGIN generated content types[\s\S]*?\/\/ END generated content types/, '');
   assert.throws(() => stampWorker(missing, '0123456789abcdef'), /exactly one content types/);
 });
+
+/* ---------------- the manifest reader (one owner) ---------------- */
+
+test('only the generator may read the generated manifest', () => {
+  // The Android builder, the artifact check and the Pages smoke all need the
+  // manifest. Three parsers meant three acceptance rules: a manifest without
+  // `digests` passed the Android build and failed the artifact check.
+  const secondReaders = readdirSync(join(root, 'scripts'))
+    .filter((file) => file.endsWith('.mjs') && file !== 'precache.mjs')
+    .filter((file) => readFileSync(join(root, 'scripts', file), 'utf8').includes('__PRECACHE'));
+  assert.deepEqual(secondReaders, [], 'only scripts/precache.mjs may parse __PRECACHE');
+});
+
+test('the manifest reader rejects every incomplete shape', async () => {
+  const { parseManifest } = await import('../scripts/precache.mjs');
+  const source = readFileSync(join(root, OUTPUT), 'utf8');
+  const manifest = parseManifest(source);
+  assert.ok(manifest.files.length > 0 && Object.keys(manifest.digests).length === manifest.files.length);
+
+  const broken = (mutate) => {
+    const copy = { ...manifest };
+    mutate(copy);
+    return `self.__PRECACHE = ${JSON.stringify(copy)};`;
+  };
+  const cases = [
+    ['no file list', broken((copy) => { copy.files = []; }), /has no file list/],
+    ['no digests', broken((copy) => { delete copy.digests; }), /has no digests/],
+    ['array digests', broken((copy) => { copy.digests = []; }), /has no digests/],
+    ['no version', broken((copy) => { delete copy.version; }), /has no version stamp/],
+    ['empty version', broken((copy) => { copy.version = ''; }), /has no version stamp/],
+  ];
+  for (const [name, text, expected] of cases) {
+    assert.throws(() => parseManifest(text, 'fixture.js'), expected, `${name} is rejected`);
+  }
+  assert.equal(parseManifest(source).version, manifest.version, 'the real manifest still parses');
+});
