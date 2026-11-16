@@ -376,7 +376,10 @@ test('the versionCode arithmetic refuses a component that would collide', () => 
   assert.throws(() => versionCodeOf('1.0.100'), /patch 100 does not fit the versionCode/);
   assert.throws(() => versionCodeOf('1.0.0-rc.1'), /MAJOR\.MINOR\.PATCH with no suffix/);
   assert.throws(() => versionCodeOf('1.0'), /MAJOR\.MINOR\.PATCH/);
-  assert.equal(versionCodeOf(JSON.parse(read('package.json')).version), 10000, 'the shipped version fits');
+  // The shipped version must fit the arithmetic, whatever it currently is.
+  const shipped = JSON.parse(read('package.json')).version;
+  const [major, minor, patch] = shipped.split('.').map(Number);
+  assert.equal(versionCodeOf(shipped), major * 10000 + minor * 100 + patch, 'the shipped version fits');
 });
 
 test('the signing schemes follow the manifest minimum', () => {

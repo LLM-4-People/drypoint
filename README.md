@@ -40,8 +40,9 @@ permission on Android 12+ (location on Android 8–11) when it scans. It needs n
 network and no server. Build and install details:
 [docs/ANDROID.md](docs/ANDROID.md).
 
-Safari and Firefox do not implement Web Serial or Web Bluetooth, so they can
-view the app but cannot reach a printer.
+Safari implements neither device API, so it can view the app but cannot reach a
+printer. Firefox 151+ exposes Web Serial, but this app's Bluetooth SPP filter
+is unverified there; Chrome or Edge is the tested serial path.
 
 ## What it does
 
@@ -376,8 +377,10 @@ memory.
 - **Length is a setting, not a measurement.** It is remembered per roll, but if
   prints drift across the gap, set the length to match the tape.
 - **Code 128 B only** (printable ASCII 32–126). QR handles arbitrary text.
-- **Web Serial is desktop Chrome/Edge; Web Bluetooth is Chrome and Edge on
-  desktop and Chrome on Android.** Safari and Firefox cannot connect a printer.
+- **Web Serial is tested on desktop Chrome/Edge. Web Bluetooth is Chrome and
+  Edge on desktop (Chrome's Linux build ships it disabled) and Chrome on
+  Android.** Safari cannot connect a printer; Firefox's serial support is
+  untested with this printer's Bluetooth SPP filter.
 - **BLE writes are paced at ~12 ms**, so a 40 mm label takes a few seconds.
 - **Paper info (`0x69`), print history (`0x62`) and the print area (`0x0F`)
   layouts are unverified.** They are exposed as raw bytes rather than guessed

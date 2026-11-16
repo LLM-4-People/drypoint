@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: 'd2dd47f492fd230c',
+  version: '08f79c16d844d247',
   navigationTimeoutMs: 3000,
   required: [
     'index.html',
@@ -84,7 +84,7 @@ self.__PRECACHE = {
     'assets/icon.svg': '0d57f5f217288935f039793a3bc1b2d99c755c085a0326276a4f2f817464e53d',
     'index.html': '323f86d5077e54b4cd263dd2e9deeadda21dc3760db0efd244193401ef788540',
     'manifest.webmanifest': '9614a5b7ffac0e0705aa2f9ec8810277a859fde5ac9b196dddb450c31f83154a',
-    'src/core/brand.js': '21f3aaec0f9b48420f657fa6f00bad26dfcc4c822eda0d5e173661b9cd16826f',
+    'src/core/brand.js': '32c84f1ae52254f0948feb3f4513b5124ec8e46c7063adf7ec55bdcd63c9017f',
     'src/core/config.js': '79b812b2c68eca6319d46cb0eefb0a3b7a979ce59370e1b815633bfa13316715',
     'src/core/dom.js': '2f57fa97ae74096ae0c5e82892c038e95dd6483e0dfc0ddcc1f571a65c4ab09b',
     'src/core/events.js': 'f5f36474ae1e697206e4997916dcd865f86ea364f9cc3ef176f1e2e0feb6ec9f',
@@ -94,7 +94,7 @@ self.__PRECACHE = {
     'src/core/precache-status.js': 'ab921331cc719570efe2f590375d70256dc550ac8fd4972bc31c68feb37808d2',
     'src/core/settings.js': '24453997112a2cf839924193908a214d7de6c0ff98e55d35a71bc38830fa231f',
     'src/core/store.js': '4cedaab6a4332bfac1e74a6ff2f7656eab43f138a8a986e785351397095fe578',
-    'src/core/version.js': 'da679b6a21289b2eac1cc68a20a9e912b534381f4bdb77c4cd4de8704dc1ea13',
+    'src/core/version.js': 'd21b7665bc484e1e50be21fcc19b6410e0102d5f012e1dfc4dbf40853ebf2605',
     'src/device/capabilities.js': 'b281e0f0d0c670d4268b001bd7f1610ed7636a3b8db8d6ef8518a86f8c0b001f',
     'src/device/manager.js': 'b5ca7ccda6e81717ddd938952e0614c62cc5870f3c9a745b4c78f8e2a891a9cd',
     'src/device/print-job.js': '92a8f14fa3e21f1ea6ccf2c39357eccfb037eaea6119ada34125b53f73b4f90d',
