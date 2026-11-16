@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['22', '24']
+        node: ['22', '24', '26']
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,8 +41,19 @@ jobs:
         run: npm run privacy:check
       - name: Test suite
         run: npm test
+      - name: Documentation and workflow policy
+        # Both are gates, so both run in the merge gate and not only in the
+        # path-filtered Docs workflow.
+        run: |
+          set -euo pipefail
+          npm run docs:check
+          npm run workflows:check
       - name: No tracked file changed
         run: git diff --exit-code
+      - name: No untracked file was left behind
+        # `git diff --exit-code` ignores untracked files, so a build that wrote
+        # a new generated file passed the gate and shipped nothing.
+        run: test -z "$(git status --porcelain)"
 
   browser:
     name: browser (measured layout)
@@ -83,6 +94,10 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ci-throwaway-not-a-release-key
       ANDROID_KEYSTORE_KEY_PASSWORD: ci-throwaway-not-a-release-key
       ANDROID_KEY_ALIAS: ci
+      # This job proves the toolchain with a throwaway key; it publishes
+      # nothing, so the release certificate pin cannot apply here. The build
+      # says so in its log.
+      ANDROID_ALLOW_TEST_KEY: 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,18 +113,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Install the pinned SDK packages
-        run: |
-          set -euo pipefail
-          sdkmanager="$(command -v sdkmanager || true)"
-          if [ -z "$sdkmanager" ]; then
-            sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          fi
-          if [ ! -x "$sdkmanager" ]; then
-            echo "::error::sdkmanager not found; set ANDROID_HOME to an SDK with cmdline-tools"
-            exit 1
-          fi
-          yes | "$sdkmanager" --licenses > /dev/null || true
-          "$sdkmanager" "platforms;$ANDROID_PLATFORM" "build-tools;$ANDROID_BUILD_TOOLS"
+        run: bash scripts/android-sdk.sh
       - name: Create a throwaway signing key
         run: |
           set -euo pipefail
@@ -133,10 +137,16 @@ jobs:
           # CI=true makes a missing keystore a hard failure, never a new key.
           npm run build:android
           version="$(node -p "require('./package.json').version")"
+          package_id="$(node -p "require('./brand.json').appId")"
+          version_code="$(node scripts/build-android.mjs --version-code)"
           apk="android/build/drypoint-${version}.apk"
           test -f "$apk"
           "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
-          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" dump badging "$apk" | grep -F "versionName='${version}'"
+          badging="$("$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" dump badging "$apk")"
+          # The package the phone installs must be the one brand.json names,
+          # with the versionCode the version arithmetic produces — not only the
+          # human-readable versionName.
+          printf '%s\n' "$badging" | grep -F "package: name='${package_id}' versionCode='${version_code}' versionName='${version}'"
           sha256sum "$apk"
       - name: Upload the APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -157,16 +167,16 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const results = {
-              web: '${{ needs.web.result }}',
-              browser: '${{ needs.browser.result }}',
-              android: '${{ needs.android.result }}',
-            };
-            const notSuccessful = Object.entries(results).filter(([, result]) => result !== 'success');
+            // The legs are this job's own `needs:` map, so a leg added there is
+            // inspected without editing this step. An explicit list would go
+            // green for a leg it forgot: the drift `npm run workflows:check`
+            // also refuses.
+            const results = ${{ toJSON(needs) }};
+            const notSuccessful = Object.entries(results)
+              .filter(([, job]) => job.result !== 'success')
+              .map(([name, job]) => `${name}=${job.result}`);
             if (notSuccessful.length > 0) {
-              core.setFailed(
-                `required leg(s) did not succeed: ${notSuccessful.map(([name, result]) => `${name}=${result}`).join(', ')}`
-              );
+              core.setFailed(`required leg(s) did not succeed: ${notSuccessful.join(', ')}`);
             } else {
-              core.info('web, browser and android all succeeded');
+              core.info(`${Object.keys(results).join(', ')} all succeeded`);
             }

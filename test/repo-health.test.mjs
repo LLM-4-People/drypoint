@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
+import { BRAND } from '../src/core/brand.js';
 
 const exists = (path) => {
   try {
@@ -173,7 +174,15 @@ test('the README is the public front door', () => {
   const readme = read('README.md');
   assert.match(readme, /^# Drypoint$/m);
   assert.match(readme, /actions\/workflows\/checks\.yml\/badge\.svg/, 'the CI badge');
-  assert.ok(readme.includes('https://llm-4-people.github.io/drypoint/'), 'the live app link');
+  // Compare parsed URLs, not a substring: `https://evil.test/?u=<homepage>`
+  // contains the authored homepage and is not the live app.
+  const homepage = new URL(BRAND.homepage);
+  const candidates = [...readme.matchAll(/https?:[^\s<>)"`\]]+/g)].map((match) => match[0]);
+  const live = candidates.some((candidate) => {
+    const url = new URL(candidate);
+    return url.origin === homepage.origin && url.pathname === homepage.pathname;
+  });
+  assert.equal(live, true, `the live app link is exactly ${homepage.href}`);
   assert.match(readme, /releases\/latest/, 'the APK download link');
   assert.match(readme, /\*\*D110_M\*\* \| Tested/);
   assert.match(readme, /\*\*D11_H\*\* \| Experimental/);

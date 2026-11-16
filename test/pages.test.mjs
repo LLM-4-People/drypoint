@@ -28,6 +28,7 @@ import {
   siteEntries,
 } from '../scripts/build-pages.mjs';
 import { collectFiles } from '../scripts/precache.mjs';
+import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
 import { BRAND } from '../src/core/brand.js';
 import { projectRoot } from './helpers/project-files.mjs';
 
@@ -47,14 +48,14 @@ async function temporarySite(t) {
   return out;
 }
 
-test('the staged tree is exactly the runtime files plus the site files', async (t) => {
+test('the staged tree is exactly the runtime files plus the site and notice files', async (t) => {
   const out = await temporarySite(t);
   const { entries } = await buildPages({ out });
   const runtime = await collectFiles();
-  const expected = [...runtime, WORKER_FILE, PRECACHE_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE].sort();
+  const expected = [...runtime, WORKER_FILE, PRECACHE_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE, ...DISTRIBUTION_FILES].sort();
 
   assert.deepEqual(await walk(out), expected, 'no extra file, no missing file');
-  assert.equal(entries.length, runtime.length + 4);
+  assert.equal(entries.length, runtime.length + 4 + DISTRIBUTION_FILES.length);
   assert.equal(runtime.length > 0, true, 'the runtime list is not empty');
 });
 
@@ -79,11 +80,21 @@ test('the deployment never contains a repository-only file', async (t) => {
   for (const forbidden of ['android/', 'test/', '.github/', 'scripts/', 'docs/', '.git']) {
     assert.deepEqual(staged.filter((path) => path.startsWith(forbidden)), [], `nothing under ${forbidden}`);
   }
-  for (const name of ['package.json', 'brand.json', 'README.md', 'LICENSE', 'sw.js.map']) {
+  for (const name of ['package.json', 'brand.json', 'README.md', 'sw.js.map']) {
     assert.equal(staged.includes(name), false, `${name} is not published`);
   }
   assert.deepEqual(staged.filter((path) => /\.(?:jks|keystore|p12|pem|key|apk|aab)$/.test(path)), [], 'no key or package artifact');
   assert.equal(staged.includes('android/keystore/keystore.properties'), false);
+});
+
+test('the licence and the third-party notices ship with the site', async (t) => {
+  const out = await temporarySite(t);
+  await buildPages({ out });
+  const runtime = new Set(await collectFiles());
+  for (const file of DISTRIBUTION_FILES) {
+    assert.deepEqual(await readFile(join(out, file)), await readFile(join(projectRoot, file)), `${file} is staged byte-for-byte`);
+    assert.equal(runtime.has(file), false, `${file} is not part of the offline runtime surface`);
+  }
 });
 
 test('every copied file is byte-identical to its source', async (t) => {
@@ -101,6 +112,7 @@ test('the manifest is staged and keeps its subpath-safe URLs', async (t) => {
   await buildPages({ out });
   const manifest = JSON.parse(await readFile(join(out, 'manifest.webmanifest'), 'utf8'));
   assert.equal(manifest.name, BRAND.name);
+  assert.equal('id' in manifest, false, 'no id: the resolved start_url is the identity');
   assert.equal(manifest.start_url, './');
   assert.equal(manifest.scope, './');
   assert.ok(manifest.icons.length >= 3);
@@ -113,10 +125,16 @@ test('the 404 page targets the site root and keeps the fragment', async () => {
   const html = notFoundPage('/drypoint/');
   const base = html.match(/<base href="([^"]+)">/)?.[1];
   assert.equal(base, '/drypoint/', 'the document base is the deployment root');
-  assert.match(html, /<meta http-equiv="refresh" content="0; url=\/drypoint\/">/);
+  assert.ok(html.includes('<meta http-equiv="refresh" content="0; url=/drypoint/">'));
 
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
-  assert.ok(script, 'the redirect script is inline and testable');
+  // Extracted by index, not by a tag regex: a pattern that only knows
+  // `<script>` would accept a document whose script element is spelled
+  // differently and then test the wrong text.
+  const open = html.indexOf('<script>');
+  const close = html.indexOf('</script>', open + 1);
+  assert.ok(open >= 0 && close > open, 'the redirect script is inline and testable');
+  assert.equal(html.indexOf('<script>', open + 1), -1, 'there is exactly one script element');
+  const script = html.slice(open + '<script>'.length, close);
   for (const hash of ['#layer-2', '']) {
     const replaced = [];
     vm.runInNewContext(script, { location: { hash, replace: (url) => replaced.push(url) } });
@@ -201,6 +219,44 @@ test('the command line stages and then verifies the same tree', async (t) => {
     (error) => error.status === 2 && /unknown option/.test(error.stderr),
     'an unknown option is a usage error'
   );
+});
+
+test('the staged document carries the offline-only Content-Security-Policy', async (t) => {
+  const out = await temporarySite(t);
+  await buildPages({ out });
+  const html = await readFile(join(out, 'index.html'), 'utf8');
+
+  const meta = html.match(/<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/);
+  assert.ok(meta, 'index.html declares a Content-Security-Policy');
+  const content = /content="([^"]+)"/.exec(meta[0])?.[1];
+  assert.ok(content, 'the policy is in the meta element');
+  const directives = Object.fromEntries(
+    content.split(';').map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+      const [name, ...sources] = entry.split(/\s+/);
+      return [name, sources];
+    })
+  );
+  assert.deepEqual(directives, {
+    'default-src': ["'self'"],
+    'img-src': ["'self'", 'data:', 'blob:'],
+    'style-src': ["'self'", "'unsafe-inline'"],
+    'script-src': ["'self'"],
+  }, 'the policy is exactly the offline one');
+
+  // Nothing in it can reach another origin, and the tokens that are not
+  // 'self' are the two local image kinds the editor creates itself.
+  const allowed = new Set(["'self'", "'unsafe-inline'", 'data:', 'blob:']);
+  for (const [name, sources] of Object.entries(directives)) {
+    for (const source of sources) {
+      assert.ok(allowed.has(source), `${name} does not allow ${source}`);
+      assert.doesNotMatch(source, /\*|^[a-z]+:\/\/|^https?:$/i, `${name} ${source} is not a remote origin`);
+    }
+  }
+  // No inline script: the policy would block it, and the app must not rely on
+  // an exemption it does not have.
+  const scripts = [...html.matchAll(/<script\b([^>]*)>/g)];
+  assert.ok(scripts.length >= 2, 'the vendor script and the module entry are both present');
+  for (const [, attributes] of scripts) assert.match(attributes, /\bsrc="/, 'every script has a src');
 });
 
 test('the default output directory is the git-ignored _site', async () => {

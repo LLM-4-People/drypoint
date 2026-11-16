@@ -18,11 +18,16 @@ import {
   checkReleaseWorkflow,
   checkWorkflow,
   checkWorkflows,
+  commandLines,
   jobsOf,
+  needsOf,
   topLevelBlock,
   usesReferences,
+  withoutRunBlocks,
 } from '../scripts/check-workflows.mjs';
 import { projectRoot } from './helpers/project-files.mjs';
+import { collectFiles } from '../scripts/precache.mjs';
+import { manifestTypeProblem, smokePaths } from '../scripts/smoke-pages.mjs';
 
 const CHECKOUT_SHA = '3d3c42e5aac5ba805825da76410c181273ba90b1';
 
@@ -52,6 +57,26 @@ jobs:
 
 test('a compliant workflow has no findings', () => {
   assert.deepEqual(checkWorkflow(VALID), []);
+});
+
+test('a uses: line inside a run: script is not an action reference', () => {
+  // Scanning the whole file as one blob reported an echo as an unpinned action,
+  // and — worse — a real pin could hide behind that noise.
+  const text = VALID.replace(
+    '    steps:\n',
+    '    steps:\n      - name: Echo\n        run: |\n          echo "uses: actions/checkout@v1"\n          echo done\n'
+  );
+  assert.deepEqual(checkWorkflow(text), [], 'a script line is not workflow YAML');
+  // The real reference beside it is still read.
+  const planted = text.replace(`uses: actions/checkout@${CHECKOUT_SHA}`, 'uses: actions/checkout@v7');
+  assert.ok(checkWorkflow(planted).some((finding) => /not pinned to a 40-character commit/.test(finding)), 'the real one is still checked');
+});
+
+test('uses with a space before the colon is still a reference', () => {
+  const spaced = VALID.replace('uses: actions/checkout@', 'uses : actions/checkout@');
+  assert.deepEqual(checkWorkflow(spaced), [], 'the same action, the same pin, accepted');
+  const unpinned = spaced.replace(CHECKOUT_SHA, 'v7');
+  assert.ok(checkWorkflow(unpinned).some((finding) => /not pinned to a 40-character commit/.test(finding)), 'spacing is not a bypass');
 });
 
 test('a tag or branch reference is rejected', () => {
@@ -95,7 +120,80 @@ test('write-all is rejected and a checkout must not persist credentials', () => 
   assert.ok(checkWorkflow(persisting).some((finding) => /persist-credentials: false/.test(finding)));
 });
 
-test('the release workflow must be tag-only and verify the tag', () => {
+test('a trailing comment does not relax the permissions rule', () => {
+  // `permissions: write-all  # temporary` grants exactly what the bare form
+  // grants; the `\s*$` anchor used to make the comment a bypass.
+  assert.ok(checkWorkflow(VALID.replace('  contents: read', '  write-all  # temporary')).some((finding) => /write-all/.test(finding)));
+  assert.ok(checkWorkflow(VALID.replace('  contents: read', '  read-all # TODO')).some((finding) => /write-all\/read-all/.test(finding)));
+  // A comment that merely mentions it is not a grant.
+  assert.deepEqual(checkWorkflow(VALID.replace('  contents: read', '  contents: read # never write-all')), []);
+});
+
+test('the required job must inspect every leg in its needs list', () => {
+  const required = (results) => `name: Aggregate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aggregate
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: echo web
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [web]
+    steps:
+      - run: echo browser
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [web]
+    steps:
+      - run: echo android
+  required:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: always()
+    needs: [web, browser, android]
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+${results}
+`;
+  const explicit = '            const results = { web: "${{ needs.web.result }}", browser: "${{ needs.browser.result }}" };';
+  const findings = checkWorkflow(required(explicit), { file: 'checks.yml' });
+  assert.ok(
+    findings.some((finding) => /job "required" depends on "android" but never inspects its result/.test(finding)),
+    'a leg added to needs without a reader is drift, not a pass'
+  );
+
+  const derived = '            const results = ${{ toJSON(needs) }};';
+  assert.deepEqual(
+    checkWorkflow(required(derived), { file: 'checks.yml' }),
+    [],
+    'toJSON(needs) covers every leg, including one added later'
+  );
+  assert.deepEqual(needsOf(jobsOf(required(derived)).find((job) => job.name === 'required').block), ['web', 'browser', 'android']);
+  // An ordinary job's needs is an ordering edge, not a result to read.
+  const plain = '            const results = { web: "${{ needs.web.result }}" };';
+  assert.deepEqual(
+    checkWorkflow(required(plain), { file: 'checks.yml' }).filter((finding) => /"browser"|"android"/.test(finding)),
+    ['checks.yml: job "required" depends on "browser" but never inspects its result', 'checks.yml: job "required" depends on "android" but never inspects its result']
+  );
+});
+
+test('the release workflow must be tag-only and verify the tag on a command line', () => {
   const release = `name: Release
 
 on:
@@ -115,13 +213,26 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Publish
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag
+        run: |
+          args=("$GITHUB_REF_NAME")
+          args+=(--verify-tag)
+          gh release create "\${args[@]}"
 `;
   assert.deepEqual(checkReleaseWorkflow(release), []);
   assert.ok(checkReleaseWorkflow(release.replace("tags: ['v*']", 'branches: [main]')).some((finding) => /must trigger on tags/.test(finding)));
   assert.ok(checkReleaseWorkflow(release.replace('    tags:', '    branches: [main]\n    tags:')).some((finding) => /must not trigger on branches/.test(finding)));
-  assert.ok(checkReleaseWorkflow(release.replace(' --verify-tag', '')).some((finding) => /--verify-tag/.test(finding)));
+  assert.ok(checkReleaseWorkflow(release.replace(/--verify-tag/g, '')).some((finding) => /--verify-tag/.test(finding)));
   assert.ok(checkReleaseWorkflow(release.replace('  push:', '  pull_request:')).some((finding) => /must not trigger on pull_request/.test(finding)));
+
+  // The bypass: the flag survives only as a comment.
+  const commented = release.replace('          args+=(--verify-tag)', '          # args+=(--verify-tag)');
+  assert.ok(
+    checkReleaseWorkflow(commented).some((finding) => /--verify-tag on a command line/.test(finding)),
+    'a commented-out flag is not a flag'
+  );
+  // A commented-out whole command is the same bypass.
+  const everything = release.replace(/          args=.*\n          args\+=.*\n          gh release create.*\n/, '          # gh release create "$GITHUB_REF_NAME" --verify-tag\n          echo nothing\n');
+  assert.ok(checkReleaseWorkflow(everything).some((finding) => /--verify-tag/.test(finding)));
 });
 
 test('every workflow file in the tree satisfies the policy', async () => {
@@ -202,25 +313,58 @@ test('the aggregate job is named required and is the only one', async () => {
   }
 });
 
-test('checks.yml proves generated files did not drift and the browser fails closed', async () => {
+test('checks.yml runs the gates, covers the Node matrix and proves the APK identity', async () => {
   const checks = await readFile(join(projectRoot, WORKFLOW_DIR, 'checks.yml'), 'utf8');
-  assert.match(checks, /node: \['22', '24'\]/, 'the web matrix covers both supported Node lines');
+  assert.match(checks, /node: \['22', '24', '26'\]/, 'the web matrix covers every supported Node line');
   assert.match(checks, /npm run build:brand -- --check/);
   assert.match(checks, /npm run check:precache/);
+  assert.match(checks, /npm run docs:check/, 'the documentation gate is in the merge gate');
+  assert.match(checks, /npm run workflows:check/, 'the workflow policy is in the merge gate');
   assert.match(checks, /git diff --exit-code/, 'a build that rewrote a generated file fails');
+  assert.match(checks, /git status --porcelain/, 'an untracked generated file fails too');
   assert.match(checks, /D110_CHROME=/, 'the browser job names the browser explicitly');
   assert.match(checks, /CI: 'true'/, 'a missing browser fails, never skips');
   assert.match(checks, /ANDROID_PLATFORM: android-36/);
   assert.match(checks, /ANDROID_BUILD_TOOLS: '36\.0\.0'/);
+  assert.match(checks, /bash scripts\/android-sdk\.sh/, 'the toolchain install is one shared script');
   assert.match(checks, /apksigner.*verify/s);
+  // The package the phone installs, not only its versionName.
+  assert.match(checks, /brand\.json'\)\.appId/);
+  assert.match(checks, /--version-code/);
+  assert.match(checks, /versionCode='\$\{version_code\}'/);
+  assert.match(checks, /ANDROID_ALLOW_TEST_KEY: 'true'/, 'the gate declares its throwaway key');
+});
+
+test('the Android toolchain is installed by one script, with no masked licence failure', async () => {
+  const script = await readFile(join(projectRoot, 'scripts', 'android-sdk.sh'), 'utf8');
+  assert.match(script, /platforms;\$\{ANDROID_PLATFORM\}/);
+  assert.match(script, /build-tools;\$\{ANDROID_BUILD_TOOLS\}/);
+  assert.match(script, /All SDK package licenses accepted/, 'only the known benign outcome is accepted');
+  assert.doesNotMatch(script, /--licenses[^\n]*\|\|\s*true/, 'a licence failure is not masked');
+  assert.match(script, /set \+o pipefail/, "yes's SIGPIPE is not read as a licence failure");
+  for (const workflow of ['checks.yml', RELEASE_FILE]) {
+    const text = await readFile(join(projectRoot, WORKFLOW_DIR, workflow), 'utf8');
+    assert.match(text, /bash scripts\/android-sdk\.sh/, `${workflow} uses the one script`);
+    assert.doesNotMatch(text, /sdkmanager" --licenses/, `${workflow} does not keep a second copy`);
+  }
 });
 
 test('the release builds with the same pinned Android toolchain the gate proved', async () => {
   const release = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
   assert.match(release, /ANDROID_PLATFORM: android-36/, 'the release names the platform');
   assert.match(release, /ANDROID_BUILD_TOOLS: '36\.0\.0'/, 'the release names the build tools');
-  assert.match(release, /platforms;\$ANDROID_PLATFORM/, 'the release installs the platform it names');
-  assert.match(release, /build-tools;\$ANDROID_BUILD_TOOLS/, 'the release installs the build tools it names');
+});
+
+test('a tag off main cannot publish, and the build runs in the release environment', async () => {
+  const release = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
+  const build = jobsOf(release).find((job) => job.name === 'build').block;
+  // A depth-1 clone cannot answer "is this commit on main?", so the checkout
+  // fetches the history and the tags the check needs.
+  assert.match(build, /fetch-depth: 0/);
+  assert.match(build, /fetch-tags: true/);
+  assert.match(release, /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/, 'the tagged commit must be an ancestor of main');
+  assert.match(release, /is not an ancestor of origin\/main/, 'the refusal is explicit');
+  assert.match(build, /^ {4}environment: release$/m, 'the build job uses the v* -scoped environment');
 });
 
 test('the release publishes the APK, checksum and changelog notes', async () => {
@@ -239,28 +383,72 @@ test('the release publishes the APK, checksum and changelog notes', async () => 
   assert.match(release, /actions\/attest-build-provenance@/);
   assert.match(release, /gh release create/);
   assert.match(release, /--verify-tag/);
+  assert.doesNotMatch(release, /--prerelease/, 'tags are strict vMAJOR.MINOR.PATCH, so the prerelease branch was dead');
   assert.doesNotMatch(release, /--draft/, 'a release is never a draft');
-  assert.match(release, /--latest/, 'a non-prerelease is the latest release');
-  assert.match(release, /--prerelease/);
+  assert.match(release, /--latest/, 'a release is the latest release');
   assert.match(release, /git diff --exit-code/, 'the build may not rewrite a tracked file');
+  assert.match(release, /git status --porcelain/, 'nor leave an untracked one');
   assert.match(release, /ANDROID_KEYSTORE_BASE64/);
   assert.match(release, /base64 --decode/);
 });
 
-test('pages deploys the staged site and smoke-tests the real responses', async () => {
+test('re-running the release for an existing tag verifies it instead of failing', async () => {
+  const release = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
+  const publish = jobsOf(release).find((job) => job.name === 'publish').block;
+  assert.match(publish, /gh release view "\$GITHUB_REF_NAME"/, 'an existing release is detected');
+  assert.match(publish, /gh release download "\$GITHUB_REF_NAME"/, 'its assets are fetched for comparison');
+  assert.match(publish, /cmp -s "dist\/\$\{asset\}" "\$RUNNER_TEMP\/existing\/\$\{asset\}"/, 'the bytes are compared, not the names');
+  assert.match(publish, /differs from this build/, 'a different asset fails the job');
+  assert.match(publish, /already exists with these exact assets/);
+  assert.match(publish, /exit 0/, 'an identical release is a pass, not a failure');
+});
+
+test('pages deploys only a successful Checks run for the commit it validated', async () => {
   const pages = await readFile(join(projectRoot, WORKFLOW_DIR, 'pages.yml'), 'utf8');
   assert.match(pages, /^concurrency:\n  group: pages\n  cancel-in-progress: false$/m);
+  assert.match(pages, /workflow_run:/, 'the trigger is the Checks run');
+  assert.match(pages, /workflows: \[Checks\]/);
+  assert.match(pages, /types: \[completed\]/);
+  assert.match(pages, /branches: \[main\]/);
+  // A red Checks run must not deploy: the condition is on the job and the
+  // commit checked out is the run's own head SHA.
+  assert.match(pages, /github\.event\.workflow_run\.conclusion == 'success'/, 'a red run cannot deploy');
+  assert.match(pages, /if: github\.event_name == 'workflow_dispatch' \|\| github\.event\.workflow_run\.conclusion == 'success'/);
+  for (const job of ['build', 'deploy']) {
+    const block = jobsOf(pages).find((entry) => entry.name === job).block;
+    assert.match(block, /ref: \$\{\{ github\.event\.workflow_run\.head_sha \|\| github\.sha \}\}/, `${job} checks out the validated commit`);
+  }
+  assert.match(pages, /workflow_dispatch:/, 'a manual deploy is still possible');
+
   const deploy = jobsOf(pages).find((job) => job.name === 'deploy').block;
   assert.match(deploy, /pages: write/);
   assert.match(deploy, /id-token: write/);
   assert.match(deploy, /name: github-pages/);
   assert.match(pages, /npm run pages:build/);
   assert.match(pages, /node scripts\/build-pages\.mjs --check/);
-  for (const path of ['/sw.js', '/manifest.webmanifest', '/assets/precache.js']) {
-    assert.ok(pages.includes(`probe ${path}`), `the smoke test requests ${path}`);
+  assert.match(pages, /node scripts\/smoke-pages\.mjs --base "\$base" --cache-bust "\$RUN_ID"/, 'the smoke test reads the worker manifest');
+});
+
+test('the pages smoke test covers every precached file exactly once', async () => {
+  const paths = await smokePaths();
+  const files = await collectFiles();
+  assert.ok(files.length >= 64, `the runtime surface lists every file (${files.length})`);
+  assert.deepEqual(paths, ['/', ...files.map((file) => `/${file}`)].sort(), 'every runtime file plus the document root');
+  assert.equal(paths.filter((path) => path === '/').length, 1, 'the root is requested once');
+  assert.equal(paths.includes('/manifest.webmanifest'), true);
+  assert.equal(manifestTypeProblem('application/manifest+json; charset=utf-8'), null);
+  assert.match(manifestTypeProblem('text/plain'), /served as "text\/plain"/);
+  assert.match(manifestTypeProblem(null), /no content type/);
+});
+
+test('codeql analyses the Android shell too', async () => {
+  const codeql = await readFile(join(projectRoot, WORKFLOW_DIR, 'codeql.yml'), 'utf8');
+  assert.match(codeql, /- language: java-kotlin/);
+  assert.match(codeql, /- language: java-kotlin\n\s+build-mode: none/, 'no SDK or Gradle build is needed');
+  assert.match(codeql, /build-mode: \$\{\{ matrix\.build-mode \}\}/);
+  for (const language of ['javascript-typescript', 'actions']) {
+    assert.match(codeql, new RegExp(`- language: ${language}\\n\\s+build-mode: none`));
   }
-  assert.match(pages, /application\/manifest\+json/);
-  assert.match(pages, /did not answer 200/);
 });
 
 test('docs runs on Markdown and workflow changes and runs every repository gate', async () => {

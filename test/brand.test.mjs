@@ -73,12 +73,9 @@ test('every generated file byte-equals its renderer', async () => {
 test('index.html and the README name the product from BRAND', () => {
   const index = read('index.html');
   assert.equal(index.match(/<title>([^<]+)<\/title>/)?.[1], BRAND.name, 'index.html <title>');
-  const wordmark = index
-    .match(/<span class="brand-text">([\s\S]*?)<\/span>/)?.[1]
-    .replace(/<[^>]+>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  assert.equal(wordmark, BRAND.name, 'the header wordmark');
+  // The wordmark element is compared as one literal, so a nested element or a
+  // second word does not silently pass a tag-stripping comparison.
+  assert.ok(index.includes(`<span class="brand-text">${BRAND.name}</span>`), 'the header wordmark is exactly the brand name');
   assert.equal(read('README.md').match(/^#\s+(.+)$/m)?.[1].trim(), BRAND.name, 'README H1');
 });
 

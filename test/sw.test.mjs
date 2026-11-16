@@ -86,6 +86,7 @@ function createWorker({
   failUrl = null,
   plan = () => ({}),
   clients = [],
+  scope = BASE,
   swSource: source = swSource,
   missingManifest = false,
   manifestSource: precache = manifestSource,
@@ -115,11 +116,13 @@ function createWorker({
 
   const state = { online, failUrl, claimed: 0, skipped: 0, errors: [], messages: [], aborted: false };
   const handlers = {};
-  const clientList = clients.length ? clients : [{ postMessage: (message) => state.messages.push(message) }];
+  // A page is only reached when it is inside the worker's scope, so the default
+  // fixture carries the URL a real client always has.
+  const clientList = clients.length ? clients : [{ url: `${BASE}index.html`, postMessage: (message) => state.messages.push(message) }];
 
   const self = {
     location: { href: `${BASE}sw.js`, origin: new URL(BASE).origin },
-    registration: { scope: BASE },
+    registration: { scope },
     clients: {
       async matchAll() {
         return clientList;
@@ -292,6 +295,29 @@ test('cross-origin and non-GET requests bypass the worker', async () => {
 
   assert.equal(worker.dispatch('fetch', { request: { method: 'GET', mode: 'cors', url: 'https://other.test/x.js' } }), undefined);
   assert.equal(worker.dispatch('fetch', { request: { method: 'POST', mode: 'cors', url: `${BASE}api` } }), undefined);
+});
+
+test('a precache failure reaches only the pages inside this worker scope', async () => {
+  const inside = [];
+  const outside = [];
+  const scope = 'https://example.test/drypoint/';
+  const worker = createWorker({
+    failUrl: 'src/main.js',
+    scope,
+    clients: [
+      // `clients.matchAll` is origin-wide: a page registered by another app on
+      // the same origin is a client, but it is not served by this cache and the
+      // message is not about its build.
+      { url: `${scope}index.html`, postMessage: (message) => inside.push(message) },
+      { url: 'https://example.test/another-app/index.html', postMessage: (message) => outside.push(message) },
+      { postMessage: (message) => outside.push(message) },
+    ],
+  });
+  await assert.rejects(worker.dispatch('install', {}), /Precache failed/);
+
+  assert.equal(inside.length, 1, 'the page in scope hears about the failure');
+  assert.equal(inside[0].type, 'precache-error');
+  assert.deepEqual(outside, [], 'a client outside the scope is never notified');
 });
 
 test('a missing file fails the install loudly and leaves no half cache', async () => {

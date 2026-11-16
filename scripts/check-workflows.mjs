@@ -28,6 +28,8 @@ import { fileURLToPath } from 'node:url';
 export const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
 export const WORKFLOW_DIR = '.github/workflows';
 export const RELEASE_FILE = 'release.yml';
+/** The one aggregate job whose whole purpose is to read its legs' results. */
+export const AGGREGATE_JOB = 'required';
 
 /**
  * The only actions this repository may use, each pinned to one commit. A
@@ -53,11 +55,111 @@ export const PINNED_ACTIONS = Object.freeze({
 
 const SHA = /^[0-9a-f]{40}$/;
 
+/**
+ * Remove a YAML trailing comment from one line.
+ *
+ * `permissions: write-all  # temporary` grants exactly as much as the bare
+ * form, and `uses: actions/checkout@v7  # pinned later` is not a pin. A `#`
+ * only starts a comment when it is at the start of the line or follows
+ * whitespace and sits outside a quoted scalar.
+ *
+ * @param {string} line
+ * @returns {string} the line without its comment, right-trimmed
+ */
+export function stripYamlComment(line) {
+  const text = String(line);
+  let quote = null;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (quote) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character === '#' && (index === 0 || /\s/.test(text[index - 1]))) return text.slice(0, index).trimEnd();
+  }
+  return text.trimEnd();
+}
+
+/** Every line with its trailing comment removed; the line count is unchanged. */
+export function stripYamlComments(text) {
+  return String(text)
+    .split('\n')
+    .map(stripYamlComment)
+    .join('\n');
+}
+
+/** The `run:` key of one line, with its indentation and its block indicator. */
+const RUN_KEY = /^(\s*)(?:-\s+)?run\s*:\s*([|>][+-]?\d*)?\s*(.*)$/;
+
+/**
+ * Split a workflow into what is syntax and what is a shell script.
+ *
+ * The body of a `run:` block is not workflow YAML: a line there that reads
+ * `uses: actions/checkout@v1` is an echo, and a comment there is not a
+ * command. Scanning the file as one blob both invented findings and let real
+ * ones hide — a `# gh release create … --verify-tag` comment satisfied the tag
+ * check, and a `run:` block mentioning `uses:` was reported as an unpinned
+ * action.
+ *
+ * @param {string} text
+ * @returns {{yaml: string, commands: string[]}}
+ *   `yaml` has every run body blanked (line numbers preserved); `commands`
+ *   holds the non-comment command lines, one per entry.
+ */
+export function splitRunBlocks(text) {
+  const lines = String(text).split('\n');
+  const yaml = [];
+  const commands = [];
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    const match = RUN_KEY.exec(line);
+    if (!match) {
+      yaml.push(line);
+      continue;
+    }
+    const [, indent, indicator, inline] = match;
+    if (!indicator) {
+      // `run: npm test` — one command on the key line.
+      const command = stripYamlComment(inline);
+      if (command && !command.startsWith('#')) commands.push(command);
+      yaml.push(line.slice(0, line.length - inline.length));
+      continue;
+    }
+    yaml.push(line.slice(0, line.length - inline.length));
+    const width = indent.length + 1;
+    for (let body = index + 1; body < lines.length; body++) {
+      const bodyLine = lines[body];
+      if (bodyLine.trim() && bodyLine.length - bodyLine.trimStart().length < width) break;
+      const command = stripYamlComment(bodyLine);
+      if (command.trim() && !command.trimStart().startsWith('#')) commands.push(command.trim());
+      yaml.push('');
+      index = body;
+    }
+  }
+  return { yaml: yaml.join('\n'), commands };
+}
+
+/** The workflow with every `run:` body blanked: only YAML keys remain. */
+export function withoutRunBlocks(text) {
+  return splitRunBlocks(text).yaml;
+}
+
+/** The command lines of every `run:` block, comments excluded. */
+export function commandLines(text) {
+  return splitRunBlocks(text).commands;
+}
+
 /** The `uses:` values in one workflow, with their 1-based line numbers. */
 export function usesReferences(text) {
   const references = [];
-  for (const [index, line] of String(text).split('\n').entries()) {
-    const match = /^\s*(?:-\s*)?uses:\s*(\S+?)(?:\s+#.*)?\s*$/.exec(line);
+  for (const [index, line] of stripYamlComments(withoutRunBlocks(text)).split('\n').entries()) {
+    // `uses :` is valid YAML and runs the same action; the spaces are not a
+    // loophole around the pin check.
+    const match = /^\s*(?:-\s*)?uses\s*:\s*(\S+)$/.exec(line);
     if (match) references.push({ line: index + 1, value: match[1] });
   }
   return references;
@@ -90,8 +192,8 @@ export function stepAt(lines, from) {
 
 /** The top-level key block of one workflow (`on:`, `permissions:`, `jobs:` …). */
 export function topLevelBlock(text, key) {
-  const lines = String(text).split('\n');
-  const start = lines.findIndex((line) => new RegExp(`^${key}:`).test(line));
+  const lines = stripYamlComments(text).split('\n');
+  const start = lines.findIndex((line) => new RegExp(`^${key}\\s*:`).test(line));
   if (start < 0) return null;
   let end = start + 1;
   while (end < lines.length && (!lines[end].trim() || /^\s/.test(lines[end]))) end++;
@@ -100,8 +202,8 @@ export function topLevelBlock(text, key) {
 
 /** The job names under `jobs:`, with the block each one owns. */
 export function jobsOf(text) {
-  const lines = String(text).split('\n');
-  const start = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  const lines = stripYamlComments(text).split('\n');
+  const start = lines.findIndex((line) => /^jobs\s*:\s*$/.test(line));
   if (start < 0) return [];
   const jobs = [];
   for (let index = start + 1; index < lines.length; index++) {
@@ -116,6 +218,62 @@ export function jobsOf(text) {
 }
 
 /**
+ * The job names one job declares in `needs:`.
+ *
+ * Both forms YAML allows are read: the flow list (`needs: [web, browser]`) and
+ * the block list.
+ *
+ * @param {string} jobBlock
+ * @returns {string[]}
+ */
+export function needsOf(jobBlock) {
+  const lines = stripYamlComments(jobBlock).split('\n');
+  for (const [index, line] of lines.entries()) {
+    const flow = /^\s{4}needs\s*:\s*\[([^\]]*)\]\s*$/.exec(line);
+    if (flow) {
+      return flow[1]
+        .split(',')
+        .map((name) => name.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean);
+    }
+    if (/^\s{4}needs\s*:\s*$/.test(line)) {
+      const names = [];
+      for (let next = index + 1; next < lines.length; next++) {
+        const item = /^\s{6,}-\s*(\S+)\s*$/.exec(lines[next]);
+        if (!item) break;
+        names.push(item[1].replace(/^['"]|['"]$/g, ''));
+      }
+      return names;
+    }
+  }
+  return [];
+}
+
+/**
+ * The `needs:` entries a job never reads.
+ *
+ * `toJSON(needs)` hands the whole map to the step, so it covers every leg by
+ * construction. An explicit map names each one, and a leg added to `needs`
+ * without being named there is silently ignored: the aggregate job would go
+ * green while its result was never inspected. That is the drift this finds.
+ *
+ * @param {string} jobBlock
+ * @returns {string[]} the declared legs with no reference in the block
+ */
+export function uninspectedNeeds(jobBlock) {
+  const needs = needsOf(jobBlock);
+  if (!needs.length) return [];
+  if (/toJSON\(\s*needs\s*\)/.test(jobBlock)) return [];
+  return needs.filter((name) => {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return !(
+      new RegExp(`needs\\.${escaped}\\b`).test(jobBlock) ||
+      new RegExp(`['"]${escaped}['"]\\s*:`).test(jobBlock)
+    );
+  });
+}
+
+/**
  * Check one workflow's text against the policy.
  *
  * @param {string} text
@@ -124,7 +282,7 @@ export function jobsOf(text) {
  */
 export function checkWorkflow(text, { file = 'workflow' } = {}) {
   const findings = [];
-  const source = String(text);
+  const source = stripYamlComments(withoutRunBlocks(text));
   const lines = source.split('\n');
 
   for (const reference of usesReferences(source)) {
@@ -143,23 +301,29 @@ export function checkWorkflow(text, { file = 'workflow' } = {}) {
     }
   }
 
-  if (!/^permissions:/m.test(source)) findings.push(`${file}: no top-level permissions block`);
-  if (/^permissions:\s*(?:write-all|read-all)\s*$/m.test(source)) {
+  if (!/^permissions\s*:/m.test(source)) findings.push(`${file}: no top-level permissions block`);
+  if (/^permissions\s*:\s*(?:write-all|read-all)\s*$/m.test(source)) {
     findings.push(`${file}: permissions are declared per scope, never write-all/read-all`);
   }
-  if (!/^concurrency:/m.test(source)) findings.push(`${file}: no top-level concurrency block`);
+  if (!/^concurrency\s*:/m.test(source)) findings.push(`${file}: no top-level concurrency block`);
   if (/pull_request_target/.test(source)) findings.push(`${file}: pull_request_target is banned`);
 
   const jobs = jobsOf(source);
   if (!jobs.length) findings.push(`${file}: no jobs`);
   for (const job of jobs) {
-    if (!/^\s{4}timeout-minutes:\s*\d+\s*$/m.test(job.block)) {
+    if (!/^\s{4}timeout-minutes\s*:\s*\d+\s*$/m.test(job.block)) {
       findings.push(`${file}: job "${job.name}" has no timeout-minutes`);
+    }
+    // Only the aggregate gate exists to read its legs' results; an ordinary
+    // job's `needs:` is an ordering edge, not a result to inspect.
+    if (job.name !== AGGREGATE_JOB) continue;
+    for (const leg of uninspectedNeeds(job.block)) {
+      findings.push(`${file}: job "${job.name}" depends on "${leg}" but never inspects its result`);
     }
   }
 
   for (const [index, line] of lines.entries()) {
-    if (!/^\s*(?:-\s*)?uses:\s*actions\/checkout@/.test(line)) continue;
+    if (!/^\s*(?:-\s*)?uses\s*:\s*actions\/checkout@/.test(line)) continue;
     if (!stepAt(lines, index).join('\n').includes('persist-credentials: false')) {
       findings.push(`${file}: line ${index + 1}: checkout must set persist-credentials: false`);
     }
@@ -168,16 +332,25 @@ export function checkWorkflow(text, { file = 'workflow' } = {}) {
   return findings;
 }
 
-/** Check the release workflow: version tags only, and the tag is verified. */
+/**
+ * Check the release workflow: version tags only, and the tag is verified.
+ *
+ * `--verify-tag` must be on a command line. It used to be found anywhere in
+ * the file, so a comment that mentioned it — or a `run:` script that only
+ * echoed it — satisfied the gate while the real `gh release create` ran
+ * without it.
+ */
 export function checkReleaseWorkflow(text, { file = RELEASE_FILE } = {}) {
   const findings = [];
   const triggers = topLevelBlock(text, 'on');
   if (!triggers) return [`${file}: no on: block`];
-  if (!/^\s+tags:/m.test(triggers)) findings.push(`${file}: the release must trigger on tags`);
+  if (!/^\s+tags\s*:/m.test(triggers)) findings.push(`${file}: the release must trigger on tags`);
   for (const forbidden of ['branches:', 'pull_request:', 'pull_request_target:', 'workflow_dispatch:', 'schedule:']) {
     if (triggers.includes(forbidden)) findings.push(`${file}: the release must not trigger on ${forbidden.replace(':', '')}`);
   }
-  if (!/--verify-tag/.test(text)) findings.push(`${file}: the release must pass --verify-tag`);
+  if (!commandLines(text).some((line) => /(?:^|\W)--verify-tag(?:$|\W)/.test(line))) {
+    findings.push(`${file}: the release must pass --verify-tag on a command line`);
+  }
   return findings;
 }
 

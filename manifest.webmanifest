@@ -1,7 +1,6 @@
 {
   "name": "Drypoint",
   "short_name": "Drypoint",
-  "id": "./",
   "description": "Offline label designer for NIIMBOT thermal printers.",
   "start_url": "./",
   "scope": "./",

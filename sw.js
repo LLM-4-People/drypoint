@@ -18,7 +18,7 @@ try {
 }
 
 // Build stamp — written by scripts/precache.mjs. Do not edit by hand.
-const BUILD = '5436145da52140c3';
+const BUILD = 'f4abe09f0eb51d17';
 
 const MANIFEST = self.__PRECACHE;
 const CACHE_PREFIX = 'drypoint-';
@@ -77,9 +77,20 @@ async function digestHex(buffer) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Tell every controlled page about a failure — and only the pages this worker
+ * owns. `matchAll` is origin-wide: another app's registration on the same
+ * origin would otherwise receive `precache-error` messages about a build that
+ * is not its own, and a client that happens to be in another scope is not
+ * served by this cache. The registration scope is the boundary.
+ */
 async function notifyClients(payload) {
   const clients = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
-  for (const client of clients) client.postMessage(payload);
+  const scope = self.registration.scope;
+  for (const client of clients) {
+    if (typeof client.url !== 'string' || !client.url.startsWith(scope)) continue;
+    client.postMessage(payload);
+  }
 }
 
 async function failInstall(problems) {

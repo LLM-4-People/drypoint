@@ -1,7 +1,12 @@
 name: Pages
 
 on:
-  push:
+  # A deployment is what Checks proved, not what a push started. Triggering on
+  # the successful Checks run for main means a red commit can never be
+  # published, and the commit deployed is the one that run validated.
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -15,12 +20,18 @@ concurrency:
 jobs:
   build:
     name: build
+    # `workflow_run` fires for every conclusion; only success may deploy. A
+    # manual dispatch has no triggering run, so it is always allowed.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The commit Checks validated. `github.sha` on a workflow_run event is
+          # the default branch head, which may already have moved on.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
       - name: Use the pinned Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -51,52 +62,30 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Use the pinned Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
-      - name: Smoke-test the deployment
+      - name: Smoke-test every precached file
         env:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           base="${{ steps.deployment.outputs.page_url }}"
-          base="${base%/}"
           if [ -z "$base" ]; then
             echo "::error::the deployment page_url is empty"
             exit 1
           fi
-
-          # The Pages CDN can answer a previous build for a few seconds after a
-          # deployment. Retry, bounded, and fail when it never turns 200.
-          probe() {
-            path="$1"
-            attempt=1
-            while [ "$attempt" -le 12 ]; do
-              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$base$path?smoke=$RUN_ID")" || code="000"
-              if [ "$code" = "200" ]; then
-                echo "200 $base$path"
-                return 0
-              fi
-              echo "attempt $attempt: $base$path answered $code"
-              attempt=$((attempt + 1))
-              sleep 5
-            done
-            echo "::error::$base$path did not answer 200"
-            return 1
-          }
-
-          probe /
-          probe /sw.js
-          probe /manifest.webmanifest
-          probe /assets/precache.js
-
-          type="$(curl -sSI --max-time 20 -H 'Cache-Control: no-cache' "$base/manifest.webmanifest?smoke=$RUN_ID" \
-            | tr -d '\r' | tr '[:upper:]' '[:lower:]' | sed -n 's/^content-type:[[:space:]]*//p' | head -n 1)"
-          echo "manifest content-type: $type"
-          case "$type" in
-            application/manifest+json*) ;;
-            *)
-              echo "::error::the manifest is served as '$type', not application/manifest+json"
-              exit 1
-              ;;
-          esac
+          # The URL list is the worker's own manifest, not a hand-picked few:
+          # a deployment that forgets one file fails here instead of on a
+          # phone. Each URL is retried a bounded number of times and the
+          # manifest's content type is checked too.
+          node scripts/smoke-pages.mjs --base "$base" --cache-bust "$RUN_ID"

@@ -50,6 +50,38 @@ test('the file the build writes is the rendered manifest, not a later edit', asy
   assert.doesNotMatch(xml, /@[A-Z][A-Z0-9_]*@/);
 });
 
+test('the manifest declares the exact permission set and no component it does not need', () => {
+  const xml = renderManifest(read('android/AndroidManifest.template.xml'), { versionName: '1.0.0', versionCode: 10000 });
+
+  const permissions = [...xml.matchAll(/<uses-permission\s+android:name="([^"]+)"/g)].map((match) => match[1]).sort();
+  assert.deepEqual(permissions, [
+    'android.permission.ACCESS_FINE_LOCATION',
+    'android.permission.BLUETOOTH',
+    'android.permission.BLUETOOTH_ADMIN',
+    'android.permission.BLUETOOTH_CONNECT',
+    'android.permission.BLUETOOTH_SCAN',
+  ], 'the exact set the bridge checks, and nothing else');
+  assert.equal(permissions.includes('android.permission.INTERNET'), false, 'the app cannot reach the network');
+
+  for (const component of ['provider', 'service', 'receiver']) {
+    assert.equal(new RegExp(`<${component}\\b`).test(xml), false, `the app declares no <${component}>`);
+  }
+  const activities = [...xml.matchAll(/<activity\b[\s\S]*?>/g)].map((match) => match[0]);
+  assert.equal(activities.length, 1, 'one activity');
+  assert.match(activities[0], /android:name="\.MainActivity"/);
+  assert.match(activities[0], /android:exported="true"/);
+  assert.deepEqual([...xml.matchAll(/android:exported="([^"]+)"/g)].map((match) => match[1]), ['true'], 'only the launcher activity is exported');
+  assert.match(xml, /android\.intent\.action\.MAIN/);
+  assert.match(xml, /android\.intent\.category\.LAUNCHER/);
+});
+
+test('the app is not backed up anywhere', () => {
+  const xml = renderManifest(read('android/AndroidManifest.template.xml'), { versionName: '1.0.0', versionCode: 10000 });
+  assert.match(xml, /android:allowBackup="false"/, 'no cloud or device-to-device copy of the labels or the BLE address');
+  assert.doesNotMatch(xml, /android:allowBackup="true"/);
+  assert.doesNotMatch(xml, /fullBackupContent|dataExtractionRules/, 'no backup rules are configured either');
+});
+
 test('the build resolves the manifest through the one writer', () => {
   const build = read('scripts/build-android.mjs');
   assert.match(build, /await writeManifest\(\{ androidDir, buildDir: staging, versionName: pkg\.version, versionCode \}\)/);

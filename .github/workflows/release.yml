@@ -16,6 +16,9 @@ jobs:
     name: build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # The environment (and, once they are moved, its secrets) is scoped to a
+    # `v*` tag policy in the repository settings; a branch cannot use it.
+    environment: release
     permissions:
       contents: read
       id-token: write
@@ -30,6 +33,22 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The ancestry check below needs the history and the tags, which a
+          # depth-1 clone that fetches one tag does not have.
+          fetch-depth: 0
+          fetch-tags: true
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git rev-parse --verify origin/main > /dev/null
+          # A tag must name a commit main contains. With a shallow clone this
+          # check cannot answer, which is why the checkout fetches everything:
+          # refusing is the safe answer, never "assume it is on main".
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not an ancestor of origin/main; a tag off main may not publish"
+            exit 1
+          fi
+          echo "$GITHUB_SHA is on main"
       - name: Use the pinned Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -40,18 +59,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Install the pinned SDK packages
-        run: |
-          set -euo pipefail
-          sdkmanager="$(command -v sdkmanager || true)"
-          if [ -z "$sdkmanager" ]; then
-            sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          fi
-          if [ ! -x "$sdkmanager" ]; then
-            echo "::error::sdkmanager not found; set ANDROID_HOME to an SDK with cmdline-tools"
-            exit 1
-          fi
-          yes | "$sdkmanager" --licenses > /dev/null || true
-          "$sdkmanager" "platforms;$ANDROID_PLATFORM" "build-tools;$ANDROID_BUILD_TOOLS"
+        run: bash scripts/android-sdk.sh
       - name: The tagged commit passes every gate
         run: |
           set -euo pipefail
@@ -76,7 +84,8 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEYSTORE_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          # The build refuses to invent a key when CI is set.
+          # The build refuses to invent a key when CI is set, and compares the
+          # signing certificate with brand.json.
           CI: 'true'
         run: |
           set -euo pipefail
@@ -104,6 +113,8 @@ jobs:
           retention-days: 7
       - name: The build changed no tracked file
         run: git diff --exit-code
+      - name: The build left no untracked file
+        run: test -z "$(git status --porcelain)"
 
   publish:
     name: publish
@@ -128,23 +139,38 @@ jobs:
           path: dist
       - name: Release notes from the changelog
         run: node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/notes.md"
-      - name: Create the release
+      - name: Publish the release, or prove it already is
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          args=(
-            "$GITHUB_REF_NAME"
-            "dist/drypoint-${version}.apk"
-            "dist/drypoint-${version}.apk.sha256"
-            --verify-tag
-            --title "v${version}"
-            --notes-file "$RUNNER_TEMP/notes.md"
-          )
-          case "$GITHUB_REF_NAME" in
-            *-*) args+=(--prerelease) ;;
-            *) args+=(--latest) ;;
-          esac
-          # Never a draft: the tag proves itself or nothing is published.
-          gh release create "${args[@]}"
+          apk="dist/drypoint-${version}.apk"
+          checksum="${apk}.sha256"
+
+          # A re-run of this workflow for the same tag must not fail, and must
+          # not silently accept a release that carries different bytes. It
+          # exits 0 only when the existing release's assets match the ones this
+          # run built and verified.
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/existing" --clobber
+            for asset in "drypoint-${version}.apk" "drypoint-${version}.apk.sha256"; do
+              if ! cmp -s "dist/${asset}" "$RUNNER_TEMP/existing/${asset}"; then
+                echo "::error::the existing release asset ${asset} differs from this build"
+                exit 1
+              fi
+            done
+            echo "::notice::release $GITHUB_REF_NAME already exists with these exact assets"
+            exit 0
+          fi
+
+          # Tags are strict vMAJOR.MINOR.PATCH (release-notes.mjs refuses
+          # anything else), so a prerelease tag cannot reach this point.
+          gh release create \
+            "$GITHUB_REF_NAME" \
+            "$apk" \
+            "$checksum" \
+            --verify-tag \
+            --title "v${version}" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --latest
