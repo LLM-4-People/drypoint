@@ -250,24 +250,16 @@ export function checkApk({ apk, aapt2, apksigner = '', root = ROOT, expected, ex
 }
 
 function parseArguments(argv) {
-  const options = { apk: '', aapt2: '', apksigner: '', expected: null };
-  const identity = { package: '', versionCode: '', versionName: '' };
+  // The identity is read from its two owners (brand.json and package.json),
+  // never from the command line: a caller-supplied identity would let a gate
+  // assert a package or version the artifact does not carry.
+  const options = { apk: '', aapt2: '', apksigner: '' };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     if (argument === '--apk') options.apk = argv[++index] ?? '';
     else if (argument === '--aapt2') options.aapt2 = argv[++index] ?? '';
     else if (argument === '--apksigner') options.apksigner = argv[++index] ?? '';
-    else if (argument === '--package') identity.package = argv[++index] ?? '';
-    else if (argument === '--version-code') identity.versionCode = argv[++index] ?? '';
-    else if (argument === '--version-name') identity.versionName = argv[++index] ?? '';
     else throw new Error(`unknown option ${argument}`);
-  }
-  const overrides = Object.values(identity).filter(Boolean).length;
-  if (overrides) {
-    if (overrides !== 3) throw new Error('--package, --version-code and --version-name must be given together');
-    const versionCode = Number(identity.versionCode);
-    if (!Number.isInteger(versionCode) || versionCode <= 0) throw new Error('--version-code must be a positive integer');
-    options.expected = { package: identity.package, versionCode, versionName: identity.versionName };
   }
   if (!options.apk) options.apk = defaultApkPath();
   if (!options.aapt2) throw new Error('--aapt2 is required');
