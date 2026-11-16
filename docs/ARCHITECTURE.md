@@ -539,6 +539,27 @@ manifest cannot name (`sw.js`, `assets/precache.js`, `404.html`).
 `npm run check:precache` and `test/precache.test.mjs` fail when the graph, the
 generated manifest, or the worker stamp disagree.
 
+### Accepted deployment limits (1.0.3)
+
+Three facts are recorded as accepted for this release rather than fixed:
+
+- **Assets are not content-hashed.** GitHub Pages serves every asset with a
+  ten-minute cache and cannot set custom headers, so a first or uncontrolled
+  load can mix a cached module with a new document for up to ten minutes. The
+  installed worker is the mitigation: `updateViaCache: 'none'` and a
+  cache-first, digest-checked precache make a controlled page consistent. The
+  fix is content-hashed asset URLs in a later minor, not a header this host
+  cannot send.
+- **`LICENSE` is `application/octet-stream`.** The bytes are correct; the type
+  comes from the host, and the conventional extension is preferred over a
+  `LICENSE.txt` rename or a host rule, which Pages cannot express. The file is
+  a download, which is the intended way to read it outside the app.
+- **The web manifest has no authored `id`.** Chrome derives the identity from
+  the manifest path, which is stable while `start_url` is unchanged. An
+  explicit id was removed because it collided across origins; do not re-add one
+  without a regression test for that collision, and record the reason here if a
+  future release does.
+
 ## Logging
 
 `src/core/log.js` is the only module that touches `console`. It owns:
