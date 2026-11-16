@@ -764,7 +764,7 @@ function jobGateFindings(workflow, file, name, required) {
 }
 
 function buildFindings(workflow, file) {
-  const findings = jobGateFindings(workflow, file, 'build', [
+  const required = [
     'npm ci',
     'node scripts/find-chrome.mjs',
     'npm run verify:all',
@@ -773,7 +773,8 @@ function buildFindings(workflow, file) {
     'node scripts/check-apk.mjs --apk "dist/drypoint-${VERSION}-unsigned.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
     'git diff --exit-code',
     'test -z "$(git status --porcelain)"',
-  ]);
+  ];
+  const findings = jobGateFindings(workflow, file, 'build', required);
   const job = workflow?.jobs?.build;
   if (!isMap(job)) return findings;
   if (job.environment != null) findings.push(`${file}: job "build" must not use the release environment`);
@@ -782,21 +783,45 @@ function buildFindings(workflow, file) {
   if (!condition.includes("needs.resolve.outputs.publish == 'true'") || !condition.includes('workflow_dispatch')) {
     findings.push(`${file}: job "build" must run only for a resolved release or a manual dry run`);
   }
-  const checkout = stepsOf(job).find((step) => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
-  if (!checkout) findings.push(`${file}: job "build" must check out the resolved commit`);
+  const steps = stepsOf(job);
+  const checkout = steps.find((step) => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
+  if (!checkout) findings.push(`${file}: job "build" must check out main`);
   else {
-    if (String(checkout.with?.ref ?? '') !== '${{ needs.resolve.outputs.ref }}') {
-      findings.push(`${file}: job "build" must check out the resolved ref, never tag, main or a movable name`);
+    // The build's own checkout is a fixed ref. A dynamic ref here is the
+    // CodeQL cache-poisoning pattern: the resolved tag/SHA must be data for
+    // git, materialized below, not an actions/checkout target.
+    if (String(checkout.with?.ref ?? '') !== 'main') {
+      findings.push(`${file}: job "build" must check out main, never a dynamic ref or a movable name`);
     }
-    if (!stepsOf(job).some((step) => stepCommands(step).some((command) => command.startsWith('node scripts/check-apk.mjs')))) {
-      findings.push(`${file}: job "build" must check the built APK`);
+    if (checkout.with?.['fetch-depth'] !== 0) findings.push(`${file}: job "build" checkout must fetch the full history`);
+    if (checkout.with?.['fetch-tags'] !== true) findings.push(`${file}: job "build" checkout must fetch the tags`);
+  }
+  const materialize = steps.find((step) => step.env?.REF === '${{ needs.resolve.outputs.ref }}');
+  if (!materialize) {
+    findings.push(`${file}: job "build" must materialize needs.resolve.outputs.ref`);
+  } else {
+    const run = String(materialize.run ?? '');
+    if (!/git worktree add --detach/.test(run)) {
+      findings.push(`${file}: job "build" must materialize the resolved ref as a detached worktree`);
     }
-    if (!stepsOf(job).some((step) => step.env?.ANDROID_ALLOW_TEST_KEY === 'true')) {
-      findings.push(`${file}: job "build" must build with ANDROID_ALLOW_TEST_KEY=true and no release secret`);
+    if (!run.includes('RELEASE_TREE') || !run.includes('GITHUB_ENV')) {
+      findings.push(`${file}: job "build" must export RELEASE_TREE to later steps`);
     }
-    if (!stepsOf(job).some((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@'))) {
-      findings.push(`${file}: job "build" must upload the unsigned artifact`);
+  }
+  for (const command of required) {
+    const holder = steps.find((step) => stepCommands(step).includes(command));
+    if (holder && holder['working-directory'] !== '${{ env.RELEASE_TREE }}') {
+      findings.push(`${file}: job "build" must run "${command}" in the resolved worktree`);
     }
+  }
+  if (!steps.some((step) => stepCommands(step).some((command) => command.startsWith('node scripts/check-apk.mjs')))) {
+    findings.push(`${file}: job "build" must check the built APK`);
+  }
+  if (!steps.some((step) => step.env?.ANDROID_ALLOW_TEST_KEY === 'true')) {
+    findings.push(`${file}: job "build" must build with ANDROID_ALLOW_TEST_KEY=true and no release secret`);
+  }
+  if (!steps.some((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@'))) {
+    findings.push(`${file}: job "build" must upload the unsigned artifact`);
   }
   return findings;
 }

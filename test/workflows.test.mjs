@@ -412,13 +412,30 @@ test('the release authority is main-defined, split and tag-derived', async () =>
   // A workflow_run with no tag stops cheaply after resolve.
   assert.match(commands, /out "publish=false"/);
 
-  // The build has no secret and no environment; it checks out the resolved ref.
+  // The build has no secret and no environment. Its own checkout is main; the
+  // resolved tag/SHA is materialized as a worktree, so the dynamic ref is data
+  // for git rather than an actions/checkout target (the CodeQL cache-poisoning
+  // pattern). The sign job still replaces the test signature.
   const build = parsed.jobs.build;
   assert.equal(build.environment, undefined);
   const buildText = JSON.stringify(build);
   assert.doesNotMatch(buildText, /secrets\./);
   assert.match(buildText, /needs\.resolve\.outputs\.ref/);
-  assert.doesNotMatch(buildText, /ref: main/);
+  const buildCheckout = build.steps.find((step) => String(step.uses ?? '').startsWith('actions/checkout@'));
+  assert.equal(buildCheckout.with.ref, 'main', 'the build checks out the fixed main ref');
+  const materialize = build.steps.find((step) => step.env?.REF === '${{ needs.resolve.outputs.ref }}');
+  assert.ok(materialize, 'the resolved ref is materialized');
+  assert.match(String(materialize.run), /git worktree add --detach/);
+  assert.match(String(materialize.run), /RELEASE_TREE/);
+  for (const name of [
+    'Install the one dev-only dependency',
+    'Gate the resolved tree',
+    'Build the unsigned APK with a throwaway key',
+    'The built APK matches its manifest and policy',
+  ]) {
+    const step = build.steps.find((entry) => entry.name === name);
+    assert.equal(step['working-directory'], '${{ env.RELEASE_TREE }}', `${name} runs in the resolved worktree`);
+  }
 
   // The sign job has the key and no repository code at all.
   const sign = parsed.jobs.sign;
@@ -562,6 +579,15 @@ test('every planted bypass exits nonzero and the real tree passes', async (t) =>
     'release ref name': { [RELEASE_FILE]: release.replace('gh release download "$TAG"', 'gh release download "$GITHUB_REF_NAME"') },
     'build environment': {
       [RELEASE_FILE]: release.replace('    timeout-minutes: 30\n    permissions:', '    timeout-minutes: 30\n    environment: release\n    permissions:'),
+    },
+    'build dynamic checkout': {
+      [RELEASE_FILE]: release.replace('          ref: main\n', '          ref: ${{ needs.resolve.outputs.ref }}\n'),
+    },
+    'build no worktree': {
+      [RELEASE_FILE]: release.replace('          git worktree add --detach "$worktree" "$REF"\n', ''),
+    },
+    'build main tree': {
+      [RELEASE_FILE]: release.replace('        working-directory: ${{ env.RELEASE_TREE }}\n        run: npm ci', '        run: npm ci'),
     },
     'sign repository code': {
       [RELEASE_FILE]: release.replace('          set -euo pipefail\n          tools="$ANDROID_HOME', '          set -euo pipefail\n          npm run verify:all\n          tools="$ANDROID_HOME'),

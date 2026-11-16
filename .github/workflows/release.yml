@@ -178,27 +178,41 @@ jobs:
       ANDROID_PLATFORM: android-36
       ANDROID_BUILD_TOOLS: '36.0.0'
     steps:
-      - name: Checkout the resolved ref
-        # `ref` is the tag for a release and the commit for a SHA dry run. The
-        # synthetic tag from a dry run may not exist, so it is never checked out.
+      - name: Checkout main
+        # The release ref is materialized as a worktree below. The build job's
+        # own checkout is a fixed ref, so the dynamic tag/SHA is data for git,
+        # not a checkout target CodeQL has to treat as a poisoned cache source.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.ref }}
+          ref: main
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
+      - name: Materialize the resolved commit
+        env:
+          REF: ${{ needs.resolve.outputs.ref }}
+        run: |
+          set -euo pipefail
+          worktree="$RUNNER_TEMP/release"
+          git worktree add --detach "$worktree" "$REF"
+          printf 'RELEASE_TREE=%s\n' "$worktree" >> "$GITHUB_ENV"
       - name: Use the pinned Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .node-version
+          node-version-file: ${{ env.RELEASE_TREE }}/.node-version
       - name: Install the one dev-only dependency
+        working-directory: ${{ env.RELEASE_TREE }}
         run: npm ci
       - name: Locate a Chromium binary
+        working-directory: ${{ env.RELEASE_TREE }}
         run: node scripts/find-chrome.mjs
       - name: Gate the resolved tree
+        working-directory: ${{ env.RELEASE_TREE }}
         env:
           CI: 'true'
         run: npm run verify:all
       - name: Release notes from the changelog
+        working-directory: ${{ env.RELEASE_TREE }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -209,14 +223,17 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Install the pinned SDK packages
+        working-directory: ${{ env.RELEASE_TREE }}
         run: bash scripts/android-sdk.sh
       - name: Build the unsigned APK with a throwaway key
         # No release secret is present. The test key only keeps CI's
         # no-new-key rule out of the way; the sign job replaces its signature.
+        working-directory: ${{ env.RELEASE_TREE }}
         env:
           ANDROID_ALLOW_TEST_KEY: 'true'
         run: npm run build:android
       - name: Package the unsigned artifact
+        working-directory: ${{ env.RELEASE_TREE }}
         run: |
           set -euo pipefail
           apk="android/build/drypoint-${VERSION}.apk"
@@ -231,6 +248,7 @@ jobs:
           # It is read with jq there, never executed.
           cp brand.json dist/brand.json
       - name: The built APK matches its manifest and policy
+        working-directory: ${{ env.RELEASE_TREE }}
         run: |
           set -euo pipefail
           node scripts/check-apk.mjs \
@@ -238,14 +256,16 @@ jobs:
             --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" \
             --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
       - name: The build changed no tracked file
+        working-directory: ${{ env.RELEASE_TREE }}
         run: git diff --exit-code
       - name: The build left no untracked file
+        working-directory: ${{ env.RELEASE_TREE }}
         run: test -z "$(git status --porcelain)"
       - name: Upload the unsigned artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: drypoint-unsigned
-          path: dist/*
+          path: ${{ env.RELEASE_TREE }}/dist/*
           if-no-files-found: error
           retention-days: 7
 
