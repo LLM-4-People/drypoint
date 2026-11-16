@@ -10,6 +10,20 @@ import { CONFIG } from './config.js';
 const MM_PER_INCH = 25.4;
 
 /**
+ * A reported resolution this app can use, or null.
+ *
+ * One owner for the bound: a report of 65535 dpi would otherwise become
+ * 2580 dots/mm and a 516k-row raster. The capability merge, the geometry owner
+ * and every pitch conversion read this answer, so no path can keep a hostile
+ * value in a second place.
+ *
+ * @returns {number|null}
+ */
+export function usableDpi(dpi) {
+  return Number.isFinite(dpi) && dpi > 0 && dpi <= CONFIG.geometry.maxDpi ? dpi : null;
+}
+
+/**
  * Dot pitch. A reported resolution is the authority: a 300-dpi class is
  * 300/25.4 = 11.81 dots/mm, not the 12 dots/mm its 144-dot head over the tape
  * would suggest. Without a usable dpi the configured 8 dots/mm is the fallback.
@@ -19,8 +33,8 @@ const MM_PER_INCH = 25.4;
  * 65535}) would otherwise become 2580 dots/mm and a 516k-row raster.
  */
 export function pitchFor({ dpi } = {}) {
-  const usable = Number.isFinite(dpi) && dpi > 0 && dpi <= CONFIG.geometry.maxDpi;
-  return usable ? dpi / MM_PER_INCH : CONFIG.geometry.dotsPerMm;
+  const usable = usableDpi(dpi);
+  return usable ? usable / MM_PER_INCH : CONFIG.geometry.dotsPerMm;
 }
 
 function defaults() {
@@ -62,10 +76,14 @@ function resolveGeometry(capabilities) {
     capabilities.headWidthPx <= CONFIG.geometry.maxHeadWidthPx
       ? capabilities.headWidthPx
       : base.widthPx;
-  const dotsPerMm = pitchFor({ dpi: capabilities.dpi });
+  // The dpi is a reported fact or nothing. Copying the raw value kept 65535
+  // dpi on screen and in a raster calculation whenever a caller set geometry
+  // directly; the pitch owner already refuses it, so the display must agree.
+  const dpi = usableDpi(capabilities.dpi);
+  const dotsPerMm = pitchFor({ dpi });
   const maxLengthMm = maxLengthFor(capabilities.maxLengthMm) ?? base.maxLengthMm;
   return {
-    dpi: capabilities.dpi ?? base.dpi,
+    dpi,
     dotsPerMm,
     widthPx,
     widthMm: widthPx / dotsPerMm,

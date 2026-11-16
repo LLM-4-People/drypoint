@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import { bootOfflineShell, registerPrecacheErrors, watchPrecacheErrors } from '../src/core/precache-status.js';
 import { CONFIG } from '../src/core/config.js';
 import { BRAND } from '../src/core/brand.js';
+import { contentTypeFor } from '../scripts/lib/content-types.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const swSource = readFileSync(resolve(root, 'sw.js'), 'utf8');
@@ -33,20 +34,9 @@ class FakeCache {
   }
 }
 
-/** The content type a well-behaved host returns for each precached extension. */
-const TYPES = {
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.html': 'text/html; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-};
-
+/** The content type a well-behaved host returns, from the one owner. */
 function typeFor(href) {
-  const path = new URL(href).pathname;
-  const dot = path.lastIndexOf('.');
-  return dot < 0 ? null : (TYPES[path.slice(dot)] ?? 'application/octet-stream');
+  return contentTypeFor(new URL(href).pathname);
 }
 
 /** The real bytes the server would return for a precached file. */
@@ -68,17 +58,26 @@ function toArrayBuffer(buffer) {
 }
 
 function responseFor({ status = 200, url = '', redirected = false, contentType = null, body = Buffer.alloc(0) } = {}) {
-  const headers = { get: (name) => (String(name).toLowerCase() === 'content-type' ? contentType : null) };
+  const headers = {
+    get: (name) => {
+      const key = String(name).toLowerCase();
+      if (key === 'content-type') return contentType;
+      return null;
+    },
+  };
   const ok = status >= 200 && status < 300;
   const arrayBuffer = async () => toArrayBuffer(body);
+  const text = async () => Buffer.from(body).toString('utf8');
   return {
     ok,
     status,
+    statusText: ok ? 'OK' : 'Error',
     url,
     redirected,
     headers,
     arrayBuffer,
-    clone: () => ({ ok, status, url, redirected, headers, arrayBuffer }),
+    text,
+    clone: () => ({ ok, status, statusText: ok ? 'OK' : 'Error', url, redirected, headers, arrayBuffer, text }),
   };
 }
 
@@ -158,6 +157,7 @@ function createWorker({
     self,
     caches,
     URL,
+    Response,
     AbortController,
     setTimeout,
     clearTimeout,
@@ -283,7 +283,11 @@ test('a navigation falls back to the cached index.html offline', async () => {
   worker.state.online = false;
 
   const response = await worker.dispatch('fetch', { request: request('', 'navigate') });
-  assert.equal(response.url, `${BASE}index.html`);
+  // The answer is a rewritten Response (one base href), so its identity is the
+  // document, not the cached response's URL.
+  const html = await response.text();
+  assert.match(html, /<title>Drypoint<\/title>/, 'the cached shell answered');
+  assert.match(html, /<base href="https:\/\/example\.test\/">/);
 });
 
 test('a 5xx navigation falls back to the cached shell', async () => {
@@ -291,7 +295,7 @@ test('a 5xx navigation falls back to the cached shell', async () => {
   await worker.dispatch('install', {});
 
   const response = await worker.dispatch('fetch', { request: request('', 'navigate') });
-  assert.equal(response.url, `${BASE}index.html`, 'the cached shell answers instead of the error page');
+  assert.match(await response.text(), /<title>Drypoint<\/title>/, 'the cached shell answers instead of the error page');
 });
 
 test('a non-navigation 5xx is returned as-is, never the shell', async () => {
@@ -418,6 +422,8 @@ test('a response whose content type contradicts the file extension is rejected',
   await assert.rejects(worker.dispatch('install', {}), /content type/);
   assert.ok(worker.state.messages.at(-1).problems.some((problem) => problem.includes('src/main.js')));
   assert.equal(worker.stores.size, 0);
+  // V4: a host that answered is never retried, even for a wrong type.
+  assert.equal(worker.state.attempts.get(`${BASE}src/main.js`), 1, 'one attempt, no retry');
 });
 
 test('a known extension without a Content-Type fails the install', async () => {
@@ -427,6 +433,7 @@ test('a known extension without a Content-Type fails the install', async () => {
     assert.equal(worker.state.messages.at(-1)?.type, 'precache-error');
     assert.ok(worker.state.messages.at(-1).problems.some((problem) => problem.includes('src/main.js')));
     assert.equal(worker.stores.size, 0, 'nothing is promoted');
+    assert.equal(worker.state.attempts.get(`${BASE}src/main.js`), 1, 'one attempt, no retry');
   }
 });
 
@@ -442,6 +449,7 @@ test('a body that does not match its manifest digest fails the install', async (
   );
   assert.equal(worker.stores.size, 0, 'nothing is promoted');
   assert.equal(worker.state.skipped, 0);
+  assert.equal(worker.state.attempts.get(`${BASE}src/main.js`), 1, 'one attempt, no retry');
 });
 
 test('a missing digest fails the install instead of trusting the body', async () => {
@@ -469,6 +477,7 @@ test('a redirected precache response is rejected', async () => {
   });
   await assert.rejects(worker.dispatch('install', {}), /redirected/);
   assert.equal(worker.stores.size, 0);
+  assert.equal(worker.state.attempts.get(`${BASE}assets/app.css`), 1, 'a redirect is not retried');
 });
 
 test('a missing manifest still fails the install with a posted error', async () => {
@@ -550,7 +559,7 @@ test('a navigation that never answers returns the cached shell instead of hangin
   const started = Date.now();
   const response = await worker.dispatch('fetch', { request: request('', 'navigate') });
   const elapsed = Date.now() - started;
-  assert.equal(response.url, `${BASE}index.html`, 'the cached shell answers');
+  assert.match(await response.text(), /<title>Drypoint<\/title>/, 'the cached shell answers');
   assert.ok(elapsed < 1000, `the wait is bounded by the stamped value (took ${elapsed} ms)`);
   assert.equal(worker.state.aborted, true, 'the losing network request is aborted');
 });
@@ -673,4 +682,65 @@ test('the boot boundary does nothing without a worker or inside the Android shel
   assert.equal(bootOfflineShell({ ...options, serviceWorker: null }), false);
   assert.equal(bootOfflineShell({ ...options, serviceWorker: { addEventListener() {}, register() {} }, isAndroidShell: true }), false);
   assert.equal(windowTouched, 0, 'neither shell subscribes to load or a failure message');
+});
+
+/* ---------------- deep in-scope navigations keep their assets (P-F1) ---------------- */
+
+/** The index document the fake cache serves, as text. */
+function shellText() {
+  return readFileSync(resolve(root, 'index.html'), 'utf8');
+}
+
+test('a navigation response carries one base href at the worker scope', async () => {
+  // A real host answers an in-app route with the app document; the URL stays
+  // deep, which is exactly what the rewrite has to survive.
+  const worker = createWorker({
+    plan: (href) => (href.includes('library/deep/path') ? { contentType: 'text/html; charset=utf-8', body: Buffer.from(shellText()) } : {}),
+  });
+  await worker.dispatch('install', {});
+
+  const response = await worker.dispatch('fetch', { request: request('library/deep/path#/label/abc-123', 'navigate') });
+  assert.equal(typeof response.text, 'function', 'the answer is a real HTML response');
+  const html = await response.text();
+  assert.match(html, /<base href="https:\/\/example\.test\/">/, 'the base is the registration scope');
+  assert.equal((html.match(/<base\b/gi) ?? []).length, 1, 'exactly one base element');
+  assert.ok(html.indexOf('<base') < html.indexOf('assets/app.css'), 'the base precedes every relative URL');
+});
+
+test('the offline shell fallback is rewritten too, and the cache is not', async () => {
+  const worker = createWorker();
+  await worker.dispatch('install', {});
+  const cache = liveCache(worker);
+  const cached = cache.entries.get(`${BASE}index.html`);
+  assert.ok(cached, 'the shell is cached');
+  const before = Buffer.from(await cached.arrayBuffer()).toString('utf8');
+
+  worker.state.online = false;
+  const deep = await worker.dispatch('fetch', { request: request('library/deep/path', 'navigate') });
+  const html = await deep.text();
+  assert.match(html, /<base href="https:\/\/example\.test\/">/, 'the cached shell answers with a base');
+
+  const after = Buffer.from(await cache.entries.get(`${BASE}index.html`).arrayBuffer()).toString('utf8');
+  assert.equal(after, before, 'the cached document and its digest are unchanged');
+});
+
+test('a sub-path registration scopes the base to its own directory', async () => {
+  const scope = 'https://example.test/drypoint/';
+  const worker = createWorker({
+    scope,
+    plan: (href) => (href.includes('library/deep/path') ? { contentType: 'text/html; charset=utf-8', body: Buffer.from(shellText()) } : {}),
+  });
+  await worker.dispatch('install', {});
+  const response = await worker.dispatch('fetch', { request: request('library/deep/path', 'navigate') });
+  const html = await response.text();
+  assert.match(html, /<base href="https:\/\/example\.test\/drypoint\/">/);
+});
+
+test('a non-HTML navigation answer is never rewritten', async () => {
+  const worker = createWorker({ plan: (href) => (href === BASE ? { contentType: 'text/plain' } : {}) });
+  await worker.dispatch('install', {});
+  const response = await worker.dispatch('fetch', { request: request('', 'navigate') });
+  assert.equal(response.headers.get('content-type'), 'text/plain');
+  const body = await response.text();
+  assert.doesNotMatch(body, /<base\b/);
 });

@@ -739,3 +739,36 @@ test('a dismissed notice is painted by neither the renderer nor the display path
   assert.ok(renderDocument(editor.document).warnings.includes(notice));
   assert.equal(renderDocument(editor.documentForDisplay()).warnings.includes(notice), false);
 });
+
+/* ---------------- the raster follows the reported head width (scope) ---------------- */
+
+test('the raster is as wide as the canvas head, never a 96-dot constant', () => {
+  // A wider head must work mechanically before any wider model is promoted:
+  // the encoder takes its width from the canvas height, the stride covers it,
+  // and the transposed dot still lands on the same head position.
+  for (const head of [192, 576]) {
+    const length = 40;
+    const data = new Uint8ClampedArray(length * head * 4).fill(255);
+    // Landscape (x = 7, y = head - 1) is portrait row 7, head dot 0.
+    const p = ((head - 1) * length + 7) * 4;
+    data.fill(0, p, p + 3);
+    const canvas = {
+      width: length,
+      height: head,
+      getContext: () => ({ getImageData: () => ({ data, width: length, height: head }) }),
+    };
+    const raster = canvasToRaster(canvas);
+
+    assert.equal(raster.width, head, `${head}: width is the canvas height`);
+    assert.equal(raster.height, length, `${head}: one row per landscape column`);
+    assert.equal(raster.rows.length, length);
+    assert.equal(raster.rows[0].length, Math.ceil(head / 8), `${head}: the stride covers the whole head`);
+    assert.equal(raster.rows[7][0], 0x80, `${head}: the dot lands on the first head position`);
+    assert.equal(rasterInk(raster), 1, `${head}: exactly one printable dot`);
+    assert.equal(
+      raster.rows.filter((row, index) => index !== 7).every((row) => row.every((byte) => byte === 0)),
+      true,
+      `${head}: no other row carries ink`
+    );
+  }
+});

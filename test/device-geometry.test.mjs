@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { geometry, maxLengthFor, mmToPx, pxToMm, resetGeometry, setGeometry } from '../src/core/geometry.js';
 import { documentHeightPx, documentWidthPx } from '../src/label/schema.js';
 import { CONFIG } from '../src/core/config.js';
+import { mergeCapabilities, printBlockReason } from '../src/device/capabilities.js';
 
 test('the fallback coordinate system is the configured 8 dots/mm and 96 dots', (t) => {
   t.after(resetGeometry);
@@ -93,8 +94,31 @@ test('the pitch owns the dpi bound, so any caller is bounded', (t) => {
     setGeometry({ discovered: true, dpi, headWidthPx: 96, maxLengthMm: 200, source: { geometry: 'reported' } });
     const active = geometry();
     assert.equal(active.dotsPerMm, CONFIG.geometry.dotsPerMm, `${dpi} falls back to the configured pitch`);
+    assert.equal(active.dpi, null, `${dpi} is not shown as a reported resolution`);
     assert.equal(mmToPx(200), 1600, `${dpi}: a 200 mm label stays a 1600-row raster`);
   }
   setGeometry({ discovered: true, dpi: CONFIG.geometry.maxDpi, headWidthPx: 96, maxLengthMm: 200 });
   assert.ok(Math.abs(geometry().dotsPerMm - CONFIG.geometry.maxDpi / 25.4) < 1e-9, 'the bound itself is usable');
+  assert.equal(geometry().dpi, CONFIG.geometry.maxDpi);
+});
+
+test('a forged reported geometry cannot keep a hostile dpi on screen', (t) => {
+  t.after(resetGeometry);
+  // V6: `source.geometry: 'reported'` is a claim, not a checked fact. The
+  // geometry owner must not display or rasterise a value the pitch refuses.
+  for (const dpi of [65535, 601, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, '203']) {
+    const active = setGeometry({ discovered: true, dpi, headWidthPx: 96, maxLengthMm: 200, source: { geometry: 'reported' } });
+    assert.equal(active.dpi, null, `${String(dpi)} is not a resolution this app can show`);
+    assert.equal(active.dotsPerMm, CONFIG.geometry.dotsPerMm);
+    assert.equal(active.widthPx, 96, 'the reported head width is still usable');
+  }
+  // The real merge path sets dpi null and the gate refuses to print. A usable
+  // heartbeat class is still a report; an invalid TLV alone is not.
+  const merged = mergeCapabilities({
+    capabilities: { dpi: 65535, headWidthPx: 96 },
+    info: { deviceType: 0x0910, model: 'D110_M', modelSupport: 'confirmed' },
+  });
+  assert.equal(merged.dpi, null, 'an invalid TLV dpi is not a report');
+  assert.equal(printBlockReason(merged), CONFIG.device.printGate.missingResolution);
+  assert.equal(mergeCapabilities({ capabilities: { dpi: 65535, headWidthPx: 96 }, heartbeat: { dpi: 203 } }).dpi, 203, 'a usable class still answers');
 });

@@ -253,11 +253,17 @@ test('the staged document carries the offline-only Content-Security-Policy', asy
     'img-src': ["'self'", 'data:', 'blob:'],
     'style-src': ["'self'", "'unsafe-inline'"],
     'script-src': ["'self'"],
+    // A-F4: defence in depth. `base-uri 'self'` (not 'none') is required by the
+    // worker's deep-link rewrite; objects and form posts have no use here.
+    'object-src': ["'none'"],
+    'base-uri': ["'self'"],
+    'form-action': ["'none'"],
   }, 'the policy is exactly the offline one');
 
   // Nothing in it can reach another origin, and the tokens that are not
-  // 'self' are the two local image kinds the editor creates itself.
-  const allowed = new Set(["'self'", "'unsafe-inline'", 'data:', 'blob:']);
+  // 'self' are the two local image kinds the editor creates itself plus the
+  // three deny directives A-F4 adds.
+  const allowed = new Set(["'self'", "'unsafe-inline'", 'data:', 'blob:', "'none'"]);
   for (const [name, sources] of Object.entries(directives)) {
     for (const source of sources) {
       assert.ok(allowed.has(source), `${name} does not allow ${source}`);

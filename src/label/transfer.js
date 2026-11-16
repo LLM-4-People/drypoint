@@ -10,8 +10,8 @@
  */
 
 import { CONFIG } from '../core/config.js';
-import { imageSourceLimitMessage, imageSources, IMAGE_SOURCE_LIMIT } from './images.js';
-import { validateDocument } from './schema.js';
+import { sourceBudgetProblem } from './images.js';
+import { migrateDocument } from './schema.js';
 
 /** The one format token a transfer file must carry. */
 export const TRANSFER_FORMAT = CONFIG.app.id;
@@ -70,12 +70,35 @@ export function documentFilename(name, at = Date.now()) {
  *
  * The byte bound runs before JSON.parse, so an over-size file never becomes a
  * huge in-memory object graph. The reviver drops the two prototype keys a
- * hostile file could use to reach an object prototype. The document then goes
- * through the same `validateDocument` call storage uses.
+ * hostile file could use to reach an object prototype. The document then takes
+ * the same `migrateDocument` path storage takes, so an older document rotates
+ * on import exactly as it does on load and reports the same notice.
  *
  * @param {string} text the file contents
  * @returns {{document: object, notices: string[]}}
  */
+/** The longest untrusted token a message may quote. */
+const FORMAT_EXCERPT_CHARS = 24;
+
+/**
+ * Quote a bounded, escaped excerpt of an untrusted value for a message.
+ *
+ * A message is a toast and a log line. JSON.parse happily yields a 1 MB
+ * `format`, and echoing it whole produced a 1,000,073-character toast. The
+ * excerpt keeps the value recognisable, the message short, and JSON quoting
+ * escapes newlines and controls. Objects are stringified rather than coerced,
+ * so a value with a null `toString` cannot throw inside the error path.
+ *
+ * @param {unknown} value
+ * @param {number} [limit] maximum quoted source characters
+ * @returns {string}
+ */
+function quotedExcerpt(value, limit = FORMAT_EXCERPT_CHARS) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+  const head = text.slice(0, limit);
+  return `${JSON.stringify(head)}${text.length > limit ? '…' : ''}`;
+}
+
 export function parseDocument(text) {
   if (typeof text !== 'string') throw new Error('That label file could not be read.');
   // UTF-8 bytes are never fewer than UTF-16 code units, so this rejects the
@@ -96,7 +119,7 @@ export function parseDocument(text) {
     throw new Error(`That file is not a ${CONFIG.app.name} label document.`);
   }
   if (envelope.format !== TRANSFER_FORMAT) {
-    const found = typeof envelope.format === 'string' ? JSON.stringify(envelope.format) : 'missing';
+    const found = envelope.format === undefined ? 'missing' : quotedExcerpt(envelope.format);
     throw new Error(
       `That file is not a ${CONFIG.app.name} label: its format is ${found}, expected ${JSON.stringify(TRANSFER_FORMAT)}.`
     );
@@ -113,12 +136,16 @@ export function parseDocument(text) {
     throw new Error('That label file has no label document.');
   }
 
-  const document = validateDocument(envelope.document);
-  const sources = imageSources(document);
-  if (sources.length > IMAGE_SOURCE_LIMIT) {
-    // The same distinct-source cap the editor and the print path enforce.
-    throw new Error(imageSourceLimitMessage(sources.length, 'importing this label'));
-  }
+  // The version check and the v3 rotation live in one owner, the same one the
+  // stored label uses. A file that this build cannot read as a label is refused
+  // by the shape owner with one message.
+  const document = migrateDocument(envelope.document);
+  // Both source budgets are an authoring boundary, not a normalise step: the
+  // importer refuses the file whole instead of silently emptying a source. The
+  // same decision guards export, so a label this app can save is a label it can
+  // import.
+  const problem = sourceBudgetProblem(document, { action: 'importing this label' });
+  if (problem) throw new Error(problem);
   return {
     document,
     notices: Array.isArray(document.notices) ? [...document.notices] : [],

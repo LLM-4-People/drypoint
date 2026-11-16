@@ -453,8 +453,13 @@ test('a warning hint can shrink and wrap instead of widening the page', () => {
 test('zoom paths: quantized buttons, an unquantized wheel, and no persisted boot fit', () => {
   assert.match(main, /applyZoom\(wheelZoom\(zoom, event\.deltaY/);
   assert.doesNotMatch(main, /setZoom\(zoom - event\.deltaY/);
-  assert.match(main, /autoZoom = initialFit/);
-  assert.doesNotMatch(main, /zoom = initialFit;\s*\n\s*saveZoom\(\)/, 'the boot fit must not overwrite the shared zoom key');
+  // N4: the boot decision is the shared owner. A stored deliberate scale is
+  // kept; only a first visit takes the fit, and the boot never writes the key.
+  assert.match(main, /const boot = initialZoom\(\{ stored: storedZoom, fit: stageFitZoom\(\)/, 'the shared boot owner decides');
+  assert.match(main, /autoZoom = boot\.auto \? boot\.value : null/);
+  const bootBlock = main.match(/const boot = initialZoom\(\{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.ok(bootBlock, 'the boot block exists');
+  assert.doesNotMatch(bootBlock, /saveZoom\(/, 'the boot fit must not overwrite the shared zoom key');
   assert.match(main, /shouldClampZoom\(\{ zoom, autoZoom, breakpointChanged \}\)/);
 });
 
@@ -496,13 +501,16 @@ test('the Print and Test buttons quote the support gate in title and description
 });
 
 test('the gate reason is visible above the action bar and hidden when allowed', () => {
+  // The class is pinned positively: the gate reason is not screen-reader-only.
+  // (K-F6: `.visually-hidden` is live CSS now — the P-F4 h1 uses it — so the
+  // old negative assertion, which could never match the element's attribute
+  // order, is gone rather than kept as a vacuous pass.)
   assert.match(html, /<p class="gate-reason" id="printGateReason" role="status" hidden><\/p>/);
-  assert.doesNotMatch(html, /class="visually-hidden" id="printGateReason"/, 'the refusal is not screen-reader-only');
   assert.match(css, /\.gate-reason\s*\{[^}]*position:\s*absolute/, 'showing it never reflows the bar');
   assert.match(css, /\.gate-reason\s*\{[^}]*bottom:\s*100%/, 'it sits directly above the bar');
   assert.match(css, /\.gate-reason\[hidden\]\s*\{[^}]*display:\s*none/);
   const update = main.match(/function updatePrintButton\(\) \{([\s\S]*?)\n\}/)?.[1];
-  assert.match(update, /ui\.printGateReason\.textContent = state\.supportBlocked/);
+  assert.match(update, /setText\(ui\.printGateReason, state\.supportBlocked\)/, 'the shared writer skips identical text');
   assert.match(update, /ui\.printGateReason\.hidden = !state\.supportBlocked/, 'the banner disappears when the gate allows');
 });
 
@@ -518,6 +526,23 @@ test('the Document panel has one export action, one import action and one hidden
   assert.match(main, /downloadJson\(documentFilename\(controller\.document\.name\), serializeDocument\(controller\.document\)\)/, 'the one download path');
   assert.match(main, /const \{ document, notices \} = parseDocument\(text\)/);
   assert.match(main, /controller\.replaceDocument\(document\)/, 'import applies through the one undoable owner');
+  // The export boundary refuses an over-budget in-memory document with the
+  // importer's own wording, before any file is written (A-F1).
+  const exportBody = main.slice(main.indexOf('function exportDocument()'), main.indexOf('ui.exportDocument.addEventListener'));
+  assert.ok(
+    exportBody.indexOf('sourceBudgetProblem(controller.document') < exportBody.indexOf('downloadJson('),
+    'the budget runs before the download'
+  );
+  assert.match(
+    exportBody,
+    /sourceBudgetProblem\(controller\.document, \{ action: 'exporting this label' \}\)/,
+    'the shared budget owner decides, with the boundary named'
+  );
+  assert.doesNotMatch(
+    exportBody,
+    /documentSourceChars\(|documentSourceBudgetMessage\(/,
+    'no second budget measurement or wording'
+  );
   const importBody = main.slice(main.indexOf('async function importDocumentFile'), main.indexOf('ui.exportDocument.addEventListener'));
   assert.ok(importBody.indexOf('file.text()') > importBody.indexOf('TRANSFER_MAX_BYTES'), 'the size check runs before the file is read');
   assert.match(importBody, /transferTooLargeMessage\(size\)/, 'the same size wording as the parser');
@@ -548,9 +573,13 @@ test('the diagnostics filename follows the authored app id', () => {
 });
 
 test('a disconnect during a job says the label may be incomplete', () => {
-  const handler = main.match(/device\.events\.on\('disconnected', \(\) => \{([\s\S]*?)\n\}\);/)?.[1];
+  const handler = main.match(/device\.events\.on\('disconnected', \(detail\) => \{([\s\S]*?)\n\}\);/)?.[1];
   assert.ok(handler, 'the disconnected handler exists');
-  assert.match(handler, /reportDisconnect\(\{ phase: printFlow\.phase, setStatus \}\)/, 'one report owner reads the job phase');
+  assert.match(
+    handler,
+    /reportDisconnect\(\{ phase: printFlow\.phase, committed: detail\?\.committed === true, setStatus \}\)/,
+    'one report owner reads the job phase and the terminal-commit fact'
+  );
   const report = read('src/ui/disconnect-report.js');
   assert.match(report, /Disconnected while preparing; nothing was printed\./);
   assert.match(report, /Disconnected during print: the label may be incomplete/);
@@ -560,4 +589,35 @@ test('a disconnect during a job says the label may be incomplete', () => {
   const flow = read('src/ui/print-flow.js');
   assert.match(flow, /if \(!device\.connected\) \{/);
   assert.match(flow, /setStatus\(''\);\s*\n\s*notify\(error\.message, \{ tone: 'error' \}\)/, 'only a connected failure takes the flow toast');
+});
+
+/* ---------------- live-region discipline (K-F7, PR-F6) ---------------- */
+
+test('the gate banner is written only when its reason changes', () => {
+  const update = main.match(/function updatePrintButton\(\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(update, 'the one button-state owner exists');
+  // setText skips an identical string, so typing in the label does not
+  // re-announce an unchanged refusal. `role=status` stays: a *new* reason must
+  // be announced without a focus change, and `aria-describedby` only carries
+  // the reason once the control is reached.
+  assert.match(update, /setText\(ui\.printGateReason, state\.supportBlocked\)/);
+  assert.doesNotMatch(update, /ui\.printGateReason\.textContent\s*=/);
+  assert.match(html, /id="printGateReason" role="status"/);
+});
+
+test('a connection refresh never overwrites a job status', () => {
+  // The discovered handler also runs inside the post-print refresh, while
+  // `#status` is the finished job's outcome.
+  const handler = main.match(/device\.events\.on\('discovered', \(capabilities\) => \{([\s\S]*?)\n\}\);/)?.[1];
+  assert.ok(handler, 'the discovered handler exists');
+  assert.match(handler, /connectionStatus\(\{ jobBusy: printFlow\.busy, remaining: capabilities\.roll\?\.remaining \}\)/);
+  assert.match(handler, /if \(line\) setStatus\(line, 'ok'\)/, 'the job status is kept while a job is busy');
+  assert.doesNotMatch(handler, /setStatus\(`Connected/);
+});
+
+test('the design canvas is a named image', () => {
+  const html = read('index.html');
+  assert.match(html, /id="labelCanvas"[^>]*role="img"/);
+  assert.match(html, /id="overlayCanvas"[^>]*aria-hidden="true"/);
+  assert.match(main, /labelCanvasName\(\{/);
 });

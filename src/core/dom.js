@@ -126,13 +126,18 @@ export function movePreservingFocus(node, move) {
   return restored;
 }
 
-export function downloadJson(filename, data) {
-  // In the Android shell a Blob download has no destination; the native bridge
-  // writes the file into Downloads and returns whether it succeeded.
+/**
+ * Save one text file through the one download owner.
+ *
+ * In the Android shell a Blob download has no destination; the native bridge
+ * writes the file into Downloads and returns whether it succeeded. `type` is
+ * only meaningful for the browser Blob.
+ */
+export function downloadText(filename, text, type = 'text/plain') {
   const bridge = typeof window !== 'undefined' ? window.NiimbotBLE : null;
-  if (bridge?.saveFile) return bridge.saveFile(filename, JSON.stringify(data, null, 2));
+  if (bridge?.saveFile) return bridge.saveFile(filename, text);
 
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const link = el('a', { href: url, download: filename });
   document.body.append(link);
@@ -140,5 +145,9 @@ export function downloadJson(filename, data) {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   return true;
+}
+
+export function downloadJson(filename, data) {
+  return downloadText(filename, JSON.stringify(data, null, 2), 'application/json');
 }
 

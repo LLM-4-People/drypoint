@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createPrintFlow, printButtonState } from '../src/ui/print-flow.js';
+import { connectionStatus, createPrintFlow, printButtonState } from '../src/ui/print-flow.js';
 import { reportDisconnect } from '../src/ui/disconnect-report.js';
 import { PrinterError } from '../src/protocol/errors.js';
 import { resetGeometry, setGeometry } from '../src/core/geometry.js';
@@ -772,4 +772,170 @@ test('warnings carry the experimental sentence when both apply', async () => {
   assert.equal(calls.confirmation.title, 'Print with warnings?');
   assert.match(calls.confirmation.message, /D11_H/);
   assert.match(calls.confirmation.message, /wider than the head/);
+});
+
+/* ---------------- the finishing phase (V2, PR-F6) ---------------- */
+
+test('a disconnect after printEnd reports the label was printed, once', async () => {
+  const toasts = [];
+  const statuses = [];
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let flow;
+  const events = createEmitter();
+  const device = {
+    events,
+    connected: true,
+    state: { capabilities: null },
+    async print(raster, options = {}) {
+      options.onStart?.();
+      // The manager publishes `finishing` once the terminal frame is
+      // committed; only the device refresh is left.
+      events.emit('finishing', { started: true, committed: true });
+      await gate;
+      return { copies: 1 };
+    },
+    async cancel() {
+      return false;
+    },
+  };
+  flow = createPrintFlow({
+    device,
+    getDocument: () => ({ elements: [{ id: 't', type: 'text', visible: true }], copies: 1, lengthMm: 40 }),
+    getSettings: () => ({}),
+    notify: (message, options) => toasts.push({ message, options }),
+    confirm: async () => true,
+    hydrate: async () => {},
+    render: () => ({ canvas: {}, warnings: [] }),
+    rasterize: () => ({ width: 96, height: 320, rows: [] }),
+    setStatus: (text) => statuses.push(text),
+    setProgress: () => {},
+    onFinishingChange: () => {},
+  });
+
+  const job = flow.run();
+  await tick();
+  assert.equal(flow.phase, 'finishing', 'the outcome is settled; only the refresh runs');
+  device.connected = false;
+  reportDisconnect({ phase: flow.phase, setStatus: (text) => statuses.push(text), notify: (message, options) => toasts.push({ message, options }) });
+  release();
+  await job;
+
+  assert.equal(toasts.length, 1, 'exactly one toast for one lost link');
+  assert.equal(toasts[0].message, 'Disconnected after printing; the label was printed.');
+  assert.doesNotMatch(toasts[0].message, /incomplete/);
+  assert.ok(statuses.includes('Disconnected after printing'), 'the lost link is reported while the refresh runs');
+  assert.equal(statuses.at(-1), 'Printed 1 label', '#status ends on the job outcome, not a lost connection line');
+  assert.ok(!statuses.includes(''), 'the flow never cleared the job status on the way out');
+  assert.equal(flow.phase, 'idle', 'the next job starts clean');
+});
+
+test('a disconnect after a started-but-failed job still says the label may be incomplete', async () => {
+  const toasts = [];
+  const statuses = [];
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let flow;
+  const events = createEmitter();
+  const device = {
+    events,
+    connected: true,
+    state: { capabilities: null },
+    async print(raster, options = {}) {
+      options.onStart?.();
+      // printEnd was never committed: the terminal outcome was a failure.
+      events.emit('finishing', { started: true, committed: false });
+      await gate;
+      return { copies: 1 };
+    },
+    async cancel() {
+      return false;
+    },
+  };
+  flow = createPrintFlow({
+    device,
+    getDocument: () => ({ elements: [{ id: 't', type: 'text', visible: true }], copies: 1, lengthMm: 40 }),
+    getSettings: () => ({}),
+    notify: (message, options) => toasts.push({ message, options }),
+    confirm: async () => true,
+    hydrate: async () => {},
+    render: () => ({ canvas: {}, warnings: [] }),
+    rasterize: () => ({ width: 96, height: 320, rows: [] }),
+    setStatus: (text) => statuses.push(text),
+    setProgress: () => {},
+    onFinishingChange: () => {},
+  });
+
+  const job = flow.run();
+  await tick();
+  assert.equal(flow.phase, 'printing', 'nothing claims the label was printed');
+  reportDisconnect({ phase: flow.phase, setStatus: (text) => statuses.push(text), notify: (message, options) => toasts.push({ message, options }) });
+  release();
+  await job;
+  assert.match(toasts.at(-1).message, /may be incomplete/);
+});
+
+test('the disconnect report has one honest sentence per phase', () => {
+  const cases = [
+    ['preparing', 'Disconnected while preparing', /nothing was printed/],
+    ['printing', 'Disconnected during print', /may be incomplete/],
+    ['finishing', 'Disconnected after printing', /the label was printed/],
+    ['committed', 'Disconnected before the job ended', /counted the label as printed[\s\S]*before it confirmed the end of the job/],
+  ];
+  for (const [phase, status, message] of cases) {
+    const statuses = [];
+    const toasts = [];
+    const result = reportDisconnect({ phase, setStatus: (text) => statuses.push(text), notify: (message) => toasts.push(message) });
+    assert.equal(statuses[0], status, `${phase}: status`);
+    assert.equal(toasts.length, 1, `${phase}: one toast`);
+    assert.match(toasts[0], message, `${phase}: message`);
+    assert.equal(result, toasts[0]);
+  }
+  const statuses = [];
+  const toasts = [];
+  assert.equal(reportDisconnect({ phase: 'idle', setStatus: (text) => statuses.push(text), notify: (message) => toasts.push(message) }), null);
+  assert.deepEqual(statuses, ['Disconnected'], 'an idle disconnect is status only');
+  assert.deepEqual(toasts, [], 'and never a toast');
+});
+
+test('a committed job lost before the PrintEnd ack is not "may be incomplete"', () => {
+  // The manager knows printEnd was committed; the flow has not emitted
+  // `finishing` yet. The disconnect report takes that fact and tells the one
+  // true story instead of calling a counted label incomplete.
+  const statuses = [];
+  const toasts = [];
+  const result = reportDisconnect({
+    phase: 'printing',
+    committed: true,
+    setStatus: (text) => statuses.push(text),
+    notify: (message, options) => toasts.push({ message, options }),
+  });
+  assert.equal(statuses[0], 'Disconnected before the job ended');
+  assert.equal(toasts.length, 1, 'one toast');
+  assert.equal(result, toasts[0].message);
+  assert.match(result, /counted the label as printed/);
+  assert.match(result, /before it confirmed the end of the job/);
+  assert.match(result, /Reconnect before printing again/);
+  assert.doesNotMatch(result, /may be incomplete/);
+  assert.equal(toasts[0].options?.tone, 'error');
+
+  // The ordinary mid-print drop keeps its honest uncertainty.
+  const uncertain = reportDisconnect({ phase: 'printing', setStatus: () => {}, notify: () => {} });
+  assert.match(uncertain, /may be incomplete/);
+  // A committed job that already reached `finishing` keeps the after-print copy.
+  const finished = reportDisconnect({ phase: 'finishing', committed: true, setStatus: () => {}, notify: () => {} });
+  assert.match(finished, /the label was printed/);
+});
+
+test('a connection refresh does not overwrite a job status', () => {
+  // The post-print discovery publishes the same event as a plain connect.
+  assert.equal(connectionStatus({ jobBusy: true, remaining: 117 }), null, 'a busy job owns #status');
+  assert.equal(connectionStatus({ jobBusy: false, remaining: 117 }), 'Connected · 117 labels left');
+  assert.equal(connectionStatus({ jobBusy: false, remaining: 0 }), 'Connected · 0 labels left', 'zero is a value, not absence');
+  assert.equal(connectionStatus({ jobBusy: false, remaining: null }), 'Connected');
+  assert.equal(connectionStatus(), 'Connected');
 });

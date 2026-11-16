@@ -6,36 +6,89 @@
 import { CONFIG } from '../core/config.js';
 import { deepClone } from '../core/format.js';
 
-/** Per-snapshot and per-element overhead, excluding the strings inside them. */
+/** Per-snapshot overhead that excludes the strings inside the snapshot. */
 const DOCUMENT_OVERHEAD_BYTES = 256;
-const ELEMENT_OVERHEAD_BYTES = 96;
-const ELEMENT_STRING_FIELDS = Object.freeze(['name', 'text', 'value', 'src']);
 
 /**
- * Retained size of one plain-JSON snapshot, without serialising it.
+ * The length one string occupies in JSON output, in UTF-16 code units,
+ * including its quotes.
+ *
+ * Counting `length + 2` undercounts every escape: a newline is two characters
+ * (`\n`), a C0 control is six (`\u0001`), a lone surrogate is six (JSON is
+ * well-formed), while a valid surrogate pair stays two. A snapshot of 200 lines
+ * of text was reported at half its real size because of this.
+ *
+ * @param {string} text
+ * @returns {number}
+ */
+function escapedLength(text) {
+  let length = 2;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 0x22 || code === 0x5c) {
+      length += 2;
+    } else if (code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d) {
+      length += 2;
+    } else if (code < 0x20) {
+      length += 6;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        // A valid surrogate pair is one code point and is emitted as two units.
+        length += 2;
+        index += 1;
+      } else {
+        length += 6;
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      length += 6;
+    } else {
+      length += 1;
+    }
+  }
+  return length;
+}
+
+/**
+ * Retained size of one plain-JSON value, without serialising it.
+ *
+ * Every retained string counts, whatever its key: the estimate is a memory
+ * bound, not a schema. Counting only known fields let a hostile import keep
+ * 250 kB unknown strings in 80 snapshots while the budget reported 29 kB. The
+ * result is an upper bound: JSON punctuation (quotes, escapes, braces, commas
+ * and colons) is counted exactly, so a document that fits the budget can never
+ * be larger than its serialisation, and the overhead is a few bytes per object.
+ *
+ * @returns {number} UTF-16 code units plus JSON punctuation
+ */
+function retainedChars(value) {
+  if (typeof value === 'string') return escapedLength(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).length;
+  if (Array.isArray(value)) {
+    let sum = 2;
+    for (const item of value) sum += retainedChars(item) + 1;
+    return sum;
+  }
+  if (value && typeof value === 'object') {
+    let sum = 2;
+    for (const key of Object.keys(value)) sum += escapedLength(key) + 2 + retainedChars(value[key]);
+    return sum;
+  }
+  // null
+  return 4;
+}
+
+/**
+ * Retained size of one plain-JSON snapshot: an upper bound on its serialised
+ * length.
  *
  * Image data URLs dominate a label: a 3.8 M-character source is most of a
- * snapshot. Element count and every element string are counted here, and the
- * fixed overhead keeps a document with many small fields from looking free.
- * This runs on every commit, so it must not allocate a second copy of the
- * document through `JSON.stringify`.
+ * snapshot. This runs on every commit, so it must not allocate a second copy of
+ * the document through `JSON.stringify`.
  */
 export function estimateDocumentBytes(document) {
   if (!document || typeof document !== 'object') return 0;
-  let bytes = DOCUMENT_OVERHEAD_BYTES;
-  if (typeof document.name === 'string') bytes += document.name.length;
-  if (Array.isArray(document.notices)) {
-    for (const notice of document.notices) if (typeof notice === 'string') bytes += notice.length;
-  }
-  const elements = Array.isArray(document.elements) ? document.elements : [];
-  for (const element of elements) {
-    bytes += ELEMENT_OVERHEAD_BYTES;
-    if (!element || typeof element !== 'object') continue;
-    for (const field of ELEMENT_STRING_FIELDS) {
-      if (typeof element[field] === 'string') bytes += element[field].length;
-    }
-  }
-  return bytes;
+  return DOCUMENT_OVERHEAD_BYTES + retainedChars(document);
 }
 
 /**

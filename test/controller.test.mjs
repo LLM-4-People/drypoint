@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createEditor } from '../src/editor/controller.js';
-import { createDocument, defaultTextFrame, documentHeightPx, documentWidthPx } from '../src/label/schema.js';
+import { createDocument, defaultTextFrame, documentHeightPx, documentWidthPx, validateDocument } from '../src/label/schema.js';
+import { documentSourceChars } from '../src/label/images.js';
 import { resetGeometry, setGeometry } from '../src/core/geometry.js';
 import { CONFIG } from '../src/core/config.js';
 
@@ -386,31 +387,95 @@ test('updateElement reports a dropped source instead of blanking it silently', (
   );
 });
 
-/* ---------------- the image-source cap on an edit (A2) ---------------- */
+/* ---------------- the image-source cap on an edit (U-F2) ---------------- */
 
-test('updateElement refuses a seventeenth distinct image source', () => {
-  const { editor, changes } = editorHarness();
-  const sources = Array.from({ length: CONFIG.image.cacheLimit }, (_, index) => `edit-image-${index}.png`);
-  for (const src of sources) assert.ok(editor.addElement('image', { src }));
-  const target = editor.document.elements.find((element) => element.type === 'image');
+/** A harness with exactly 16 distinct image elements and nothing else. */
+function sixteenSourcesHarness() {
+  const changes = [];
+  const refusals = [];
+  const sources = Array.from({ length: CONFIG.image.cacheLimit }, (_, index) => `cap-image-${index}.png`);
+  const editor = createEditor({
+    document: createDocument({
+      lengthMm: 200,
+      elements: sources.map((src) => ({ type: 'image', src, x: 4, y: 4, w: 40, h: 40 })),
+    }),
+    onChange: (document) => changes.push(document),
+    onRefusal: (message) => refusals.push(message),
+  });
+  return { editor, changes, refusals, sources };
+}
+
+test('at the cap, replacing one image with a new source is allowed', () => {
+  const { editor, changes, refusals, sources } = sixteenSourcesHarness();
+  const target = editor.document.elements[0];
   const committed = changes.length;
 
-  assert.equal(editor.updateElement(target.id, { src: 'edit-image-17.png' }), null, 'the cap refuses the edit');
-  assert.equal(
-    editor.document.elements.find((element) => element.id === target.id).src,
-    sources[0],
-    'the existing source is untouched'
-  );
-  assert.equal(editor.document.elements.length, CONFIG.image.cacheLimit + 1, 'nothing was inserted');
-  assert.ok(changes.at(-1).notices?.some((notice) => /at most 16 different images/.test(notice)), 'the reason is published');
-  assert.equal(editor.canUndo(), true, 'the refused edit is not a content step');
-  assert.equal(changes.length, committed + 1, 'only the refusal notification was emitted');
+  const replaced = editor.updateElement(target.id, { src: 'cap-image-new.png' });
+  assert.ok(replaced, 'the replacement is returned');
+  assert.equal(replaced.src, 'cap-image-new.png', 'the source changed');
+  assert.equal(editor.document.elements.length, CONFIG.image.cacheLimit, 'no element was added');
+  const distinct = new Set(editor.document.elements.map((element) => element.src));
+  assert.equal(distinct.size, CONFIG.image.cacheLimit, 'the result still uses 16 distinct sources');
+  assert.equal(changes.length, committed + 1, 'the edit is one content step');
+  assert.deepEqual(changes.at(-1).notices, undefined, 'a legal replacement stores no refusal notice');
+  assert.deepEqual(refusals, [], 'nothing was refused');
+  assert.ok(sources.length === CONFIG.image.cacheLimit);
+});
 
-  assert.equal(
-    editor.updateElement(target.id, { src: sources[1] }).src,
-    sources[1],
-    'reusing an existing source is still allowed'
-  );
+test('at the cap, replacing with a source another element already uses is allowed', () => {
+  const { editor, refusals } = sixteenSourcesHarness();
+  const target = editor.document.elements[0];
+  const replacement = editor.document.elements[1].src;
+
+  const replaced = editor.updateElement(target.id, { src: replacement });
+  assert.ok(replaced, 'reuse never needs a new slot');
+  const distinct = new Set(editor.document.elements.map((element) => element.src));
+  assert.equal(distinct.size, CONFIG.image.cacheLimit - 1, 'the result uses 15 distinct sources');
+  assert.deepEqual(refusals, []);
+});
+
+test('at the cap, adding a seventeenth distinct image element is refused with the resulting count', () => {
+  const { editor, changes, refusals, sources } = sixteenSourcesHarness();
+  const committed = changes.length;
+
+  assert.equal(editor.addElement('image', { src: 'cap-image-17.png' }), null, 'the cap refuses the add');
+  assert.equal(editor.document.elements.length, CONFIG.image.cacheLimit, 'nothing was inserted');
+  assert.equal(refusals.length, 1, 'the refusal reaches the toast channel');
+  assert.match(refusals[0], /this one uses 17/, 'the count is the document the add would have produced');
+  assert.match(refusals[0], /adding another image/, 'the wording names the action');
+  assert.ok(changes.at(-1).notices?.some((notice) => /this one uses 17/.test(notice)), 'the notice is published');
+  assert.equal(changes.length, committed + 1, 'only the refusal notification was emitted');
+  assert.deepEqual(sources, Array.from({ length: CONFIG.image.cacheLimit }, (_, index) => `cap-image-${index}.png`));
+
+  // Reusing an existing source is still allowed at the cap.
+  assert.ok(editor.addElement('image', { src: sources[0] }), 'a reused source consumes no slot');
+});
+
+test('a shared source keeps its slot, so replacing one of its users at the cap is still refused', () => {
+  // Two elements use src0. Excluding the replaced element leaves src0 in the
+  // set through the other element, so the result would be 17 distinct sources.
+  // A naive "filter the old source string" fix would allow this edit.
+  const changes = [];
+  const refusals = [];
+  const shared = 'shared-source.png';
+  const others = Array.from({ length: CONFIG.image.cacheLimit - 1 }, (_, index) => `shared-image-${index}.png`);
+  const editor = createEditor({
+    document: createDocument({
+      lengthMm: 200,
+      elements: [shared, shared, ...others].map((src) => ({ type: 'image', src, x: 4, y: 4, w: 40, h: 40 })),
+    }),
+    onChange: (document) => changes.push(document),
+    onRefusal: (message) => refusals.push(message),
+  });
+  const distinctBefore = new Set(editor.document.elements.map((element) => element.src));
+  assert.equal(distinctBefore.size, CONFIG.image.cacheLimit, 'the fixture starts at 16 distinct sources');
+
+  const target = editor.document.elements[0];
+  assert.equal(editor.updateElement(target.id, { src: 'shared-source-new.png' }), null, 'the result would be 17');
+  assert.equal(editor.document.elements[0].src, shared, 'the old source is untouched');
+  assert.equal(refusals.length, 1);
+  assert.match(refusals[0], /this one uses 17/);
+  assert.match(refusals[0], /replacing this image/, 'the wording names the replacement');
 });
 
 test('the document image budget refuses another copy of a large source', () => {
@@ -446,4 +511,142 @@ test('an edit that shortens text reports the load-path truncation notice', () =>
   const added = editor.addElement('text', { text: long });
   assert.equal(added.text.length, CONFIG.bounds.maxTextChars);
   assert.ok(changes.at(-1).notices?.includes('1 element had text shortened to fit the label limits.'));
+});
+
+/* ---------------- the document budget at the authoring boundary (A-F1) ---------------- */
+
+test('an over-budget update is refused; the existing document is untouched', () => {
+  const refusals = [];
+  const src = 'a'.repeat(CONFIG.bounds.maxSrcChars);
+  // Sixteen distinct sources plus one repeated occurrence: 68 M characters of
+  // image text, over the 64 M authoring budget. Only a legacy or imported
+  // document can be in this state; the editor must not grow it further.
+  const elements = Array.from({ length: CONFIG.image.cacheLimit }, () => ({ type: 'image', src, x: 4, y: 4, w: 40, h: 40 }));
+  elements.push({ type: 'image', src, x: 4, y: 4, w: 40, h: 40 });
+  const editor = createEditor({ document: createDocument({ lengthMm: 200, elements }), onRefusal: (message) => refusals.push(message) });
+  assert.ok(documentSourceChars(editor.document) > CONFIG.bounds.maxSourceChars, 'the fixture is over the budget');
+
+  const target = editor.document.elements[0];
+  const replacement = 'b'.repeat(1000);
+  assert.equal(editor.updateElement(target.id, { src: replacement }), null, 'the budget refuses the edit');
+  assert.equal(editor.document.elements[0].src, src, 'the stored source is untouched');
+  assert.match(refusals[0], /more than \d+ characters of image data/);
+
+  // Reusing a source is still allowed: only occurrences grow the file.
+  assert.ok(editor.updateElement(target.id, { src }), 'the same source is accepted');
+});
+
+test('validation, undo, revalidate and the print target preserve every source', () => {
+  // A legacy document can hold more image text than the authoring budget (the
+  // real storage quota is ~5.2 M characters, so this is an import-only shape).
+  // Once it exists, no normalise pass may rewrite it: validation is called by
+  // undo, revalidate and the print boundary.
+  const src = `data:image/png;base64,${'B'.repeat(CONFIG.bounds.maxSrcChars - 30)}`;
+  // Sixteen distinct sources plus one repeated occurrence: over the authoring
+  // budget, under the per-source cap, and legal for storage to hold.
+  const elements = Array.from({ length: CONFIG.image.cacheLimit }, (_, index) => ({
+    id: `img_${index}`,
+    type: 'image',
+    src,
+    x: 4,
+    y: 4,
+    w: 40,
+    h: 40,
+  }));
+  elements.push({ id: 'img_repeat', type: 'image', src, x: 4, y: 4, w: 40, h: 40 });
+  const over = { lengthMm: 200, elements };
+  const count = CONFIG.image.cacheLimit + 1;
+  const preserved = validateDocument(over);
+  assert.equal(preserved.elements.filter((element) => element.src).length, count);
+  assert.ok(
+    preserved.elements.reduce((total, element) => total + element.src.length, 0) > CONFIG.bounds.maxSourceChars,
+    'the fixture is genuinely over the authoring budget'
+  );
+
+  const editor = createEditor({ document: preserved });
+  assert.equal(editor.document.elements.filter((element) => element.src).length, count);
+  editor.revalidate();
+  assert.equal(editor.document.elements.filter((element) => element.src).length, count, 'revalidate preserves');
+  editor.updateElement(editor.document.elements[0].id, { x: 8 });
+  assert.ok(editor.undo());
+  assert.equal(editor.document.elements.filter((element) => element.src).length, count, 'undo preserves');
+  // The print target is the same document the renderer/flow reads.
+  assert.equal(editor.documentForDisplay().elements.filter((element) => element.src).length, count);
+});
+
+/* ---------------- notices survive a replacement (PR-F2) ---------------- */
+
+test('replaceDocument keeps the imported document’s notices and stays one undo step', () => {
+  const changes = [];
+  const editor = createEditor({
+    document: createDocument({ lengthMm: 40 }),
+    onChange: (document) => changes.push(document),
+  });
+  const notice = '1 element had text shortened to fit the label limits.';
+  const imported = validateDocument({
+    lengthMm: 60,
+    elements: [{ type: 'text', text: 't'.repeat(CONFIG.bounds.maxTextChars + 1) }],
+  });
+  assert.deepEqual(imported.notices, [notice]);
+
+  editor.replaceDocument(imported);
+  const published = changes.at(-1);
+  assert.deepEqual(published.notices, [notice], 'the persistent channel keeps the fact');
+  assert.equal(published.elements.length, 1);
+  assert.equal(editor.canUndo(), true, 'the replacement is one undoable step');
+
+  // A reload goes through the store’s hydrate path: validateDocument keeps it.
+  assert.deepEqual(validateDocument(JSON.parse(JSON.stringify(published))).notices, [notice]);
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.document.lengthMm, 40, 'one undo restores the previous label');
+});
+
+test('a refused add reaches the refusal channel even when the stage summary is saturated', () => {
+  const changes = [];
+  const refusals = [];
+  const editor = createEditor({
+    document: createDocument({
+      lengthMm: 200,
+      elements: Array.from({ length: CONFIG.bounds.maxElements }, () => ({ type: 'rect', w: 200, h: 96 })),
+    }),
+    onChange: (document) => changes.push(document),
+    onRefusal: (message) => refusals.push(message),
+  });
+  const committed = changes.length;
+  assert.equal(editor.addElement('rect', { w: 10, h: 10 }), null);
+  assert.equal(editor.document.elements.length, CONFIG.bounds.maxElements);
+  assert.deepEqual(refusals, ['A label holds at most 200 elements.'], 'the operator hears the reason once');
+  assert.ok(changes.at(-1).notices?.includes('A label holds at most 200 elements.'));
+  assert.equal(changes.length, committed + 1, 'one notification, not a content step');
+
+  // The same refusal twice must not toast twice.
+  assert.equal(editor.addElement('rect', { w: 10, h: 10 }), null);
+  assert.equal(refusals.length, 1, 'a duplicate refusal is not re-announced');
+});
+
+/* ---------------- the refusal notice list is bounded (B-core-F5) ---------------- */
+
+test('a refused 201st add keeps the cap message inside the notice bound', () => {
+  const refusals = [];
+  const full = Array.from({ length: CONFIG.bounds.maxNotices }, (_, index) => `existing notice ${index}`);
+  const editor = createEditor({
+    document: {
+      version: 4,
+      lengthMm: 200,
+      copies: 1,
+      name: 'Full',
+      notices: full,
+      elements: Array.from({ length: CONFIG.bounds.maxElements }, () => ({ type: 'rect', w: 10, h: 10 })),
+    },
+    onRefusal: (message) => refusals.push(message),
+  });
+  assert.equal(editor.document.notices.length, CONFIG.bounds.maxNotices, 'the fixture starts full');
+
+  assert.equal(editor.addElement('rect', { w: 10, h: 10 }), null);
+  assert.equal(editor.document.notices.length, CONFIG.bounds.maxNotices, 'the list never grows past the bound');
+  assert.equal(editor.document.notices.at(-1), 'A label holds at most 200 elements.', 'the refusal is kept');
+  assert.deepEqual(refusals, ['A label holds at most 200 elements.'], 'and announced once');
+  // The oldest entry gives way; the rest of the recent history is intact.
+  assert.equal(editor.document.notices.includes('existing notice 0'), false);
+  assert.equal(editor.document.notices.includes('existing notice 1'), true);
 });

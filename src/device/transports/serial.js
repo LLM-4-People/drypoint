@@ -30,6 +30,33 @@ export function canonicalSpp(id) {
 const SPP_SERVICE_ID = canonicalSpp(CONFIG.transport.sppService);
 const SPP_SHORT_ID = Number.parseInt(SPP_SERVICE_ID, 16);
 
+/**
+ * The one actionable wording for a refused serial permission.
+ *
+ * Chrome reports a blocked or revoked serial permission as a `SecurityError`
+ * whose message is only "Permission denied". The operator cannot act on that:
+ * the fix is a site setting, not a retry.
+ */
+const SERIAL_PERMISSION_HINT = 'Allow serial access for this site in the browser’s site settings, then reconnect.';
+
+/**
+ * Add the concrete next step to a permission refusal, and leave every other
+ * failure untouched (a cancelled picker is a `NotFoundError`, not a denial).
+ * @template T
+ * @param {T} error
+ * @returns {T|Error}
+ */
+function withPermissionHint(error) {
+  const name = error?.name ?? '';
+  const denied = name === 'SecurityError' || name === 'NotAllowedError' || /permission denied/i.test(error?.message ?? '');
+  if (!denied) return error;
+  const message = error?.message ? `${error.message}. ${SERIAL_PERMISSION_HINT}` : SERIAL_PERMISSION_HINT;
+  const hinted = new Error(message);
+  hinted.name = name || 'SecurityError';
+  hinted.cause = error;
+  return hinted;
+}
+
 export class SerialTransport {
   kind = 'serial';
   #port = null;
@@ -62,9 +89,13 @@ export class SerialTransport {
     } catch (error) {
       if (error.name === 'NotFoundError') {
         log.warn('no SPP device matched the filter, falling back to the full port list');
-        return navigator.serial.requestPort();
+        try {
+          return await navigator.serial.requestPort();
+        } catch (retryError) {
+          throw withPermissionHint(retryError);
+        }
       }
-      throw error;
+      throw withPermissionHint(error);
     }
   }
 
@@ -78,7 +109,13 @@ export class SerialTransport {
 
   async open(port) {
     this.#port = port;
-    await port.open({ baudRate: CONFIG.transport.serialBaudRate, bufferSize: CONFIG.transport.serialBufferSize });
+    try {
+      await port.open({ baudRate: CONFIG.transport.serialBaudRate, bufferSize: CONFIG.transport.serialBufferSize });
+    } catch (error) {
+      // A revoked permission surfaces here too, after a port was chosen: the
+      // same concrete next step applies.
+      throw withPermissionHint(error);
+    }
     this.#writer = port.writable.getWriter();
     this.#reader = port.readable.getReader();
     this.#readLoop();

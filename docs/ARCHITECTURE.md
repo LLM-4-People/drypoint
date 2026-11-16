@@ -83,10 +83,13 @@ src/
     modal.js               dialog stack, focus trap, inert background
     print-flow.js          one print flow: in-flight guard, warnings, progress
     print-panel.js         printer state, job settings, maintenance, logs
+    canvas-name.js         the one accessible name of the design canvas
     save-failure.js        one owner of the persistent save-failure notice
+    storage-alert.js       keeps an unreadable stored label and blocks every write
     setting-control.js     schema → control
     settings-sheet.js      settings modal
     stage-layout.js        compact/desktop placement and fit decisions
+    status-line.js         the status line's hold, revert and cancellation
     theme.js               theme decision, theme-color meta and native bars
     toast.js               single live region
     z-order.js             the one restack action spec
@@ -111,6 +114,8 @@ scripts/
   smoke-pages.mjs          headless check that every precached URL answers 200
   test-suites.mjs          splits unit and Chromium suites from the real imports
   lib/distribution.mjs     the licence and notices every distribution ships
+  lib/base-href.mjs        the one <base href> rule, stamped into sw.js
+  lib/content-types.mjs    the one content-type map, stamped into sw.js
   lib/chrome.mjs           the one Chromium discovery rule for tools and tests
   lib/js-scan.mjs          shared comment/string/template/regex lexer
   lib/png.mjs              RGBA PNG codec and flattening for the generated icons
@@ -330,16 +335,18 @@ indentation. Import applies the same bounds as storage and in the same order:
 1. the byte length is bounded by `CONFIG.document.transfer.maxBytes` **before**
    `JSON.parse`. The bound is `bounds.maxSourceChars` (itself
    `image.cacheLimit × bounds.maxSrcChars`) plus a bounded envelope overhead;
-   `validateDocument` enforces the same source budget, because the serialised
-   document repeats a source once per element, so a label the app can produce
-   can always be imported;
 2. the JSON reviver drops `__proto__` and `constructor`, so a hostile file
    cannot reach an object prototype;
 3. the exact `format` token and a readable, not-newer transfer version are
    required, each with one specific message;
-4. `validateDocument` — the same owner storage uses — normalises every element
-   and returns its notices; the distinct-image cap is checked with the same
-   wording the editor and print path use.
+4. `migrateDocument` (the storage path) normalises the label and returns its
+   notices, so an older document rotates on import exactly as it does on load;
+5. `sourceBudgetProblem` in `label/images.js` is the one source-budget decision,
+   and it is the boundary that refuses a file: the distinct-image cap and the
+   image-text budget, with the same wording export uses. Validation deliberately
+   *preserves* an over-budget document — it runs on every undo, geometry change
+   and print, so dropping a source there would destroy a label that already
+   exists. Import and export are the two authoring boundaries that refuse.
 
 The UI applies the result through `controller.replaceDocument`, so an import is
 exactly one undo step. There is no second reader, validation path, download path
@@ -521,8 +528,37 @@ served from a stale HTTP cache.
 - never answers a non-navigation request with `index.html` and never
   content-type-checks a navigation.
 
+The extension map and the decision behind that check are authored once in
+`scripts/lib/content-types.mjs` and stamped into the worker as a generated
+block; the dev server, the browser harness and the Pages smoke import the same
+module. A host that labels a module `text/html` therefore fails the same way in
+all four places, and the smoke cannot accept a type the worker would refuse.
+`scripts/smoke-pages.mjs` also probes the deployment-only files the precache
+manifest cannot name (`sw.js`, `assets/precache.js`, `404.html`).
+
 `npm run check:precache` and `test/precache.test.mjs` fail when the graph, the
 generated manifest, or the worker stamp disagree.
+
+### Accepted deployment limits (1.0.3)
+
+Three facts are recorded as accepted for this release rather than fixed:
+
+- **Assets are not content-hashed.** GitHub Pages serves every asset with a
+  ten-minute cache and cannot set custom headers, so a first or uncontrolled
+  load can mix a cached module with a new document for up to ten minutes. The
+  installed worker is the mitigation: `updateViaCache: 'none'` and a
+  cache-first, digest-checked precache make a controlled page consistent. The
+  fix is content-hashed asset URLs in a later minor, not a header this host
+  cannot send.
+- **`LICENSE` is `application/octet-stream`.** The bytes are correct; the type
+  comes from the host, and the conventional extension is preferred over a
+  `LICENSE.txt` rename or a host rule, which Pages cannot express. The file is
+  a download, which is the intended way to read it outside the app.
+- **The web manifest has no authored `id`.** Chrome derives the identity from
+  the manifest path, which is stable while `start_url` is unchanged. An
+  explicit id was removed because it collided across origins; do not re-add one
+  without a regression test for that collision, and record the reason here if a
+  future release does.
 
 ## Logging
 

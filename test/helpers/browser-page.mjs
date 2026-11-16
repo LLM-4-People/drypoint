@@ -11,24 +11,14 @@ import { createReadStream, existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join, sep } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { projectRoot } from './project-files.mjs';
 import { chromeTimeoutMs } from './env-timeout.mjs';
 import { CHROME } from '../../scripts/lib/chrome.mjs';
+import { contentTypeFor } from '../../scripts/lib/content-types.mjs';
 
 export { CHROME };
-
-const TYPES = Object.freeze({
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-});
 
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -80,8 +70,15 @@ async function waitForDevToolsPort(profile, { timeoutMs = DEVTOOLS_TIMEOUT_MS, e
   );
 }
 
-/** Serve the app surface only, read-only, for the layout probes. */
-function appServer() {
+/**
+ * Serve the app surface only, read-only, for the layout probes.
+ *
+ * `basePath` serves the same files under a sub-path (the Pages layout the
+ * service worker's scope depends on). Any other path is a 404, which is what a
+ * real host answers for an in-app route the worker has to satisfy.
+ */
+function appServer({ basePath = '/' } = {}) {
+  const prefix = basePath.endsWith('/') ? basePath : `${basePath}/`;
   return createServer((request, response) => {
     let path;
     try {
@@ -90,7 +87,13 @@ function appServer() {
       response.writeHead(400).end('Bad request');
       return;
     }
-    if (path === '/') path = '/index.html';
+    if (!path.startsWith(prefix)) {
+      response.writeHead(404).end('Not found');
+      return;
+    }
+    const relative = path.slice(prefix.length - 1);
+    if (relative === '/' || relative === '') path = '/index.html';
+    else path = relative;
     if (!/^\/(?:index\.html|manifest\.webmanifest|sw\.js|(?:src|assets)\/)/.test(path) || path.includes('\0')) {
       response.writeHead(404).end('Not found');
       return;
@@ -101,7 +104,7 @@ function appServer() {
       response.writeHead(404).end('Not found');
       return;
     }
-    response.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    response.writeHead(200, { 'content-type': contentTypeFor(file) });
     createReadStream(file).pipe(response);
   });
 }
@@ -180,8 +183,8 @@ export function mountTimeoutMs(env = process.env) {
  * @param {number} port
  * @param {{timeoutMs?: number}} [options]
  */
-export async function openApp(cdp, port, { timeoutMs = mountTimeoutMs() } = {}) {
-  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
+export async function openApp(cdp, port, { timeoutMs = mountTimeoutMs(), path = '/' } = {}) {
+  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}${path}` });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const state = await cdp.evaluate(`(() => ({
@@ -197,10 +200,14 @@ export async function openApp(cdp, port, { timeoutMs = mountTimeoutMs() } = {}) 
 }
 
 /**
- * Run `body({ cdp, port })` against a fresh headless Chromium. Skips the test
- * when no Chromium binary is available.
+ * Run `body({ cdp, port, basePath })` against a fresh headless Chromium. Skips
+ * the test when no Chromium binary is available.
+ *
+ * @param {object} t the node:test context
+ * @param {(context: {cdp: object, port: number, basePath: string}) => Promise<void>} body
+ * @param {{basePath?: string}} [options]
  */
-export async function withPage(t, body) {
+export async function withPage(t, body, { basePath = '/' } = {}) {
   if (!CHROME || !existsSync(CHROME)) {
     // A skip is honest locally; in CI it would hide a layout regression.
     if (process.env.CI === 'true') {
@@ -209,7 +216,7 @@ export async function withPage(t, body) {
     t.skip('no Chromium binary; the measured layout check needs one');
     return;
   }
-  const server = appServer();
+  const server = appServer({ basePath });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
@@ -261,5 +268,5 @@ export async function withPage(t, body) {
   const cdp = await connect(await waitForDevToolsPort(profile, { exited }));
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
-  await body({ cdp, port });
+  await body({ cdp, port, basePath });
 }

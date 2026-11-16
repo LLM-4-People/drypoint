@@ -19,9 +19,10 @@
 
   <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
-  <!-- Offline tool: nothing may copy the saved labels, the layout state or the
-       paired printer's Bluetooth address into a cloud or device-to-device
-       backup. -->
+  <!-- Offline tool: no cloud copy of the saved labels, the layout state or the
+       paired printer's Bluetooth address. `allowBackup=false` disables cloud
+       backup; device-to-device migration is controlled by the manufacturer and
+       cannot be disabled by the app on every device targeting Android 12+. -->
   <application
       android:label="@string/app_name"
       android:icon="@drawable/app_icon"

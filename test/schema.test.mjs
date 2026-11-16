@@ -13,6 +13,7 @@ import {
   exceedsPrinterLimits,
   documentWidthPx,
   validateDocument,
+  hydrateStoredDocument,
   migrateDocument,
 } from '../src/label/schema.js';
 import { TEMPLATES } from '../src/label/templates.js';
@@ -91,6 +92,63 @@ test('validateDocument turns unusable geometry into the type defaults', () => {
   // Infinity is not a finite number: the type default applies, never a clamped
   // 96px box the caller did not ask for.
   assert.equal(infinite.h, 80);
+});
+
+/* ---------------- trust boundaries (PR-F1, PR-F3, K-F2) ---------------- */
+
+test('a structurally wrong element list is refused, not normalised to a blank label', () => {
+  for (const elements of ['nope', { type: 'text' }, 7, true, null]) {
+    assert.throws(
+      () => validateDocument({ lengthMm: 40, elements }),
+      /no valid element list/,
+      `${JSON.stringify(elements)} must not become an empty label`
+    );
+  }
+  // A missing key is a document with no elements, and a real array is legal.
+  assert.deepEqual(validateDocument({ lengthMm: 40 }).elements, []);
+  assert.deepEqual(validateDocument({ lengthMm: 40, elements: [] }).elements, []);
+  // A non-object root is not a label either.
+  for (const root of [null, undefined, 7, 'label', []]) {
+    assert.throws(() => validateDocument(root), /no valid element list/);
+  }
+});
+
+test('an unusable coordinate is replaced and reported once, naming the fields', () => {
+  const doc = validateDocument({
+    lengthMm: 40,
+    elements: [{ type: 'text', text: 'x', x: 'NaN', y: 1e308, w: 'not-a-number', h: null }],
+  });
+  const notices = doc.notices.filter((notice) => /position or size/.test(notice));
+  assert.equal(notices.length, 1, 'one notice for the whole document');
+  assert.match(notices[0], /^4 position or size values/);
+  for (const field of ['x', 'y', 'w', 'h']) assert.ok(notices[0].includes(field), `the notice names ${field}`);
+  const element = doc.elements[0];
+  for (const field of ['x', 'y', 'w', 'h']) assert.ok(Number.isFinite(element[field]), `${field} is usable`);
+
+  // Shrinking a label is a re-layout, not a damaged file: clamping to the new
+  // tape is normal and must not raise the coercion notice.
+  const cable = validateDocument({ ...TEMPLATES.find((template) => template.id === 'cable').build(), lengthMm: 25 });
+  assert.equal(cable.notices?.some((notice) => /position or size/.test(notice)) ?? false, false);
+});
+
+test('unknown document and element fields are stripped at the shape owner', () => {
+  const padded = 'z'.repeat(250_000);
+  const doc = validateDocument({
+    lengthMm: 40,
+    extraDocumentField: padded,
+    templateId: 'kept-nowhere',
+    elements: [{ type: 'text', text: 'x', extraElementField: padded, style: { color: 'red' } }],
+  });
+  assert.equal(Object.hasOwn(doc, 'extraDocumentField'), false);
+  assert.equal(Object.hasOwn(doc, 'templateId'), false);
+  assert.deepEqual(Object.keys(doc).sort(), ['copies', 'elements', 'lengthMm', 'name', 'version']);
+  const element = doc.elements[0];
+  assert.equal(Object.hasOwn(element, 'extraElementField'), false);
+  assert.equal(Object.hasOwn(element, 'style'), false);
+  assert.deepEqual(
+    Object.keys(element).sort(),
+    ['align', 'bold', 'fontPx', 'h', 'id', 'locked', 'name', 'rotation', 'text', 'type', 'valign', 'visible', 'w', 'x', 'y']
+  );
 });
 
 test('validateDocument allows an empty document and does not seed "Hello"', () => {
@@ -393,6 +451,11 @@ test('v3 migration never writes into the caller’s notices array', () => {
   assert.deepEqual(notices, [], 'the input array is untouched');
   assert.equal(migrated.elements.length, 1, 'the valid element survives');
   assert.match(migrated.notices.join(' '), /1 legacy element was dropped/);
+  assert.equal(
+    migrated.notices.filter((notice) => /older portrait layout and was rotated/.test(notice)).length,
+    1,
+    'the rotation is reported once, alongside the drop'
+  );
 });
 
 /* ---------------- hostile rotation and legacy numerics (R5B-1/R5H-1) ---------------- */
@@ -517,7 +580,7 @@ test('an over-long image source is dropped whole, never truncated, with one noti
   assert.equal(atCap.notices, undefined);
 });
 
-test('a document cannot carry more image text than the shared transfer budget', () => {
+test('validation never drops image text, even past the document budget', () => {
   const src = 'a'.repeat(CONFIG.bounds.maxSrcChars);
   const atCap = CONFIG.bounds.maxSourceChars / src.length;
   assert.equal(atCap, CONFIG.image.cacheLimit, 'the budget is the cache limit times the source cap');
@@ -528,16 +591,19 @@ test('a document cannot carry more image text than the shared transfer budget', 
   assert.equal(full.elements.filter((element) => element.src).length, atCap);
   assert.equal(full.notices, undefined, 'a document at the budget is untouched');
 
-  // One more occurrence of the same source is over the budget: the element
-  // survives, its source is dropped whole, and one notice says why.
+  // One more occurrence is over the budget and is still preserved whole:
+  // validation runs on every undo, geometry change and print, so dropping a
+  // source here would silently destroy a document that already exists. The
+  // budget is enforced where an image enters the label, not on a normalise
+  // pass (A-F1).
   const over = validateDocument({ lengthMm: 40, elements: Array.from({ length: atCap + 1 }, () => ({ type: 'image', src })) });
   assert.equal(over.elements.length, atCap + 1);
-  assert.equal(over.elements.filter((element) => element.src).length, atCap);
-  assert.equal(over.elements.at(-1).src, '');
-  const notices = over.notices.filter((notice) => /image data exceeds/.test(notice));
-  assert.equal(notices.length, 1, 'one notice for the whole document');
-  assert.match(notices[0], /^1 image source was dropped/);
-  assert.match(notices[0], new RegExp(`${CONFIG.bounds.maxSourceChars} characters`));
+  assert.equal(over.elements.filter((element) => element.src).length, atCap + 1, 'every source survives');
+  assert.equal(over.notices, undefined, 'preserving is not a notice-worthy rewrite');
+
+  // Validation is idempotent: a second pass keeps every source too.
+  const again = validateDocument(over);
+  assert.equal(again.elements.filter((element) => element.src).length, atCap + 1);
 });
 
 test('notices are bounded in count and length', () => {
@@ -563,13 +629,28 @@ test('legacy migration counts unknown element types as dropped, not silently', (
   assert.ok(migrated.notices.some((notice) => /2 legacy elements were dropped because they were not valid elements/.test(notice)));
 });
 
-test('a non-array legacy element list is reported instead of silently emptied', () => {
-  const migrated = migrateDocument({ version: 3, lengthMm: 40, elements: { type: 'text', text: 'x' } });
-  assert.deepEqual(migrated.elements, []);
-  assert.ok(migrated.notices.some((notice) => /had no element list, so it was loaded with no elements/.test(notice)));
-  // A document that simply has no elements key is not noise.
-  const empty = migrateDocument({ version: 3, lengthMm: 40 });
-  assert.equal(empty.notices, undefined);
+test('a v3 label without an element list is invalid, not an empty label', () => {
+  // Triple-check Low: the v3 path used to turn elements:"nope" (or a missing
+  // list) into a blank label. Storage then accepted it, and the next edit
+  // overwrote the only copy. It is the same shape error the current format
+  // gives, so the quarantine keeps the raw value.
+  for (const elements of [{ type: 'text', text: 'x' }, 'nope', 7, null, undefined]) {
+    assert.throws(
+      () => migrateDocument({ version: 3, lengthMm: 40, elements }),
+      /no valid element list/,
+      JSON.stringify(elements)
+    );
+    assert.throws(() => hydrateStoredDocument({ version: 3, lengthMm: 40, elements }), /no valid element list/);
+  }
+  // An explicit empty list is a real empty label and still migrates.
+  const empty = migrateDocument({ version: 3, lengthMm: 40, elements: [] });
+  assert.deepEqual(empty.elements, []);
+  assert.equal(empty.version, CONFIG.app.documentVersion);
+  assert.deepEqual(
+    empty.notices,
+    ['This label was saved in the older portrait layout and was rotated to fit the current label format.'],
+    'the rotation notice is the only one; an empty list is not a drop'
+  );
 });
 
 test('a label saved by a newer version says so instead of being coerced silently', () => {
@@ -603,4 +684,66 @@ test('exceedsPrinterLimits reports an over-long tape or an element past the labe
   } finally {
     resetGeometry();
   }
+});
+
+test('the migration owner refuses a non-object root instead of inventing a label', () => {
+  // B-core-F9: returning a fresh document for a scalar hid a corrupt stored
+  // value from the quarantine that is meant to keep it.
+  for (const root of [0, 7, '', 'label', true, null, undefined, []]) {
+    assert.throws(() => migrateDocument(root), /no valid element list/, JSON.stringify(root));
+  }
+  // Object roots keep their tolerance: a legacy document, a newer one and an
+  // unversioned one all migrate.
+  assert.equal(migrateDocument({ lengthMm: 40, elements: [] }).elements.length, 0);
+  assert.equal(migrateDocument({ version: 3, lengthMm: 40, elements: [] }).version, CONFIG.app.documentVersion);
+  assert.equal(migrateDocument({ version: CONFIG.app.documentVersion + 1, lengthMm: 40, elements: [] }).elements.length, 0);
+});
+
+
+test('v3 hostile geometry is bounded with the current path’s one notice', () => {
+  // Triple-check Low: the v3 map pre-cleaned NaN/Infinity into defaults, so the
+  // bounds owner never saw them and the operator lost the notice the current
+  // format emits. The rotated values now reach validateDocument unchanged when
+  // unusable, and the one notice owner names the fields.
+  const migrated = migrateDocument({
+    version: 3,
+    lengthMm: 40,
+    elements: [{ type: 'text', x: Number.NaN, y: Number.POSITIVE_INFINITY, w: -5, h: 0, text: 'Hi' }],
+  });
+  const geometry = migrated.notices.filter((notice) => /position or size values/.test(notice));
+  assert.equal(geometry.length, 1, 'exactly one geometry notice');
+  assert.match(geometry[0], /position or size values were not usable numbers and were replaced/);
+  assert.match(geometry[0], /\(x, y\)/);
+  assert.equal(
+    migrated.notices.filter((notice) => /older portrait layout and was rotated/.test(notice)).length,
+    1,
+    'and the rotation notice'
+  );
+  for (const field of ['x', 'y', 'w', 'h']) {
+    assert.ok(Number.isFinite(migrated.elements[0][field]), `${field} is bounded`);
+    assert.ok(migrated.elements[0][field] >= 0, `${field} is not negative`);
+  }
+  // The current-format path is unchanged: same notice, same boundary.
+  const current = validateDocument({ lengthMm: 40, elements: [{ type: 'text', x: Number.NaN, y: Number.POSITIVE_INFINITY }] });
+  assert.deepEqual(current.notices, geometry, 'one geometry-notice owner for both paths');
+});
+
+
+test('v3 rotation is reported once on the storage path and never for the current format', () => {
+  const legacy = migrateDocument({
+    version: 3,
+    lengthMm: 40,
+    elements: [{ type: 'text', x: 4, y: 4, w: 88, h: 312, rotation: 90, text: 'Hi' }],
+  });
+  assert.equal(
+    legacy.notices.filter((notice) => /older portrait layout and was rotated to fit the current label format/.test(notice)).length,
+    1,
+    'one rotation notice'
+  );
+  assert.equal(legacy.elements[0].rotation, 0, 'the element really was rotated');
+
+  const current = validateDocument({ lengthMm: 40, elements: [{ type: 'text', text: 'Hi' }] });
+  assert.equal(current.notices, undefined, 'a current-version document gets no migration notice');
+  const unversioned = migrateDocument({ lengthMm: 40, elements: [{ type: 'text', text: 'Hi' }] });
+  assert.equal(unversioned.notices, undefined, 'an unversioned current document is not called legacy');
 });

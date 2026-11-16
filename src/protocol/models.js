@@ -15,7 +15,11 @@ export const PRINT_TASKS = Object.freeze({
   d110mv4: Object.freeze({ id: 'd110mv4', name: 'D110M V4' }),
 });
 
-/** Every known vendor id, its real name and whether this app may print to it. */
+/**
+ * Every vendor id the app can name, its real name and whether this app may
+ * print to it. This is not the whole vendor catalogue: an id outside the table
+ * is `Unknown` and blocked, never guessed from a neighbouring name.
+ */
 export const MODELS = Object.freeze(
   [
     { code: 0x0900, name: 'D110', support: 'unsupported' },
@@ -24,6 +28,19 @@ export const MODELS = Object.freeze(
     { code: 0x0200, name: 'D11', support: 'unsupported' },
     { code: 0x0202, name: 'D11S', support: 'unsupported' },
     { code: 0x0213, name: 'D11_Pro', support: 'unsupported' },
+    // Vendor-catalogue 12 mm siblings. B18/B18S/H1 have no established print
+    // task here; N1's firmware refused the D110M V4 13-byte
+    // SetPageSize/PageEnd (0xDB 06) and printed with the b1 task; H1S uses its
+    // own task (2-byte PrintStart, 9-byte SetPageSize, PageStart). D101 is
+    // reported D110M V4-compatible but its 24 mm head is outside this app's
+    // 12 mm scope, so it is a scope refusal, not a protocol failure. None may
+    // print until a capture in this repository says otherwise.
+    { code: 0x0e00, name: 'B18', support: 'unsupported' },
+    { code: 0x0e01, name: 'B18S', support: 'unsupported' },
+    { code: 0x0e02, name: 'N1', support: 'unsupported' },
+    { code: 0x0f00, name: 'H1', support: 'unsupported' },
+    { code: 0x1100, name: 'H1S', support: 'unsupported' },
+    { code: 0x0a00, name: 'D101', support: 'unsupported' },
     { code: 0x1000, name: 'B1', support: 'unsupported' },
     { code: 0x1001, name: 'B1 Pro', support: 'unsupported' },
     { code: 0x1002, name: 'B1 SE', support: 'unsupported' },

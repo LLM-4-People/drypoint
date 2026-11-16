@@ -1,10 +1,11 @@
 /**
  * `node --check` parses but never notices an unused binding. This scan is the
  * reference-count gate: every named or default import, in every source and test
- * module, must be read somewhere else in that module.
+ * module, must be read somewhere else in that module, and every export of the
+ * app's own modules must have a consumer outside the module that declares it.
  *
  * The shared lexer blanks comments, strings, templates and regex literals, so a
- * name quoted in prose or a fixture cannot keep a dead import alive.
+ * name quoted in prose or a fixture cannot keep a dead import or export alive.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -79,4 +80,46 @@ test('every module uses every binding it imports', () => {
     }
   }
   assert.deepEqual(unused, [], 'remove imports nothing reads');
+});
+
+/** Names one module exports, read from comment-blanked code. */
+export function exportedNames(code) {
+  const names = [];
+  for (const match of code.matchAll(/^export\s+(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm)) {
+    names.push(match[1]);
+  }
+  for (const match of code.matchAll(/^export\s*\{([^}]*)\}/gm)) {
+    for (const part of match[1].split(',')) {
+      const specifier = part.trim();
+      if (!specifier) continue;
+      const exported = specifier.split(/\s+as\s+/).at(-1).trim();
+      if (exported) names.push(exported);
+    }
+  }
+  return names;
+}
+
+test('every exported name has a consumer outside its own module', () => {
+  // A name used only by the module that declares it is a private detail with a
+  // public keyword: it widens the API surface and survives refactors unnoticed.
+  // Dynamic importers keep a name alive through the identifier they read.
+  const files = [...ROOTS.flatMap((root) => modules(join(projectRoot, root), root)), 'sw.js'];
+  const parsed = files.map((file) => {
+    const { code, inside } = lexJavaScript(readFileSync(join(projectRoot, file), 'utf8'));
+    const body = [...code].map((character, index) => (inside[index] ? ' ' : character)).join('');
+    return { file, code, body };
+  });
+
+  const dead = [];
+  for (const { file, code } of parsed) {
+    // Third-party vendor code keeps its upstream API whatever this app uses.
+    if (!file.startsWith('src/') || file.startsWith('src/vendor/')) continue;
+    for (const name of exportedNames(code)) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`);
+      const consumed = parsed.some((other) => other.file !== file && pattern.test(other.body));
+      if (!consumed) dead.push(`${file}: ${name}`);
+    }
+  }
+  assert.deepEqual(dead, [], 'unexport a name nothing else reads, or wire it');
 });

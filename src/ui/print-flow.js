@@ -88,6 +88,22 @@ export function printButtonState({ printing = false, finishing = false, empty = 
 }
 
 /**
+ * The status line a connection refresh may publish, or null.
+ *
+ * A discovery pass runs inside a print job too (the post-print refresh), and
+ * `#status` at that moment is the job's own outcome. A connection line must not
+ * overwrite it: the job status is the one the operator is waiting for, and the
+ * next explicit refresh still publishes the connection line.
+ *
+ * @param {{jobBusy?: boolean, remaining?: number|null}} state
+ * @returns {string|null}
+ */
+export function connectionStatus({ jobBusy = false, remaining = null } = {}) {
+  if (jobBusy) return null;
+  return remaining != null ? `Connected · ${remaining} labels left` : 'Connected';
+}
+
+/**
  * @param {object} options
  * @param {object} options.device device manager (connected / print / cancel)
  * @param {() => object} options.getDocument current document
@@ -126,6 +142,8 @@ export function createPrintFlow({
   let printing = false;
   /** True once the job outcome is settled and its refresh is still running. */
   let finishing = false;
+  /** True once printEnd was committed: the label is printed, not possibly cut. */
+  let committed = false;
   /** True from the first trigger until the flow settles, dialog included. */
   let busy = false;
 
@@ -148,6 +166,7 @@ export function createPrintFlow({
   // keeps "Preparing…" and only the error remains.
   device.events?.on?.('finishing', (info) => {
     if (!printing || !info?.started) return;
+    committed = Boolean(info.committed);
     setFinishing(true);
     setStatus('Finishing…');
   });
@@ -295,6 +314,7 @@ export function createPrintFlow({
       // returns to "Print", whatever the outcome.
       setFinishing(false);
       setPrinting(false);
+      committed = false;
       busy = false;
       // Never hold the process open just for a cosmetic progress reset.
       setTimeout(() => setProgress(0), 1200)?.unref?.();
@@ -314,11 +334,12 @@ export function createPrintFlow({
     },
     /**
      * The job phase a disconnect has to describe: nothing is on the wire while
-     * preparing, only the finished-job refresh while finishing, and paper may
-     * have moved as soon as the job started.
+     * preparing, paper may have moved as soon as the job started, and only a
+     * job whose printEnd was committed may say the label was printed.
      */
     get phase() {
-      return printing ? 'printing' : busy ? 'preparing' : 'idle';
+      if (finishing && committed) return 'finishing';
+      return printing || finishing ? 'printing' : busy ? 'preparing' : 'idle';
     },
   };
 }

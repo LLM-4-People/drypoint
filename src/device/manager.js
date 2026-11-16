@@ -176,6 +176,11 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     } else {
       log.warn('session closed', { message: error?.message, wasConnected });
     }
+    // A job whose printEnd is on the wire is already committed: the page
+    // counter proved every copy before that frame. The job object is about to
+    // be cleared and its `finishing` event has not run yet, so the fact has to
+    // travel with the disconnect or the UI calls a printed label incomplete.
+    const committed = currentJob?.committed === true;
     currentJob = null;
     // The link is gone: release every reference before the (bounded) close
     // await, so a connect() issued from the state event starts clean.
@@ -197,7 +202,8 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     });
     // A link that never reached "connected" (cancelled or failed connect) has
     // no connection to lose; the connect() caller reports its own error.
-    if (wasConnected) events.emit('disconnected', error);
+    // One payload: the shared emitter forwards a single argument.
+    if (wasConnected) events.emit('disconnected', { error, committed });
     await disposeTransport(closingTransport);
   }
 
@@ -657,8 +663,10 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
       // a Cancel would be a silent no-op. Every terminal outcome (success,
       // failure, user cancel) publishes this before the refresh. `started`
       // tells the UI whether paper ever began moving, so a refused job keeps
-      // its "Preparing…" state instead of claiming Finishing.
-      if (owner) events.emit('finishing', { started });
+      // its "Preparing…" state instead of claiming Finishing. `committed` is
+      // true only once printEnd went on the wire: a lost link after that point
+      // did not interrupt the label, and the disconnect copy may say so.
+      if (owner) events.emit('finishing', { started, committed: controllerAbort.committed });
       // Refresh INSIDE the job lock, for every outcome: its probe frames must
       // not land between the next job's bitmap rows, and `printing` must stay
       // true until the printer state is current again. runDiscovery() rather

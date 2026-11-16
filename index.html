@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#08080a" />
@@ -18,6 +18,7 @@
   <body>
     <div class="app" id="app">
       <header class="topbar">
+        <h1 class="visually-hidden">Drypoint label designer</h1>
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-text">Drypoint</span>
@@ -40,8 +41,16 @@
         </div>
       </header>
 
+      <div class="storage-alert" id="storageAlert" role="alert" hidden>
+        <p class="storage-alert-text" id="storageAlertText"></p>
+        <div class="storage-alert-actions">
+          <button id="storageExportRaw" type="button">Export the raw value</button>
+          <button id="storageReset" type="button">Reset the label</button>
+        </div>
+      </div>
+
       <div class="workspace">
-        <aside class="sidebar">
+        <aside class="sidebar" aria-label="Elements and layers">
           <div class="rail" id="toolRail" role="group" aria-label="Add element"></div>
 
           <section class="panel layers-panel">
@@ -79,8 +88,8 @@
 
           <div class="stage-scroll" id="stageScroll">
             <div class="canvas-stack">
-              <canvas id="labelCanvas" class="label-canvas"></canvas>
-              <canvas id="overlayCanvas" class="overlay-canvas"></canvas>
+              <canvas id="labelCanvas" class="label-canvas" role="img" aria-label="Label design"></canvas>
+              <canvas id="overlayCanvas" class="overlay-canvas" aria-hidden="true"></canvas>
             </div>
           </div>
 
@@ -89,7 +98,7 @@
           </div>
         </main>
 
-        <aside class="inspector">
+        <aside class="inspector" aria-label="Properties">
           <div class="tabs" id="panelTabs" role="tablist" aria-label="Inspector">
             <button type="button" id="tab-design" data-tab="design" role="tab" aria-selected="true" aria-controls="panelBody" tabindex="0">Design</button>
             <button type="button" id="tab-print" data-tab="print" role="tab" aria-selected="false" aria-controls="panelBody" tabindex="-1">Print</button>

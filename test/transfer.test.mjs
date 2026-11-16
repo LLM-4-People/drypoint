@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/core/config.js';
 import { createEditor } from '../src/editor/controller.js';
 import { imageSources } from '../src/label/images.js';
-import { createDocument, validateDocument } from '../src/label/schema.js';
+import { createDocument, migrateDocument, validateDocument } from '../src/label/schema.js';
 import {
   TRANSFER_FORMAT,
   TRANSFER_MAX_BYTES,
@@ -152,10 +152,104 @@ test('a seventeenth distinct image is refused with the print-limit wording', () 
   });
 });
 
+test('an over-budget image document is refused whole, never partially imported', () => {
+  const src = 'a'.repeat(CONFIG.bounds.maxSrcChars);
+  const over = {
+    lengthMm: 40,
+    elements: Array.from({ length: CONFIG.image.cacheLimit + 1 }, () => ({ type: 'image', src })),
+  };
+  // Validation preserves the document: the importer is the boundary that
+  // refuses it (A-F1), so no source is silently emptied on the way in.
+  const preserved = validateDocument(over);
+  assert.equal(preserved.elements.filter((element) => element.src).length, CONFIG.image.cacheLimit + 1);
+  assert.throws(() => parseDocument(json(preserved)), (error) => {
+    assert.match(error.message, /characters of image data/);
+    assert.match(error.message, new RegExp(String(CONFIG.bounds.maxSourceChars)));
+    assert.match(error.message, /Remove or reuse an image/);
+    return true;
+  });
+  // Exactly the budget still imports.
+  const atCap = validateDocument({ lengthMm: 40, elements: Array.from({ length: CONFIG.image.cacheLimit }, () => ({ type: 'image', src })) });
+  assert.equal(parseDocument(json(atCap)).document.elements.length, CONFIG.image.cacheLimit);
+});
+
+test('an imported v3 document rotates exactly like the stored one and says so', () => {
+  const legacy = {
+    version: 3,
+    lengthMm: 40,
+    elements: [{ id: 'a', type: 'text', x: 4, y: 4, w: 88, h: 312, rotation: 90, text: 'Hi' }],
+  };
+  const text = JSON.stringify({ format: TRANSFER_FORMAT, version: CONFIG.app.documentVersion, document: legacy });
+  const { document, notices } = parseDocument(text);
+  const stored = migrateDocument(legacy);
+  assert.deepEqual(document, stored, 'import and storage share one migration path');
+  assert.equal(document.version, CONFIG.app.documentVersion);
+  assert.equal(document.elements[0].w, 312, 'the portrait box was rotated');
+  assert.equal(document.elements[0].rotation, 0);
+  assert.deepEqual(notices, stored.notices ?? [], 'the import reports exactly the storage path’s notices');
+  assert.equal(
+    notices.filter((notice) => /older portrait layout and was rotated to fit the current label format/.test(notice)).length,
+    1,
+    'the import carries the rotation notice'
+  );
+
+  // A legacy document that loses an element says so on import too: the notice
+  // is produced by the one migration owner, not by the importer.
+  const lossy = { ...legacy, elements: [...legacy.elements, { type: 'sparkle' }, { type: 'sparkle' }] };
+  const lossyText = JSON.stringify({ format: TRANSFER_FORMAT, version: CONFIG.app.documentVersion, document: lossy });
+  const parsed = parseDocument(lossyText);
+  assert.ok(parsed.notices.some((notice) => /2 legacy elements were dropped/.test(notice)));
+  assert.ok(
+    parsed.notices.some((notice) => /older portrait layout and was rotated/.test(notice)),
+    'the rotation notice survives beside the drop notice'
+  );
+  assert.deepEqual(parsed.notices, migrateDocument(lossy).notices);
+});
+
 test('an over-size file is refused before JSON.parse', () => {
   const oversized = 'x'.repeat(TRANSFER_MAX_BYTES + 1);
   assert.throws(() => parseDocument(oversized), /too large/);
   assert.throws(() => parseDocument('x'), /not valid JSON/, 'a small non-JSON file still reaches the parser');
+});
+
+test('a structurally wrong element list is refused with the shape owner’s message', () => {
+  const text = JSON.stringify({
+    format: TRANSFER_FORMAT,
+    version: CONFIG.app.documentVersion,
+    document: { lengthMm: 40, elements: 'nope' },
+  });
+  assert.throws(() => parseDocument(text), /no valid element list/);
+});
+
+/* ---------------- envelope errors (K-F12) ---------------- */
+
+test('every envelope defect has one specific message', () => {
+  const document = validateDocument({ lengthMm: 40, elements: [] });
+  const cases = [
+    [[], /not a Drypoint label document/],
+    [null, /not a Drypoint label document/],
+    [{ format: CONFIG.app.id, version: 0, document }, /no valid transfer version/],
+    [{ format: CONFIG.app.id, version: 1.5, document }, /no valid transfer version/],
+    [{ format: CONFIG.app.id, version: '4', document }, /no valid transfer version/],
+    [{ format: CONFIG.app.id, version: CONFIG.app.documentVersion + 1, document }, /newer version/],
+    [{ format: CONFIG.app.id, version: CONFIG.app.documentVersion }, /no label document/],
+    [{ format: CONFIG.app.id, version: CONFIG.app.documentVersion, document: [] }, /no label document/],
+    [{ version: CONFIG.app.documentVersion, document }, /its format is missing/],
+  ];
+  for (const [value, expected] of cases) {
+    assert.throws(() => parseDocument(JSON.stringify(value)), expected, JSON.stringify(value));
+  }
+});
+
+test('a document saved by a newer version imports with the migration notice', () => {
+  const text = JSON.stringify({
+    format: TRANSFER_FORMAT,
+    version: CONFIG.app.documentVersion,
+    document: { version: CONFIG.app.documentVersion + 1, lengthMm: 40, elements: [{ type: 'text', text: 'x' }] },
+  });
+  const { document, notices } = parseDocument(text);
+  assert.equal(document.elements.length, 1);
+  assert.ok(notices.some((notice) => /saved by a newer version/.test(notice)));
 });
 
 test('an imported document is one undoable step', () => {
@@ -187,4 +281,34 @@ test('the export filename is timestamped and bridge-safe', () => {
     assert.ok(!filename.includes('/') && !filename.includes('\\') && !filename.includes('\u0000'));
     assert.ok(!filename.split('.').includes('..'), 'no parent-directory segment');
   }
+});
+
+test('an untrusted format is quoted as a bounded, escaped excerpt', () => {
+  // Triple-check Low: a 1 MB `format` was echoed whole into the error, which
+  // becomes a toast and a log line. The one excerpt owner keeps the message
+  // short, keeps a normal wrong format recognisable, and cannot throw on a
+  // hostile value (an object with a null toString).
+  const document = validateDocument({ lengthMm: 40, elements: [] });
+  const attempt = (format) => {
+    try {
+      parseDocument(JSON.stringify({ format, version: CONFIG.app.documentVersion, document }));
+      return null;
+    } catch (error) {
+      return error.message;
+    }
+  };
+
+  const huge = attempt('x'.repeat(1_000_000));
+  assert.ok(huge.length < 300, `the message is bounded (${huge.length} chars)`);
+  assert.match(huge, /its format is "x{24}"…/);
+
+  const normal = attempt('other-app');
+  assert.match(normal, /its format is "other-app"/, 'a normal wrong format is still named');
+
+  const hostile = attempt({ toString: null });
+  assert.ok(hostile.length < 300, `an object format is bounded (${hostile.length} chars)`);
+  assert.match(hostile, /its format is "\{\\"toString\\":null\}"/);
+
+  const missing = attempt(undefined);
+  assert.match(missing, /its format is missing/);
 });

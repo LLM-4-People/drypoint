@@ -99,7 +99,7 @@ test('heartbeat advanced wins over GetInfo for battery and sensors', () => {
 });
 
 test('defaulted capability groups are marked as guesses', () => {
-  const merged = mergeCapabilities({ capabilities: { headWidthPx: 96 } });
+  const merged = mergeCapabilities({ capabilities: { dpi: 203, headWidthPx: 96 } });
   assert.equal(merged.source.geometry, 'reported');
   assert.equal(merged.source.density, 'default');
   assert.equal(merged.source.battery, 'default');
@@ -109,7 +109,7 @@ test('defaulted capability groups are marked as guesses', () => {
   assert.ok(Object.values(empty.source).every((source) => source === 'default'));
 });
 
-test('geometry is "reported" only when the head width itself was reported', () => {
+test('geometry is "reported" only when the head width and a usable resolution are', () => {
   // A zero dpi, a truncated TLV, a lone max-print-height or a dpi without a
   // head width are not a head measurement: the gate must still call the 96-dot
   // fallback a guess.
@@ -118,12 +118,67 @@ test('geometry is "reported" only when the head width itself was reported', () =
     assert.equal(merged.source.geometry, 'default', `${JSON.stringify(caps)} is not reported geometry`);
   }
   assert.equal(mergeCapabilities({ capabilities: { dpi: 200, headWidthPx: 96 } }).source.geometry, 'reported');
-  assert.equal(mergeCapabilities({ capabilities: { headWidthPx: 96 } }).source.geometry, 'reported');
-  assert.equal(mergeCapabilities({ heartbeat: { headWidthPx: 96 } }).source.geometry, 'reported');
 
-  // A silent discovery keeps the same session's earlier report.
-  const prior = mergeCapabilities({ capabilities: { headWidthPx: 96 } });
+  // B-core-F8: a head-only frame has no pitch. Reporting geometry from the head
+  // alone let the app print at the assumed 8 dots/mm while claiming a report.
+  const headOnly = mergeCapabilities({ capabilities: { headWidthPx: 96 } });
+  assert.equal(headOnly.dpi, null, 'nothing reported a resolution');
+  assert.equal(headOnly.source.geometry, 'default');
+  const headOnlyReason = printBlockReason({ ...headOnly, model: 'D110_M', modelSupport: 'confirmed' });
+  // Triple-check Low: the head *was* reported here, so the message must name
+  // the missing resolution and must not blame the head width.
+  assert.equal(headOnlyReason, CONFIG.device.printGate.missingResolution);
+  assert.match(headOnlyReason, /did not report a usable resolution/);
+  assert.doesNotMatch(headOnlyReason, /head width/);
+
+  // The mirror case: a resolution with no head width names the head, not the
+  // resolution it did report.
+  const dpiOnly = mergeCapabilities({ capabilities: { dpi: 203 } });
+  assert.equal(dpiOnly.source.headWidth, 'default');
+  assert.equal(dpiOnly.source.dpi, 'reported');
+  const dpiOnlyReason = printBlockReason({ ...dpiOnly, model: 'D110_M', modelSupport: 'confirmed' });
+  assert.equal(dpiOnlyReason, CONFIG.device.printGate.missingHeadWidth);
+  assert.match(dpiOnlyReason, /did not report its head width/);
+  assert.doesNotMatch(dpiOnlyReason, /resolution/);
+
+  // Neither fact: the general sentence, which claims only "not enough".
+  const neither = mergeCapabilities({ capabilities: {} });
+  assert.equal(
+    printBlockReason({ ...neither, model: 'D110_M', modelSupport: 'confirmed' }),
+    CONFIG.device.printGate.guessedGeometry
+  );
+  assert.match(
+    printBlockReason({ ...neither, model: 'D110_M', modelSupport: 'confirmed' }),
+    /did not report enough geometry to size the label/
+  );
+  const headOnlyHeartbeat = mergeCapabilities({ heartbeat: { headWidthPx: 96 } });
+  assert.equal(headOnlyHeartbeat.source.geometry, 'default', 'a heartbeat head alone is still a guess');
+
+  // A hostile resolution with a usable head is a default, not a report.
+  const hostile = mergeCapabilities({ capabilities: { headWidthPx: 96, dpi: 65535 } });
+  assert.equal(hostile.dpi, null);
+  assert.equal(hostile.source.geometry, 'default');
+  assert.equal(hostile.source.dpi, 'default', 'a hostile value is not a report');
+  assert.equal(
+    printBlockReason({ ...hostile, model: 'D110_M', modelSupport: 'confirmed' }),
+    CONFIG.device.printGate.missingResolution,
+    'the head was reported; the resolution is what is missing'
+  );
+
+  // A silent discovery keeps the same session's earlier report: the dpi came
+  // from this printer, and a later head-only frame does not unlearn it.
+  const prior = mergeCapabilities({ capabilities: { dpi: 300, headWidthPx: 96 } });
+  assert.equal(prior.source.geometry, 'reported');
+  assert.equal(mergeCapabilities({ previous: prior, heartbeat: { headWidthPx: 96 } }).source.geometry, 'reported');
   assert.equal(mergeCapabilities({ previous: prior, advanced: {} }).source.geometry, 'reported');
+
+  // The D110_M reference path (head + dpi) is untouched.
+  const reference = mergeCapabilities({
+    capabilities: { dpi: 200, headWidthPx: 96 },
+    info: { deviceType: 0x0910, model: 'D110_M', modelSupport: 'confirmed' },
+  });
+  assert.equal(reference.source.geometry, 'reported');
+  assert.equal(printBlockReason(reference), null);
 });
 
 test('a truncated max-print-height TLV never shortens the label limit', () => {
@@ -360,7 +415,10 @@ test('a paper action says what did not move, without a second gate', () => {
   assert.equal(supportGate(lidOpen).reason, 'Close the printer lid before printing; nothing was printed.');
   assert.equal(supportGate(lidOpen, { action: 'feed' }).reason, 'Close the printer lid before feeding; nothing was fed.');
   assert.equal(supportGate(noPaper, { action: 'feed' }).reason, 'Load a label roll before feeding; nothing was fed.');
-  assert.equal(supportGate(noPaper, { action: 'advance' }).reason, 'Load a label roll before advancing; nothing was advanced.');
+  assert.equal(supportGate(noPaper, { action: 'feed' }).reason, 'Load a label roll before feeding; nothing was fed.');
+  // An action the app cannot command falls back to the print wording instead of
+  // inventing a verb.
+  assert.equal(supportGate(noPaper, { action: 'advance' }).reason, 'Load a label roll before printing; nothing was printed.');
   // An unknown action falls back to the print wording instead of throwing.
   assert.equal(supportGate(lidOpen, { action: 'nope' }).reason, supportGate(lidOpen).reason);
   // The model and geometry reasons are action-independent: they never moved paper.
@@ -375,7 +433,7 @@ test('a reported dpi above 600 is absent, makes geometry a guess and blocks prin
     const merged = mergeCapabilities({ capabilities: { dpi, headWidthPx: 96 }, heartbeat: { headWidthPx: 96 }, info });
     assert.equal(merged.dpi, null, `${dpi} is not a resolution`);
     assert.equal(merged.source.geometry, 'default', `${dpi}: geometry is not reported`);
-    assert.equal(printBlockReason(merged), CONFIG.device.printGate.guessedGeometry, `${dpi} blocks printing`);
+    assert.equal(printBlockReason(merged), CONFIG.device.printGate.missingResolution, `${dpi} blocks printing`);
 
     setGeometry(merged);
     assert.equal(geometry().dotsPerMm, CONFIG.geometry.dotsPerMm, `${dpi}: no hostile pitch reaches geometry`);
