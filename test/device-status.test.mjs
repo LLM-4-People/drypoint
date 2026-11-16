@@ -33,6 +33,7 @@ test('every connection status has one unambiguous description', () => {
     status: 'connected',
     dot: 'online',
     label: `D110_M · ${FIXTURE_SERIAL}`,
+    shortLabel: 'D110_M',
     title: 'Open printer controls · Bluetooth serial (SPP)',
     ariaLabel: `D110_M · ${FIXTURE_SERIAL} — open printer controls`,
     panelLabel: 'Connected',
@@ -46,26 +47,49 @@ test('every connection status has one unambiguous description', () => {
   // A connected printer that never named its model is still a printer.
   const anonymous = describeDeviceStatus({ status: 'connected', capabilities: { model: null } });
   assert.equal(anonymous.label, 'Printer');
+  assert.equal(anonymous.shortLabel, 'Printer');
   assert.equal(anonymous.ariaLabel, 'Printer — open printer controls');
   assert.equal(anonymous.panelLabel, 'Connected');
 
   // A reported id outside the table is not the model name "Unknown".
   const unknown = describeDeviceStatus({ status: 'connected', capabilities: { model: 'Unknown', modelSupport: 'unknown', deviceType: 0x1234 } });
   assert.equal(unknown.label, 'Unknown model');
+  assert.equal(unknown.shortLabel, 'Unknown');
   assert.equal(unknown.ariaLabel, 'Unknown model — open printer controls');
 
   const error = describeDeviceStatus({ status: 'error' });
   assert.equal(error.dot, 'error');
   assert.equal(error.label, 'Connect printer');
+  assert.equal(error.shortLabel, 'Connect');
   assert.equal(error.panelLabel, 'Connection error');
 
   const idle = describeDeviceStatus({ status: 'idle' });
   assert.equal(idle.dot, 'offline');
   assert.equal(idle.label, 'Connect printer');
+  assert.equal(idle.shortLabel, 'Connect');
   assert.equal(idle.panelLabel, 'Offline');
 
   const panelLabels = [connected, connecting, error, idle].map(({ panelLabel }) => panelLabel);
   assert.equal(new Set(panelLabels).size, panelLabels.length, 'no two states read the same in the panel');
   assert.equal(describeDeviceStatus({}).panelLabel, 'Offline', 'an unknown state is offline, never invented');
   assert.equal(describeDeviceStatus({ status: 'nonsense' }).dot, 'offline');
+});
+
+
+test('every short pill label is contained by its accessible name', () => {
+  const states = [
+    describeDeviceStatus({ status: 'idle' }),
+    describeDeviceStatus({ status: 'connecting' }),
+    describeDeviceStatus({ status: 'error' }),
+    describeDeviceStatus({ status: 'connected', capabilities: { model: 'D110_M', serial: FIXTURE_SERIAL } }),
+    describeDeviceStatus({ status: 'connected', capabilities: { model: null } }),
+    describeDeviceStatus({ status: 'connected', capabilities: { model: 'Unknown' } }),
+  ];
+  for (const status of states) {
+    assert.ok(status.shortLabel, `${status.status} has a short label`);
+    assert.ok(
+      status.ariaLabel.toLowerCase().includes(status.shortLabel.toLowerCase()),
+      `${JSON.stringify(status.shortLabel)} appears in ${JSON.stringify(status.ariaLabel)} (WCAG 2.5.3)`
+    );
+  }
 });

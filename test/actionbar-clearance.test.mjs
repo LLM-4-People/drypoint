@@ -49,6 +49,24 @@ test('the toasts clear the measured action bar with a status line and insets', a
     assert.ok(plain.toastBottom <= plain.barTop - 7, `390: toast ${plain.toastBottom} clears bar ${plain.barTop}`);
     assert.equal(plain.overflowX, 0);
 
+    // An inset-only change after load must re-measure the same token: no
+    // navigation, no width change, only the viewport's safe area.
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', {
+      insets: { top: 0, left: 0, bottom: 34, right: 0 },
+    });
+    await delay(350);
+    const insetOnly = await cdp.evaluate(`(() => {
+      const barNode = document.querySelector('.actionbar');
+      return {
+        barOffset: barNode.offsetHeight,
+        token: getComputedStyle(document.documentElement).getPropertyValue('--actionbar-clearance').trim(),
+        overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    })()`);
+    assert.ok(insetOnly.barOffset > plain.barOffset, 'the bottom inset grew the bar after load');
+    assert.equal(insetOnly.token, `${insetOnly.barOffset + 8}px`, 'the token follows the inset-only change');
+    assert.equal(insetOnly.overflowX, 0);
+
     const inset = await measure({ width: 360, height: 740, insets: { top: 44, left: 44, bottom: 34, right: 44 } });
     assert.ok(inset.barHeight > plain.barHeight, 'the safe-area padding is in the measured height');
     assert.equal(inset.token, `${inset.barOffset + 8}px`, 'the inset height is measured too, not assumed');

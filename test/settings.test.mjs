@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { CONFIG } from '../src/core/config.js';
+import { LEVELS } from '../src/core/log.js';
 import { installDom } from './helpers/fake-dom.mjs';
+import { readProjectFile } from './helpers/project-files.mjs';
 
 // A browser-shaped storage stub before settings.js is evaluated: the store
 // reads localStorage at import time.
@@ -149,4 +151,36 @@ test('a hostile stored value is quarantined without resetting the other settings
   } finally {
     globalThis.localStorage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
   }
+});
+
+
+/* ---------------- option contracts (P2b) ---------------- */
+
+test('every accent option has a CSS palette', () => {
+  const definition = SETTINGS_SCHEMA.find((item) => item.key === 'appearance.accent');
+  assert.ok(definition, 'the accent setting exists');
+  const css = readProjectFile('assets/app.css');
+  for (const [value] of definition.options) {
+    if (value === definition.default) {
+      // The default accent is the root palette; it has no attribute block.
+      assert.match(css, /^:root\s*\{[^}]*--accent:/m, `the default accent ${value} has root tokens`);
+    } else {
+      assert.match(css, new RegExp(`:root\\[data-accent="${value}"\\]`), `accent ${value} has a dark palette`);
+      assert.match(
+        css,
+        new RegExp(`:root\\[data-theme="light"\\]\\[data-accent="${value}"\\]`),
+        `accent ${value} has a light palette`
+      );
+    }
+  }
+});
+
+test('every log-level option exists in the one LEVELS table', () => {
+  const definition = SETTINGS_SCHEMA.find((item) => item.key === 'diagnostics.logLevel');
+  assert.ok(definition, 'the log-level setting exists');
+  for (const [value] of definition.options) {
+    assert.ok(Object.prototype.hasOwnProperty.call(LEVELS, value), `${value} is a real log level`);
+  }
+  assert.ok(Object.prototype.hasOwnProperty.call(LEVELS, definition.default), 'the default level is real');
+  assert.ok(Object.prototype.hasOwnProperty.call(LEVELS, CONFIG.log.level), 'the configured level is real');
 });

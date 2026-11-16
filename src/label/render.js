@@ -281,6 +281,8 @@ const ELEMENT_LABELS = Object.freeze({
   rect: 'Frame',
 });
 
+const SUPPRESSED_WARNINGS = /^… and (\d+) more$/;
+
 /**
  * The one footer/dialog summary for a warning list. The stage footer shows the
  * first few plus a count; the print confirmation shows more. Truncation is by
@@ -288,8 +290,15 @@ const ELEMENT_LABELS = Object.freeze({
  */
 export function summariseWarnings(warnings, { limit = 3 } = {}) {
   const list = (Array.isArray(warnings) ? warnings : []).filter((warning) => typeof warning === 'string' && warning.trim());
-  if (list.length <= limit) return list.join(' · ');
-  return `${list.slice(0, limit).join(' · ')} · … and ${list.length - limit} more`;
+  // `layoutWarnings` stops at the configured cap and appends one synthetic
+  // "… and N more" entry. That entry is a count, not a warning: counting it
+  // again produced "… and 1 more" whenever the limit matched the real cap.
+  const tail = list.length ? SUPPRESSED_WARNINGS.exec(list.at(-1)) : null;
+  const real = tail ? list.slice(0, -1) : list;
+  const suppressed = tail ? Number(tail[1]) : 0;
+  // The real warnings fit the limit, so the existing count entry stays as-is.
+  if (real.length <= limit) return list.join(' · ');
+  return `${real.slice(0, limit).join(' · ')} · … and ${real.length - limit + suppressed} more`;
 }
 
 /** Operator-facing name for one element: its name when set, else its type. */

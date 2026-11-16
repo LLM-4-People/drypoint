@@ -10,7 +10,6 @@ import {
   VALIGNMENTS,
   createDocument,
   createElement,
-  documentHeightPx,
   exceedsPrinterLimits,
   documentWidthPx,
   validateDocument,
@@ -18,7 +17,6 @@ import {
 } from '../src/label/schema.js';
 import { TEMPLATES } from '../src/label/templates.js';
 import { EC_LEVELS } from '../src/label/qr.js';
-import { barcodeLayout, barcodeModules } from '../src/label/barcode.js';
 import { CONFIG } from '../src/core/config.js';
 import { resetGeometry, setGeometry } from '../src/core/geometry.js';
 
@@ -460,6 +458,40 @@ test('text, value and name are cut to their declared caps at the boundary', () =
   assert.equal(doc.elements[0].name.length, maxNameChars);
   assert.equal(doc.elements[1].value.length, maxValueChars);
   assert.equal(doc.elements[2].value.length, maxValueChars);
+});
+
+test('a current-version document notices unknown types and shortened text', () => {
+  const doc = validateDocument({
+    version: CONFIG.app.documentVersion,
+    lengthMm: 40,
+    elements: [
+      { type: 'text', text: 'kept' },
+      { type: 'future-chart', value: 'not something this version paints' },
+      { type: 'qr', value: 'q'.repeat(CONFIG.bounds.maxValueChars + 5) },
+    ],
+  });
+  assert.equal(doc.elements.length, 2, 'the known elements survive');
+  assert.ok(
+    doc.notices?.some((notice) => /^1 element was dropped because it is not a valid element for this version\.$/.test(notice)),
+    'the unknown type is reported, not silently discarded'
+  );
+  assert.ok(
+    doc.notices?.some((notice) => /^1 element had text shortened to fit the label limits\.$/.test(notice)),
+    'the truncation is reported'
+  );
+  assert.equal(doc.elements[1].value.length, CONFIG.bounds.maxValueChars);
+
+  const many = validateDocument({
+    lengthMm: 40,
+    elements: [
+      { type: 'text', text: 'a'.repeat(CONFIG.bounds.maxTextChars + 1) },
+      { type: 'text', name: 'n'.repeat(CONFIG.bounds.maxNameChars + 1), text: 'b' },
+      { type: 'nope' },
+      { type: 'nope' },
+    ],
+  });
+  assert.ok(many.notices.some((notice) => /^2 elements had text shortened/.test(notice)));
+  assert.ok(many.notices.some((notice) => /^2 elements were dropped because they are not valid elements/.test(notice)));
 });
 
 test('an over-long image source is dropped whole, never truncated, with one notice', () => {

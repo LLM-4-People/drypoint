@@ -7,7 +7,7 @@
 import { CONFIG } from './config.js';
 import { toHex } from './format.js';
 
-const LEVELS = Object.freeze({ trace: 10, debug: 20, info: 30, warn: 40, error: 50 });
+export const LEVELS = Object.freeze({ trace: 10, debug: 20, info: 30, warn: 40, error: 50 });
 
 const entries = [];
 const listeners = new Set();
@@ -138,7 +138,14 @@ export function clearLog() {
 export function exportLogReport(extra = {}) {
   return {
     generatedAt: new Date().toISOString(),
-    app: CONFIG.app,
+    // Name every identity field the report carries; a whole-object reference
+    // would keep a dead CONFIG leaf alive with no reader.
+    app: {
+      id: CONFIG.app.id,
+      name: CONFIG.app.name,
+      version: CONFIG.app.version,
+      documentVersion: CONFIG.app.documentVersion,
+    },
     userAgent: typeof navigator === 'undefined' ? 'node' : navigator.userAgent,
     level: getLogLevel(),
     entries: entries.slice(-CONFIG.diagnostics.maxEntriesInReport),

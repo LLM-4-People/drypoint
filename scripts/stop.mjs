@@ -12,6 +12,8 @@
 
 import { resolve } from 'node:path';
 
+import { BRAND } from '../src/core/brand.js';
+
 import {
   commandLooksLikeServer,
   isProcessAlive,
@@ -45,32 +47,32 @@ function resolvePidArgument(argv = process.argv.slice(2)) {
 /** Stop a pid that has no pid file (e.g. a server started before tracking). */
 async function stopPid(pid) {
   if (!isProcessAlive(pid)) {
-    console.log(`drypoint: pid ${pid} is not running`);
+    console.log(`${BRAND.cliPrefix}: pid ${pid} is not running`);
     return 0;
   }
   const command = await readProcessCommand(pid);
   if (!command || !commandLooksLikeServer(command)) {
-    console.error(`drypoint: refusing to stop pid ${pid}: ${command ? `it is ${command}` : 'its command cannot be verified'}.`);
+    console.error(`${BRAND.cliPrefix}: refusing to stop pid ${pid}: ${command ? `it is ${command}` : 'its command cannot be verified'}.`);
     return 1;
   }
-  console.log(`drypoint: stopping verified server (pid ${pid})…`);
+  console.log(`${BRAND.cliPrefix}: stopping verified server (pid ${pid})…`);
   try {
     process.kill(pid, 'SIGTERM');
   } catch (error) {
     // The process may have exited between the liveness check and the signal,
     // or belong to another user; both are reported, never thrown.
     if (error.code === 'ESRCH') {
-      console.log(`drypoint: pid ${pid} had already exited`);
+      console.log(`${BRAND.cliPrefix}: pid ${pid} had already exited`);
       return 0;
     }
-    console.error(`drypoint: could not signal pid ${pid}: ${error.message}`);
+    console.error(`${BRAND.cliPrefix}: could not signal pid ${pid}: ${error.message}`);
     return 1;
   }
   if (!(await waitForExit(pid, 5000))) {
-    console.error(`drypoint: pid ${pid} did not exit within 5s.`);
+    console.error(`${BRAND.cliPrefix}: pid ${pid} did not exit within 5s.`);
     return 1;
   }
-  console.log(`drypoint: stopped server (pid ${pid})`);
+  console.log(`${BRAND.cliPrefix}: stopped server (pid ${pid})`);
   return 0;
 }
 
@@ -78,7 +80,7 @@ let explicitPid;
 try {
   explicitPid = resolvePidArgument();
 } catch (error) {
-  console.error(`drypoint: ${error.message}`);
+  console.error(`${BRAND.cliPrefix}: ${error.message}`);
   process.exit(1);
 }
 if (explicitPid) {
@@ -90,14 +92,14 @@ let port;
 try {
   port = resolvePort();
 } catch (error) {
-  console.error(`drypoint: ${error.message}`);
+  console.error(`${BRAND.cliPrefix}: ${error.message}`);
   process.exit(1);
 }
 const pidFile = pidFileFor(root, port);
 
 const result = await stopTrackedServer({ file: pidFile, port });
 for (const message of result.messages) {
-  if (message.level === 'error') console.error(`drypoint: ${message.text}`);
-  else console.log(`drypoint: ${message.text}`);
+  if (message.level === 'error') console.error(`${BRAND.cliPrefix}: ${message.text}`);
+  else console.log(`${BRAND.cliPrefix}: ${message.text}`);
 }
 process.exitCode = result.code;

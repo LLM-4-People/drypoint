@@ -18,7 +18,6 @@ import {
   renderManifest,
   sdkDirs,
   syncAssets,
-  syncResources,
   UMASK_WRAPPER,
   versionCodeOf,
   withStaging,

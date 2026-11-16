@@ -99,7 +99,6 @@ export const CONFIG = deepFreeze({
 
   print: {
     density: { min: 1, max: 5, default: 3 },
-    speed: { min: 1, max: 5, default: 1 },
     copies: { min: 1, max: 99, default: 1 },
     defaultLabelType: 1,
     /** Label-type ids the protocol family defines, with their display names. */
@@ -205,7 +204,7 @@ export const CONFIG = deepFreeze({
     compactBreakpointPx: 900,
     wheelZoomStep: 0.0015,
     /** Canvas zoom limits; one owner for the buttons, wheel and fit action. */
-    zoom: Object.freeze({ min: 0.5, max: 6, step: 0.2, fitMin: 0.8, fitMax: 4, default: 2 }),
+    zoom: Object.freeze({ min: 0.5, max: 6, step: 0.2, fitMax: 4, default: 2 }),
   },
 
   log: {

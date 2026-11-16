@@ -320,7 +320,11 @@ test('the page never scrolls sideways and fields clear the action bar', () => {
   assert.match(css, /scroll-padding-bottom:\s*var\(--actionbar-clearance\)/);
   assert.match(css, /\.toasts\s*\{[^}]*bottom:\s*var\(--actionbar-clearance\)/);
   assert.doesNotMatch(css, /--actionbar-clearance\)\s*\+\s*env/, 'the inset is inside the measured height');
-  assert.match(main, /new ResizeObserver\(publishActionbarClearance\)\.observe\(actionbar\)/, 'the bar is measured, not guessed');
+  assert.match(
+    main,
+    /new ResizeObserver\(publishActionbarClearance\)\.observe\(actionbar, \{ box: 'border-box' \}\)/,
+    'the bar is measured including its safe-area padding, not guessed'
+  );
   assert.match(main, /Math\.ceil\(actionbar\.offsetHeight\) \+ ACTIONBAR_GAP_PX/, 'the full painted height plus one gap');
 });
 
@@ -444,7 +448,6 @@ test('zoom paths: quantized buttons, an unquantized wheel, and no persisted boot
   assert.match(main, /autoZoom = initialFit/);
   assert.doesNotMatch(main, /zoom = initialFit;\s*\n\s*saveZoom\(\)/, 'the boot fit must not overwrite the shared zoom key');
   assert.match(main, /shouldClampZoom\(\{ zoom, autoZoom, breakpointChanged \}\)/);
-  assert.match(main, /min = Math\.min\(zoom, limits\.min\)/);
 });
 
 test('the layer row and the Arrange group share one restack spec', () => {
@@ -482,4 +485,33 @@ test('the Print and Test buttons quote the support gate in title and description
   assert.match(update, /state\.supportBlocked/, 'the gate reason reaches the description');
   assert.match(update, /setAttribute\('aria-describedby', 'printGateReason'\)/);
   assert.match(html, /id="printGateReason"/, 'the description target exists in the page');
+});
+
+
+test('safe-area and visual-viewport changes re-measure the action-bar clearance', () => {
+  assert.match(main, /on\(window, 'resize', publishActionbarClearance\)/);
+  assert.match(
+    main,
+    /visualViewport\?\.addEventListener\('resize', publishActionbarClearance\)/,
+    'an inset-only viewport change is a measurement trigger, not just the bar box'
+  );
+});
+
+test('the zoom buttons own one quantized step', () => {
+  assert.match(main, /setZoom\(-CONFIG\.ui\.zoom\.step\)/);
+  assert.match(main, /setZoom\(CONFIG\.ui\.zoom\.step\)/);
+  assert.match(main, /applyZoom\(stepZoom\(zoom, delta, \{ compact: compactQuery\.matches \}\)/);
+  assert.doesNotMatch(main, /Math\.round\(next \* 10\) \/ 10/, 'the duplicate rounding is gone');
+});
+
+test('the diagnostics filename follows the authored app id', () => {
+  assert.match(main, /`\$\{CONFIG\.app\.id\}-diagnostics-\$\{Date\.now\(\)\}\.json`/);
+  assert.doesNotMatch(main, /drypoint-diagnostics/);
+});
+
+test('a disconnect during a job says the label may be incomplete', () => {
+  const handler = main.match(/device\.events\.on\('disconnected', \(\) => \{([\s\S]*?)\n\}\);/)?.[1];
+  assert.ok(handler, 'the disconnected handler exists');
+  assert.match(handler, /if \(printFlow\.busy\)/);
+  assert.match(handler, /label may be incomplete/);
 });

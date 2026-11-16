@@ -68,13 +68,13 @@ test('fitZoom floors the scale so a fitted label is never wider than the stage',
   assert.equal(fitZoom({ ...tall, availableWidth: 40, compact: true }), CONFIG.ui.previewMinScale);
   assert.equal(fitZoom({ ...tall, availableWidth: 1000, compact: true }), CONFIG.ui.zoom.fitMax);
 
-  // Desktop shares the same floored path; it may go below fitMin, because Fit
-  // must show the whole label even when the stage is small.
+  // Desktop shares the same floored path; it may go below the manual floor,
+  // because Fit must show the whole label even when the stage is small.
   assert.equal(fitZoom({ ...tall, availableWidth: 1000, compact: false }), CONFIG.ui.zoom.fitMax);
   assert.equal(fitZoom({ ...tall, availableWidth: 300, compact: false }), 2.6);
   assert.equal(fitZoom({ ...tall, availableWidth: 500, compact: false }), CONFIG.ui.zoom.fitMax);
   const small = fitZoom({ ...tall, availableWidth: 90, compact: false });
-  assert.equal(small, 0.4, 'floored, and below the manual fitMin');
+  assert.equal(small, 0.4, 'floored, and below the manual floor');
   assert.ok(small < CONFIG.ui.zoom.min, 'the fit path is not bounded by the manual floor');
   assert.ok(small >= CONFIG.ui.previewMinScale);
   assert.equal(fitZoom({ ...tall, availableWidth: 60, compact: false }), CONFIG.ui.previewMinScale);
