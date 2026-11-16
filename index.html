@@ -12,7 +12,7 @@
     <title>Drypoint</title>
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="assets/icon-192.png" />
+    <link rel="apple-touch-icon" href="assets/icon-maskable-512.png" />
     <link rel="stylesheet" href="assets/app.css" />
   </head>
   <body>
@@ -56,6 +56,15 @@
             <div class="panel-head"><h2>Templates</h2></div>
             <div class="template-grid" id="templateList"></div>
           </section>
+
+          <section class="panel document-panel">
+            <div class="panel-head"><h2>Document</h2></div>
+            <div class="document-actions">
+              <button id="exportDocumentButton" type="button">Export label</button>
+              <button id="importDocumentButton" type="button">Import label</button>
+            </div>
+            <input id="importDocumentInput" type="file" accept="application/json,.json" hidden />
+          </section>
         </aside>
 
         <main class="stage">
@@ -91,9 +100,9 @@
 
       <footer class="actionbar">
         <div class="progress" aria-hidden="true"><div class="progress-bar" id="progressBar"></div></div>
+        <p class="gate-reason" id="printGateReason" role="status" hidden></p>
         <div class="action-row">
           <span class="status" id="status" role="status"></span>
-          <span class="visually-hidden" id="printGateReason"></span>
           <button id="testButton" class="ghost" type="button">Test label</button>
           <button id="printButton" class="primary" type="button">Print</button>
         </div>

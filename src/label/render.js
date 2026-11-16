@@ -281,24 +281,28 @@ const ELEMENT_LABELS = Object.freeze({
   rect: 'Frame',
 });
 
-const SUPPRESSED_WARNINGS = /^… and (\d+) more$/;
-
 /**
- * The one footer/dialog summary for a warning list. The stage footer shows the
- * first few plus a count; the print confirmation shows more. Truncation is by
- * whole warning, never by cutting a message in half.
+ * The one footer/dialog summary for a warning report. The stage footer shows
+ * the first few plus a count; the print confirmation shows more. Truncation is
+ * by whole warning, never by cutting a message in half.
+ *
+ * `hidden` is the number of warnings the layout pass did not list because it
+ * reached its cap. It is passed as data, never inferred from a string sentinel,
+ * so an element name that happens to look like a count cannot change the count.
+ *
+ * @param {string[]|{warnings: string[], hidden?: number}} report
+ * @param {{limit?: number}} [options]
+ * @returns {string}
  */
-export function summariseWarnings(warnings, { limit = 3 } = {}) {
-  const list = (Array.isArray(warnings) ? warnings : []).filter((warning) => typeof warning === 'string' && warning.trim());
-  // `layoutWarnings` stops at the configured cap and appends one synthetic
-  // "… and N more" entry. That entry is a count, not a warning: counting it
-  // again produced "… and 1 more" whenever the limit matched the real cap.
-  const tail = list.length ? SUPPRESSED_WARNINGS.exec(list.at(-1)) : null;
-  const real = tail ? list.slice(0, -1) : list;
-  const suppressed = tail ? Number(tail[1]) : 0;
-  // The real warnings fit the limit, so the existing count entry stays as-is.
-  if (real.length <= limit) return list.join(' · ');
-  return `${real.slice(0, limit).join(' · ')} · … and ${real.length - limit + suppressed} more`;
+export function summariseWarnings(report, { limit = 3 } = {}) {
+  const list = (Array.isArray(report) ? report : report?.warnings ?? []).filter(
+    (warning) => typeof warning === 'string' && warning.trim()
+  );
+  const hidden = Number.isFinite(report?.hidden) && report.hidden > 0 ? Math.floor(report.hidden) : 0;
+  const shown = list.slice(0, limit);
+  const remaining = list.length - shown.length + hidden;
+  if (!remaining) return shown.join(' · ');
+  return `${shown.join(' · ')} · … and ${remaining} more`;
 }
 
 /** Operator-facing name for one element: its name when set, else its type. */
@@ -402,7 +406,8 @@ function providesOwnField(element) {
  *
  * A frame or background rectangle that fully contains another element is
  * intentional (the framed template) and is not reported.
- * @returns {string[]} warnings in document order
+ * @returns {{warnings: string[], hidden: number}} visible warnings and how many
+ *          further warnings the pass did not list at `CONFIG.bounds.maxWarnings`
  */
 export function layoutWarnings(labelDocument) {
   const elements = (labelDocument?.elements ?? []).filter((element) => element.visible !== false);
@@ -499,13 +504,17 @@ export function layoutWarnings(labelDocument) {
     }
   }
 
-  if (suppressed) messages.push(`… and ${suppressed} more`);
-  return messages;
+  if (suppressed) {
+    // The count is a structured fact, not a string entry an element name could
+    // forge; summariseWarnings receives it separately.
+    return { warnings: messages, hidden: suppressed };
+  }
+  return { warnings: messages, hidden: 0 };
 }
 
 /**
  * Render a document to a fresh canvas at printer resolution.
- * @returns {{canvas: HTMLCanvasElement, warnings: string[]}}
+ * @returns {{canvas: HTMLCanvasElement, warnings: string[], hidden: number}}
  */
 export function renderDocument(labelDocument, options = {}) {
   const canvas = document.createElement('canvas');
@@ -518,7 +527,8 @@ export function renderDocument(labelDocument, options = {}) {
 
   const settings = normaliseRenderOptions(options);
   const notices = Array.isArray(labelDocument?.notices) ? labelDocument.notices : [];
-  const warnings = new Set([...layoutWarnings(labelDocument), ...notices]);
+  const layout = layoutWarnings(labelDocument);
+  const warnings = new Set([...layout.warnings, ...notices]);
 
   for (const element of labelDocument.elements) {
     if (!element.visible) continue;
@@ -550,5 +560,5 @@ export function renderDocument(labelDocument, options = {}) {
     }
   }
 
-  return { canvas, warnings: [...warnings] };
+  return { canvas, warnings: [...warnings], hidden: layout.hidden };
 }

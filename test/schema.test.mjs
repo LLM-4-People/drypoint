@@ -517,6 +517,29 @@ test('an over-long image source is dropped whole, never truncated, with one noti
   assert.equal(atCap.notices, undefined);
 });
 
+test('a document cannot carry more image text than the shared transfer budget', () => {
+  const src = 'a'.repeat(CONFIG.bounds.maxSrcChars);
+  const atCap = CONFIG.bounds.maxSourceChars / src.length;
+  assert.equal(atCap, CONFIG.image.cacheLimit, 'the budget is the cache limit times the source cap');
+
+  // Exactly the budget is valid, with no notice.
+  const full = validateDocument({ lengthMm: 40, elements: Array.from({ length: atCap }, () => ({ type: 'image', src })) });
+  assert.equal(full.elements.length, atCap);
+  assert.equal(full.elements.filter((element) => element.src).length, atCap);
+  assert.equal(full.notices, undefined, 'a document at the budget is untouched');
+
+  // One more occurrence of the same source is over the budget: the element
+  // survives, its source is dropped whole, and one notice says why.
+  const over = validateDocument({ lengthMm: 40, elements: Array.from({ length: atCap + 1 }, () => ({ type: 'image', src })) });
+  assert.equal(over.elements.length, atCap + 1);
+  assert.equal(over.elements.filter((element) => element.src).length, atCap);
+  assert.equal(over.elements.at(-1).src, '');
+  const notices = over.notices.filter((notice) => /image data exceeds/.test(notice));
+  assert.equal(notices.length, 1, 'one notice for the whole document');
+  assert.match(notices[0], /^1 image source was dropped/);
+  assert.match(notices[0], new RegExp(`${CONFIG.bounds.maxSourceChars} characters`));
+});
+
 test('notices are bounded in count and length', () => {
   const notices = Array.from({ length: CONFIG.bounds.maxNotices + 4 }, (_, index) => `notice ${index} ${'z'.repeat(CONFIG.bounds.maxNoticeChars)}`);
   const doc = validateDocument({ lengthMm: 40, notices });

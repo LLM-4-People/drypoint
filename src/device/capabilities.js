@@ -317,6 +317,17 @@ export function autoShutdownOptions(capabilities) {
 }
 
 /**
+ * The paper-moving commands and the words a sensor refusal uses for each one.
+ * The gate owns the sentence; a command names its action so a feed refusal
+ * cannot claim "nothing was printed".
+ */
+export const PAPER_ACTIONS = Object.freeze({
+  print: Object.freeze({ verb: 'print', doing: 'printing', done: 'printed' }),
+  feed: Object.freeze({ verb: 'feed', doing: 'feeding', done: 'fed' }),
+  advance: Object.freeze({ verb: 'advance', doing: 'advancing', done: 'advanced' }),
+});
+
+/**
  * The one support gate. It answers whether this app may operate the printer,
  * and when it may not, why and which class of fact blocked it.
  *
@@ -329,10 +340,10 @@ export function autoShutdownOptions(capabilities) {
  * capability object blocks, it never throws.
  *
  * @param {object|null|undefined} capabilities
- * @param {{requiresPaper?: boolean}} [options]
+ * @param {{requiresPaper?: boolean, action?: keyof typeof PAPER_ACTIONS}} [options]
  * @returns {{allowed: boolean, reason: string|null, kind: 'model'|'geometry'|'sensor'|null}}
  */
-export function supportGate(capabilities, { requiresPaper = true } = {}) {
+export function supportGate(capabilities, { requiresPaper = true, action = 'print' } = {}) {
   const blocked = (reason, kind) => ({ allowed: false, reason, kind });
   const allowed = { allowed: true, reason: null, kind: null };
   const support = capabilities?.modelSupport ?? 'unknown';
@@ -342,14 +353,15 @@ export function supportGate(capabilities, { requiresPaper = true } = {}) {
   if (!capabilities?.model || support === 'unknown') return blocked(CONFIG.device.printGate.unknownModel, 'model');
   if (capabilities?.source?.geometry !== 'reported') return blocked(CONFIG.device.printGate.guessedGeometry, 'geometry');
   if (!requiresPaper) return allowed;
+  const words = PAPER_ACTIONS[action] ?? PAPER_ACTIONS.print;
   const sensors = capabilities?.sensors;
   if (sensors) {
-    if (!sensors.lidClosed) return blocked('Close the printer lid before printing; nothing was printed.', 'sensor');
-    if (!sensors.paperPresent) return blocked('Load a label roll before printing; nothing was printed.', 'sensor');
+    if (!sensors.lidClosed) return blocked(`Close the printer lid before ${words.doing}; nothing was ${words.done}.`, 'sensor');
+    if (!sensors.paperPresent) return blocked(`Load a label roll before ${words.doing}; nothing was ${words.done}.`, 'sensor');
   }
   const percent = capabilities?.battery?.percent;
   if (percent != null && percent <= CONFIG.device.battery.criticalPercent) {
-    return blocked(`Battery is too low to print (${percent}%); nothing was printed.`, 'sensor');
+    return blocked(`Battery is too low to ${words.verb} (${percent}%); nothing was ${words.done}.`, 'sensor');
   }
   return allowed;
 }

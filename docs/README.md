@@ -40,7 +40,9 @@ issue-template link into this repository and every heading anchor resolves.
 Most prose is not generated. The facts with a mechanical owner are:
 `scripts/build-brand.mjs` renders the manifest, the Android strings,
 `src/core/brand.js`, `src/core/version.js` and the icon's accessible name from
-`brand.json` and `package.json`; `scripts/precache.mjs` renders the precache
+`brand.json` and `package.json`; `scripts/build-icons.mjs` rasterises that icon
+into the manifest PNGs and checks their size, alpha and safe zone;
+`scripts/precache.mjs` renders the precache
 manifest and the worker's build and cache stamps; `scripts/build-docs.mjs`
 renders the two marker blocks above. Contract tests pin the remaining repeated
 facts: `test/project.test.mjs` compares the module map with the tree and the

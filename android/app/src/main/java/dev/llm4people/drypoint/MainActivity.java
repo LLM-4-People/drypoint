@@ -66,11 +66,14 @@ public class MainActivity extends Activity {
       @Override
       public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
         Uri url = request.getUrl();
-        // A request that is not the bundled app is answered, not released:
-        // returning null let the WebView resolve it against the network, so a
-        // page (or a redirect) could reach any host the phone could. The shell
-        // has no INTERNET permission and must not depend on that to stay
-        // offline.
+        // A locally generated resource (an imported image data URL, a canvas
+        // blob, about:blank) is not a network request: release it to the
+        // WebView instead of answering 403. Every other non-app URL is answered,
+        // not released: returning null let the WebView resolve it against the
+        // network, so a page (or a redirect) could reach any host the phone
+        // could. The shell has no INTERNET permission and must not depend on
+        // that to stay offline.
+        if (isEmbeddedScheme(url)) return null;
         if (!isAppUrl(url)) return textResponse(403, "Forbidden");
         String path = url.getPath();
         if (path == null || path.equals("/") || path.isEmpty()) path = "/index.html";
@@ -143,6 +146,19 @@ public class MainActivity extends Activity {
    */
   private static boolean isAppUrl(Uri url) {
     return url != null && "https".equals(url.getScheme()) && HOST.equals(url.getHost());
+  }
+
+  /**
+   * Schemes the WebView resolves locally and never on the network. Imported
+   * images are data URLs and the canvas creates blob URLs; if the WebView asks
+   * the interceptor for one of those, it must be released (null), not refused.
+   * No network scheme belongs here, so `isAppUrl` still owns every fetch.
+   */
+  private static boolean isEmbeddedScheme(Uri url) {
+    if (url == null) return false;
+    String scheme = url.getScheme();
+    if (scheme == null) return false;
+    return "data".equalsIgnoreCase(scheme) || "blob".equalsIgnoreCase(scheme) || "about".equalsIgnoreCase(scheme);
   }
 
   private static WebResourceResponse assetResponse(String path, InputStream stream) {

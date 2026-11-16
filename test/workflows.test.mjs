@@ -26,7 +26,8 @@ import {
 } from '../scripts/check-workflows.mjs';
 import { projectRoot } from './helpers/project-files.mjs';
 import { collectFiles } from '../scripts/precache.mjs';
-import { manifestTypeProblem, smokePaths } from '../scripts/smoke-pages.mjs';
+import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
+import { manifestTypeProblem, probe, probeMethod, smokePaths } from '../scripts/smoke-pages.mjs';
 
 const CHECKOUT_SHA = '3d3c42e5aac5ba805825da76410c181273ba90b1';
 
@@ -548,16 +549,48 @@ test('pages checks out main, then proves it is the commit Checks validated', asy
   assert.match(pages, /operator override/i);
 });
 
-test('the pages smoke test covers every precached file exactly once', async () => {
+test('the pages smoke test covers every precached file and notice exactly once', async () => {
   const paths = await smokePaths();
   const files = await collectFiles();
+  const notices = DISTRIBUTION_FILES.map((file) => `/${file}`);
   assert.ok(files.length >= 64, `the runtime surface lists every file (${files.length})`);
-  assert.deepEqual(paths, ['/', ...files.map((file) => `/${file}`)].sort(), 'every runtime file plus the document root');
+  assert.deepEqual(
+    paths,
+    ['/', ...files.map((file) => `/${file}`), ...notices].sort(),
+    'every runtime file, the document root and every distribution notice'
+  );
   assert.equal(paths.filter((path) => path === '/').length, 1, 'the root is requested once');
   assert.equal(paths.includes('/manifest.webmanifest'), true);
+  for (const notice of notices) assert.ok(paths.includes(notice), `${notice} is probed`);
   assert.equal(manifestTypeProblem('application/manifest+json; charset=utf-8'), null);
   assert.match(manifestTypeProblem('text/plain'), /served as "text\/plain"/);
   assert.match(manifestTypeProblem(null), /no content type/);
+
+  // GET where a body proves the file exists (the manifest and the notices);
+  // HEAD is enough for a binary asset.
+  assert.equal(probeMethod('/'), 'HEAD');
+  assert.equal(probeMethod('/assets/app.css'), 'HEAD');
+  assert.equal(probeMethod('/manifest.webmanifest'), 'GET');
+  for (const notice of notices) assert.equal(probeMethod(notice), 'GET', `${notice} uses GET`);
+});
+
+test('a deployment that forgot a notice fails the smoke probe', async () => {
+  const methods = [];
+  const fetchImpl = async (url, options) => {
+    methods.push(options.method);
+    if (url.endsWith('/LICENSE')) return { status: 404, headers: { get: () => null } };
+    return { status: 200, headers: { get: () => 'text/plain' } };
+  };
+  await assert.rejects(
+    probe('https://example.test/drypoint/', '/LICENSE', {
+      attempts: 2,
+      delayMs: 0,
+      fetchImpl,
+      sleep: async () => {},
+    }),
+    /never answered 200/
+  );
+  assert.deepEqual(methods, ['GET', 'GET'], 'the notice is fetched twice and then refused');
 });
 
 test('codeql analyses the Android shell too', async () => {

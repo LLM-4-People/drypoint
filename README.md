@@ -25,12 +25,12 @@ would need before it could print is in [docs/PRINTERS.md](docs/PRINTERS.md).
 
 ## Quick start
 
-**In a browser.** Open <https://llm-4-people.github.io/drypoint/> in Chrome or
-Edge 117+ on a desktop with Bluetooth, or in Chrome on Android where Web
-Bluetooth is available. Pair the printer first (Windows: Settings → Bluetooth),
-then use **Connect printer** in the header or the Print tab. The first load
-registers the offline worker; after that a cold start with no connectivity
-still edits and prints.
+**In a browser.** Open <https://llm-4-people.github.io/drypoint/> in a browser
+that exposes the printer API you need — Chrome or Edge on desktop, or Chrome on
+Android (see [Browser support](#browser-support)). Pair the printer first
+(Windows: Settings → Bluetooth), then use **Connect printer** in the header or
+the Print tab. The first load registers the offline worker; after that a cold
+start with no connectivity still edits and prints.
 
 **As an Android app.** Download the APK from the
 [latest release](https://github.com/LLM-4-People/drypoint/releases/latest),
@@ -43,6 +43,37 @@ network and no server. Build and install details:
 Safari implements neither device API, so it can view the app but cannot reach a
 printer. Firefox 151+ exposes Web Serial, but this app's Bluetooth SPP filter
 is unverified there; Chrome or Edge is the tested serial path.
+
+### Browser support
+
+Device APIs are the limit, not the editor. The version floors below come from
+MDN's browser compatibility data (BCD), not from a guess; only the D110_M path
+was tested on hardware.
+
+| Capability | Chrome | Chrome Android | Edge | Firefox | Safari |
+| --- | --- | --- | --- | --- | --- |
+| **Web Serial** | 89+ | 148+ (138–148 partial RFCOMM) | mirrors Chrome | 151+ | none |
+| **Web Bluetooth** | 70+ | 56+ | mirrors Chrome | none | none |
+
+- **Chromium on Linux** (Chrome and Edge) ships Web Bluetooth disabled by
+  default; enable it in the browser if your distribution packages it.
+- Edge is a Chromium mirror for these APIs. It was not hardware-tested with this
+  printer, so treat it as "should work", not as a verified path.
+- Firefox's Web Serial support is new and this app's Bluetooth SPP filter is
+  unverified there. Safari implements neither API.
+
+## Backup and upgrade
+
+Export a label as one JSON file from **Document → Export label**, and restore it
+with **Import label**. The import applies as one undoable step and is validated
+by the same document owner as the stored label. The file is the only backup
+outside this browser's storage, so export before uninstalling, clearing site
+data or changing browsers.
+
+v1.0.0 has a different signing key and must be uninstalled before 1.0.1+. That
+uninstall deletes the labels stored by 1.0.0, because 1.0.0 has no export. Do
+not install 1.0.0 for new work. Export the label first if you ever downgrade or
+change devices.
 
 ## What it does
 
@@ -64,6 +95,9 @@ is unverified there; Chrome or Edge is the tested serial path.
   by accident.
 - **Layers and templates** — reorder, lock and hide from the layer list;
   starter templates for text, name tag, QR, cable, framed and blank labels.
+- **Export and import** — one JSON file per label, from the Document panel
+  beside Templates. Import validates the format, bounds and document version,
+  applies as one undoable step and reports any content it had to shorten.
 - **Document** — length in millimetres (20–200 mm, clamped to the device
   maximum), presets, and copies.
 
@@ -185,7 +219,9 @@ After that:
 
 If a listed file is missing or the list is malformed, install fails loudly: the
 service worker logs the problems and posts a `precache-error` message, which the
-page shows as a toast and records in the diagnostics log. The worker fetches
+page shows as a toast and records in the diagnostics log. A transient
+network-level failure is retried twice per file with a short backoff; an HTTP
+non-200, a redirect or a validation failure is never retried. The worker fetches
 into a staging cache and promotes it only when every file arrived, so a failed
 install never writes into or deletes the cache being served — for a same-build
 reinstall too.
@@ -295,6 +331,7 @@ The table is generated from `package.json`; edit the script there and run
 | `npm run build` | `node scripts/precache.mjs --write` |
 | `npm run check:precache` | `node scripts/precache.mjs --check` |
 | `npm run build:brand` | `node scripts/build-brand.mjs` |
+| `npm run build:icons` | `node scripts/build-icons.mjs` |
 | `npm run build:android` | `node scripts/build-android.mjs` |
 | `npm run pages:build` | `node scripts/build-pages.mjs` |
 | `npm run docs:check` | `node scripts/check-docs.mjs` |
@@ -303,7 +340,7 @@ The table is generated from `package.json`; edit the script there and run
 | `npm run workflows:check` | `node scripts/check-workflows.mjs` |
 | `npm test` | `node --test "test/*.test.mjs"` |
 | `npm run test:browser` | `node scripts/test-suites.mjs browser` |
-| `npm run verify` | `npm run build:brand -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
+| `npm run verify` | `npm run build:brand -- --check && npm run build:icons -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
 | `npm run test:unit` | `node scripts/test-suites.mjs unit` |
 | `npm run verify:all` | `npm run verify && npm run test:browser` |
 <!-- /generated:scripts -->
@@ -389,10 +426,11 @@ memory.
 - **Length is a setting, not a measurement.** It is remembered per roll, but if
   prints drift across the gap, set the length to match the tape.
 - **Code 128 B only** (printable ASCII 32–126). QR handles arbitrary text.
-- **Web Serial is tested on desktop Chrome/Edge. Web Bluetooth is Chrome and
-  Edge on desktop (Chrome's Linux build ships it disabled) and Chrome on
-  Android.** Safari cannot connect a printer; Firefox's serial support is
-  untested with this printer's Bluetooth SPP filter.
+- **Browser APIs decide.** Web Serial is tested on desktop Chrome/Edge. Web
+  Bluetooth is Chrome and Edge on desktop and Chrome on Android; Chromium on
+  Linux ships Web Bluetooth disabled by default. Safari cannot connect a
+  printer; Firefox's serial support is untested with this printer's Bluetooth
+  SPP filter. See [Browser support](#browser-support).
 - **BLE writes are paced at ~12 ms**, so a 40 mm label takes a few seconds.
 - **Paper info (`0x69`), print history (`0x62`) and the print area (`0x0F`)
   layouts are unverified.** They are exposed as raw bytes rather than guessed

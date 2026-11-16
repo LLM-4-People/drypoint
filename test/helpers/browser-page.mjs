@@ -7,73 +7,17 @@
  * skips the test when the binary is missing.
  */
 import { spawn } from 'node:child_process';
-import { accessSync, constants, createReadStream, existsSync, readdirSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
-import { delimiter, extname, join, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { extname, join, sep } from 'node:path';
 
 import { projectRoot } from './project-files.mjs';
 import { chromeTimeoutMs } from './env-timeout.mjs';
+import { CHROME } from '../../scripts/lib/chrome.mjs';
 
-/** Where an installed Playwright keeps its browsers. Built at run time, never committed. */
-const PLAYWRIGHT_CACHE = join(homedir(), '.cache', 'ms-playwright');
-
-/**
- * The newest Chromium a Playwright cache holds, when one is installed.
- *
- * The path is assembled from `homedir()` so this file never carries a
- * machine-specific absolute path; the privacy gate fails the build on one.
- */
-function findCachedChrome() {
-  let entries;
-  try {
-    entries = readdirSync(PLAYWRIGHT_CACHE, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  const builds = entries
-    .filter((entry) => entry.isDirectory() && /^chromium-\d+$/.test(entry.name))
-    .map((entry) => entry.name)
-    .sort((a, b) => Number(b.slice('chromium-'.length)) - Number(a.slice('chromium-'.length)));
-  for (const build of builds) {
-    for (const layout of ['chrome-linux64/chrome', 'chrome-linux/chrome', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
-      const candidate = join(PLAYWRIGHT_CACHE, build, layout);
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return null;
-}
-
-/**
- * Locate a Chromium binary without a machine-specific path: an explicit
- * D110_CHROME/CHROME_PATH wins, then the ordinary executable names on PATH,
- * then the Playwright browser cache.
- *
- * An explicit path is taken as written even when it does not exist: a CI job
- * configured with the wrong browser must fail, not quietly use another one.
- * A missing binary skips the measured tests locally and fails them in CI
- * (`CI=true`), so a skip can never hide a layout regression on the pipeline.
- */
-function findChrome() {
-  const explicit = process.env.D110_CHROME || process.env.CHROME_PATH;
-  if (explicit) return explicit;
-  const names = ['google-chrome', 'chromium', 'chromium-browser', 'google-chrome-stable', 'chrome'];
-  for (const directory of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
-    for (const name of names) {
-      const candidate = join(directory, name);
-      try {
-        accessSync(candidate, constants.X_OK);
-        return candidate;
-      } catch {
-        // Keep looking; PATH is a search path, not a promise.
-      }
-    }
-  }
-  return findCachedChrome();
-}
-
-export const CHROME = findChrome();
+export { CHROME };
 
 const TYPES = Object.freeze({
   '.html': 'text/html; charset=utf-8',

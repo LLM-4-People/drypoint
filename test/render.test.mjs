@@ -32,6 +32,9 @@ globalThis.qrcode = vendorContext.module.exports;
 
 const dom = installDom();
 
+/** The visible warning list; the structured report is asserted where its count matters. */
+const warningsOf = (labelDocument) => layoutWarnings(labelDocument).warnings;
+
 /** A wider bold face than the light face, as real fonts are. */
 const measureFor = (bold) => (text, px) => text.length * px * (bold ? 0.75 : 0.55);
 
@@ -180,25 +183,25 @@ test('overlapping visible content is reported; a frame around content is not', (
     createElement(ELEMENT_TYPES.TEXT, { name: 'Front', text: 'Hi', x: 4, y: 4, w: 200, h: 60 }),
     createElement(ELEMENT_TYPES.TEXT, { name: 'Back', text: 'Hi', x: 150, y: 40, w: 200, h: 60 }),
   ]);
-  assert.deepEqual(layoutWarnings(overlapping), ['Text "Front" and Text "Back" overlap']);
+  assert.deepEqual(warningsOf(overlapping), ['Text "Front" and Text "Back" overlap']);
 
   // The framed template draws a rect fully around the text: that is the frame,
   // not content painted on top of content.
   const framed = validateDocument(TEMPLATES.find((template) => template.id === 'frame').build());
-  assert.deepEqual(layoutWarnings(framed), []);
+  assert.deepEqual(warningsOf(framed), []);
 
   // A frame that only partly covers another element is a real overlap.
   const pokingOut = documentWith([
     createElement(ELEMENT_TYPES.RECT, { name: 'Edge', x: 2, y: 2, w: 100, h: 40, strokePx: 2 }),
     createElement(ELEMENT_TYPES.TEXT, { name: 'Out', text: 'Hi', x: 20, y: 20, w: 200, h: 40 }),
   ]);
-  assert.deepEqual(layoutWarnings(pokingOut), ['Frame "Edge" and Text "Out" overlap']);
+  assert.deepEqual(warningsOf(pokingOut), ['Frame "Edge" and Text "Out" overlap']);
 
   const hidden = documentWith([
     createElement(ELEMENT_TYPES.TEXT, { text: 'hidden', x: 4, y: 4, w: 100, h: 40, visible: false }),
     createElement(ELEMENT_TYPES.TEXT, { text: 'shown', x: 4, y: 4, w: 100, h: 40 }),
   ]);
-  assert.deepEqual(layoutWarnings(hidden), [], 'an invisible element cannot overlap anything');
+  assert.deepEqual(warningsOf(hidden), [], 'an invisible element cannot overlap anything');
 });
 
 test('a filled frame paints over its content, so it is a reported overlap', () => {
@@ -206,7 +209,7 @@ test('a filled frame paints over its content, so it is a reported overlap', () =
     createElement(ELEMENT_TYPES.RECT, { name: 'Backdrop', x: 4, y: 4, w: 300, h: 80, strokePx: 2, filled: true }),
     createElement(ELEMENT_TYPES.TEXT, { name: 'Inside', text: 'Hi', x: 20, y: 20, w: 100, h: 40 }),
   ]);
-  assert.deepEqual(layoutWarnings(filled), ['Frame "Backdrop" and Text "Inside" overlap']);
+  assert.deepEqual(warningsOf(filled), ['Frame "Backdrop" and Text "Inside" overlap']);
 });
 
 test('a collapsed stroke cannot be a frame', () => {
@@ -215,7 +218,7 @@ test('a collapsed stroke cannot be a frame', () => {
     createElement(ELEMENT_TYPES.RECT, { name: 'Bar', x: 4, y: 4, w: 100, h: 10, strokePx: 6 }),
     createElement(ELEMENT_TYPES.TEXT, { name: 'Inside', text: 'Hi', x: 20, y: 5, w: 40, h: 6 }),
   ]);
-  assert.deepEqual(layoutWarnings(collapsed), ['Frame "Bar" and Text "Inside" overlap']);
+  assert.deepEqual(warningsOf(collapsed), ['Frame "Bar" and Text "Inside" overlap']);
 });
 
 test('a thick stroke leaves no frame around a barcode that reaches into it', () => {
@@ -223,7 +226,7 @@ test('a thick stroke leaves no frame around a barcode that reaches into it', () 
     createElement(ELEMENT_TYPES.RECT, { name: 'Thick', x: 0, y: 0, w: 320, h: 96, strokePx: 12 }),
     createElement(ELEMENT_TYPES.BARCODE, { name: 'Code', value: 'ABC-123', x: 2, y: 2, w: 280, h: 60, showText: false }),
   ]);
-  assert.deepEqual(layoutWarnings(thick), ['Frame "Thick" and Barcode "Code" overlap']);
+  assert.deepEqual(warningsOf(thick), ['Frame "Thick" and Barcode "Code" overlap']);
 });
 
 test('a filled rectangle may back a later QR code, which paints its own white field', () => {
@@ -231,14 +234,14 @@ test('a filled rectangle may back a later QR code, which paints its own white fi
     createElement(ELEMENT_TYPES.RECT, { name: 'Backdrop', x: 100, y: 4, w: 90, h: 90, filled: true }),
     createElement(ELEMENT_TYPES.QR, { name: 'Code', value: 'https://example.test', x: 105, y: 8, w: 80, h: 80 }),
   ]);
-  assert.deepEqual(layoutWarnings(backing), [], 'the symbol clears its own field');
+  assert.deepEqual(warningsOf(backing), [], 'the symbol clears its own field');
 });
 
 test('no template reports a frame overlap at its own length or longer', () => {
   for (const template of TEMPLATES) {
     for (const lengthMm of [40, 60]) {
       const built = validateDocument({ ...template.build(), lengthMm });
-      const frameOverlaps = layoutWarnings(built).filter((warning) => /^Frame .* overlap$| and Frame .* overlap$/.test(warning));
+      const frameOverlaps = warningsOf(built).filter((warning) => /^Frame .* overlap$| and Frame .* overlap$/.test(warning));
       assert.deepEqual(frameOverlaps, [], `${template.id} at ${lengthMm} mm`);
     }
   }
@@ -250,17 +253,17 @@ test('squeezing the framed template onto a 20 mm page reports the content under 
   // frame exemption must not hide that.
   const frame = TEMPLATES.find((template) => template.id === 'frame');
   const squeezed = validateDocument({ ...frame.build(), lengthMm: 20 });
-  assert.deepEqual(layoutWarnings(squeezed), ['Frame and Text overlap']);
+  assert.deepEqual(warningsOf(squeezed), ['Frame and Text overlap']);
 });
 
 test('a symbol below two dots per module is reported with the numbers', () => {
   const narrow = documentWith([createElement(ELEMENT_TYPES.BARCODE, { value: 'ABC-123', x: 0, y: 0, w: 200, h: 60, showText: false })]);
-  assert.deepEqual(layoutWarnings(narrow), [
+  assert.deepEqual(warningsOf(narrow), [
     'Barcode is too narrow: 112 modules plus a 10-module quiet zone on each side need 264 px at 2 px per module; the box is 200 px',
   ]);
 
   const dense = documentWith([createElement(ELEMENT_TYPES.QR, { value: 'https://example.com', x: 0, y: 0, w: 40, h: 40 })]);
-  assert.deepEqual(layoutWarnings(dense), [
+  assert.deepEqual(warningsOf(dense), [
     'QR code is too dense: a 25-module symbol plus its 4-module quiet zone needs 66 px at 2 px per module; the box is 40 px',
   ]);
 
@@ -270,15 +273,15 @@ test('a symbol below two dots per module is reported with the numbers', () => {
   const rotated = documentWith([
     createElement(ELEMENT_TYPES.BARCODE, { value: 'ABC-123', x: 0, y: 0, w: 60, h: 88, rotation: 90, showText: false }),
   ]);
-  assert.deepEqual(layoutWarnings(rotated), [
+  assert.deepEqual(warningsOf(rotated), [
     'Barcode is too narrow: 112 modules plus a 10-module quiet zone on each side need 264 px at 2 px per module; the box is 88 px',
   ]);
 
   const badBarcode = documentWith([createElement(ELEMENT_TYPES.BARCODE, { value: 'café', x: 0, y: 0, w: 200, h: 60 })]);
-  assert.deepEqual(layoutWarnings(badBarcode), ['Barcode: Code 128 B supports printable ASCII (32–126) only']);
+  assert.deepEqual(warningsOf(badBarcode), ['Barcode: Code 128 B supports printable ASCII (32–126) only']);
 
   const badQr = documentWith([createElement(ELEMENT_TYPES.QR, { value: '', x: 0, y: 0, w: 80, h: 80 })]);
-  assert.deepEqual(layoutWarnings(badQr), ['QR code: QR content is empty']);
+  assert.deepEqual(warningsOf(badQr), ['QR code: QR content is empty']);
 });
 
 test('shrinking the tape reports the overlap it causes instead of hiding it', () => {
@@ -527,7 +530,7 @@ test('the barcode caption fits its strip and disappears below the readable minim
 
 test('a barcode bar height of 50 px warns and 51 px does not', () => {
   const at = (h) =>
-    layoutWarnings(documentWith([createElement(ELEMENT_TYPES.BARCODE, { value: 'ABC-123', x: 0, y: 0, w: 300, h, showText: false })]));
+    warningsOf(documentWith([createElement(ELEMENT_TYPES.BARCODE, { value: 'ABC-123', x: 0, y: 0, w: 300, h, showText: false })]));
   assert.deepEqual(at(50), [
     'Barcode is too short: a barcode needs at least 51 px of bar height (6.35 mm); the box gives 50 px',
   ]);
@@ -535,7 +538,7 @@ test('a barcode bar height of 50 px warns and 51 px does not', () => {
 });
 
 test('the HRI strip is excluded from the bar height, so 60 px with a caption warns', () => {
-  const warnings = layoutWarnings(
+  const warnings = warningsOf(
     documentWith([createElement(ELEMENT_TYPES.BARCODE, { value: 'ABC-123', x: 0, y: 0, w: 300, h: 60, showText: true })])
   );
   assert.deepEqual(warnings, [
@@ -547,7 +550,7 @@ test('a long symbol needs 15% of its length even when 51 px is satisfied', () =>
   // 20 characters → 255 modules. A 550 px box gives 2 px modules: the drawn
   // symbol is 510 px, so 15% is 76.5 px — above the 51 px floor.
   const value = 'ABCDEFGHIJKLMNOPQRST';
-  const warnings = layoutWarnings(
+  const warnings = warningsOf(
     documentWith([createElement(ELEMENT_TYPES.BARCODE, { value, x: 0, y: 0, w: 550, h: 60, showText: false })], 200)
   );
   assert.deepEqual(warnings, [
@@ -557,14 +560,14 @@ test('a long symbol needs 15% of its length even when 51 px is satisfied', () =>
 
 test('the stock barcode template keeps its bar height at 40 and 60 mm', () => {
   const cable = TEMPLATES.find((template) => template.id === 'cable');
-  assert.deepEqual(layoutWarnings(validateDocument(cable.build())), [], 'the stock cable label is clean at its 60 mm length');
+  assert.deepEqual(warningsOf(validateDocument(cable.build())), [], 'the stock cable label is clean at its 60 mm length');
   // The same stock barcode geometry on a 40 mm label: barcodeFrame is the one
   // owner of "the box a barcode needs", so this is the template's own sizing.
   const frame = barcodeFrame({ labelWidthPx: 320, labelHeightPx: 96, paddingPx: 4, value: 'CBL-001' });
   const short = documentWith([
     createElement(ELEMENT_TYPES.BARCODE, { value: 'CBL-001', x: 4, y: 4, w: frame.w, h: frame.h, showText: false }),
   ]);
-  assert.deepEqual(layoutWarnings(short), [], 'the stock barcode geometry is clean at 40 mm');
+  assert.deepEqual(warningsOf(short), [], 'the stock barcode geometry is clean at 40 mm');
 });
 
 /* ---------------- bounded warnings and footer text (R5H-3/R5H-4) ---------------- */
@@ -573,11 +576,11 @@ test('layoutWarnings caps its list, dedupes on insert and counts the remainder',
   const elements = Array.from({ length: 8 }, (_, index) =>
     createElement(ELEMENT_TYPES.TEXT, { name: `a${index}`, text: 'x', x: 4, y: 4, w: 80, h: 40 })
   );
-  const warnings = layoutWarnings(documentWith(elements, 200));
+  const report = layoutWarnings(documentWith(elements, 200));
   // 8 overlapping boxes produce C(8,2) = 28 distinct pair messages.
-  assert.equal(warnings.length, CONFIG.bounds.maxWarnings + 1);
-  assert.equal(warnings.at(-1), '… and 8 more');
-  assert.equal(new Set(warnings.slice(0, -1)).size, CONFIG.bounds.maxWarnings, 'no duplicate entries');
+  assert.equal(report.warnings.length, CONFIG.bounds.maxWarnings);
+  assert.equal(report.hidden, 28 - CONFIG.bounds.maxWarnings, 'the suppressed count is structured, not a string entry');
+  assert.equal(new Set(report.warnings).size, CONFIG.bounds.maxWarnings, 'no duplicate entries');
 });
 
 test('a repeated warning is stored once', () => {
@@ -585,13 +588,13 @@ test('a repeated warning is stored once', () => {
     createElement(ELEMENT_TYPES.QR, { name: 'A', value: '', x: 4, y: 4, w: 40, h: 40 }),
     createElement(ELEMENT_TYPES.QR, { name: 'B', value: '', x: 4, y: 4, w: 40, h: 40 }),
   ];
-  const warnings = layoutWarnings(documentWith(elements, 200));
+  const warnings = warningsOf(documentWith(elements, 200));
   assert.deepEqual(warnings, ['QR code "A" and QR code "B" overlap', 'QR code "A": QR content is empty', 'QR code "B": QR content is empty']);
 });
 
 test('an element name is truncated in a warning instead of being rendered whole', () => {
   const long = 'N'.repeat(5000);
-  const warnings = layoutWarnings(
+  const warnings = warningsOf(
     documentWith([
       createElement(ELEMENT_TYPES.TEXT, { name: long, text: 'x', x: 4, y: 4, w: 80, h: 40 }),
       createElement(ELEMENT_TYPES.TEXT, { name: 'Other', text: 'y', x: 4, y: 4, w: 80, h: 40 }),
@@ -603,32 +606,40 @@ test('an element name is truncated in a warning instead of being rendered whole'
 });
 
 test('summariseWarnings is the one footer/dialog summary', () => {
-  assert.equal(summariseWarnings([]), '');
-  assert.equal(summariseWarnings(['a']), 'a');
-  assert.equal(summariseWarnings(['a', 'b', 'c']), 'a · b · c');
-  assert.equal(summariseWarnings(['a', 'b', 'c', 'd', 'e']), 'a · b · c · … and 2 more');
-  assert.equal(summariseWarnings(['a', 'b', 'c', 'd', 'e'], { limit: 20 }), 'a · b · c · d · e');
-  assert.equal(summariseWarnings(['a', 'b', 'c', 'd', 'e'], { limit: 20 }), 'a · b · c · d · e');
-  assert.equal(summariseWarnings(['a', 'b'], { limit: 1 }), 'a · … and 1 more');
+  assert.equal(summariseWarnings({ warnings: [] }), '');
+  assert.equal(summariseWarnings({ warnings: ['a'] }), 'a');
+  assert.equal(summariseWarnings({ warnings: ['a', 'b', 'c'] }), 'a · b · c');
+  assert.equal(summariseWarnings({ warnings: ['a', 'b', 'c', 'd', 'e'] }), 'a · b · c · … and 2 more');
+  assert.equal(summariseWarnings({ warnings: ['a', 'b', 'c', 'd', 'e'] }, { limit: 20 }), 'a · b · c · d · e');
+  assert.equal(summariseWarnings({ warnings: ['a', 'b'] }, { limit: 1 }), 'a · … and 1 more');
+  assert.equal(summariseWarnings([]), '', 'a bare list still means no hidden count');
 });
 
 test('the summary counts only real warnings, never its own count entry', () => {
   const elements = Array.from({ length: 30 }, (_, index) =>
     createElement(ELEMENT_TYPES.TEXT, { name: `Box ${index}`, text: 'x', x: 4, y: 4, w: 88, h: 40 })
   );
-  const warnings = layoutWarnings(documentWith(elements, 200));
-  assert.equal(warnings.length, CONFIG.bounds.maxWarnings + 1, '20 real warnings plus one count entry');
-  assert.match(warnings.at(-1), /^… and 415 more$/);
+  const report = layoutWarnings(documentWith(elements, 200));
+  assert.equal(report.warnings.length, CONFIG.bounds.maxWarnings, 'the list stops at the cap');
+  assert.equal(report.hidden, 415, '30 boxes produce 435 pairs: 20 kept, 415 suppressed');
 
-  // The dialog limit equals the real-warning cap: the existing count entry
-  // must pass through, not become "… and 1 more".
-  const full = summariseWarnings(warnings, { limit: CONFIG.bounds.maxWarnings });
-  assert.equal(full, warnings.join(' · '));
+  // The dialog limit equals the configured cap: every kept warning is shown,
+  // and the suppressed count appears once.
+  const full = summariseWarnings(report, { limit: CONFIG.bounds.maxWarnings });
+  assert.equal(full, `${report.warnings.join(' · ')} · … and 415 more`);
   assert.equal((full.match(/… and/g) ?? []).length, 1, 'one count entry');
   assert.doesNotMatch(full, /and 1 more/);
 
   // A tighter footer summary still reports every suppressed warning once.
-  assert.match(summariseWarnings(warnings, { limit: 3 }), /… and 432 more$/);
+  assert.match(summariseWarnings(report, { limit: 3 }), /… and 432 more$/);
+});
+
+test('an element name that looks like a count cannot change the hidden count', () => {
+  const forged = '… and 500 more';
+  const report = { warnings: [forged, 'b', 'c', 'd'], hidden: 0 };
+  const summary = summariseWarnings(report, { limit: 3 });
+  assert.equal(summary, '… and 500 more · b · c · … and 1 more', 'the count is one real warning plus three shown');
+  assert.doesNotMatch(summary, /501/);
 });
 
 /* ---------------- empty text (R5B-8) ---------------- */
@@ -652,13 +663,13 @@ test('a frame opening starts at the full stroke width, not half of it', () => {
     createElement(ELEMENT_TYPES.RECT, { name: 'Frame', x: 0, y: 0, w: 200, h: 96, strokePx: 12 }),
     createElement(ELEMENT_TYPES.IMAGE, { name: 'Photo', src: 'data:image/png;base64,x', x: 6, y: 6, w: 100, h: 40 }),
   ], 60);
-  assert.deepEqual(layoutWarnings(doc), ['Frame "Frame" and Image "Photo" overlap']);
+  assert.deepEqual(warningsOf(doc), ['Frame "Frame" and Image "Photo" overlap']);
 
   const inside = documentWith([
     createElement(ELEMENT_TYPES.RECT, { name: 'Frame', x: 0, y: 0, w: 200, h: 96, strokePx: 12 }),
     createElement(ELEMENT_TYPES.IMAGE, { name: 'Photo', src: 'data:image/png;base64,x', x: 12, y: 12, w: 100, h: 40 }),
   ], 60);
-  assert.deepEqual(layoutWarnings(inside), [], 'content at the real inner edge is clean');
+  assert.deepEqual(warningsOf(inside), [], 'content at the real inner edge is clean');
 });
 
 test('a quarter-turned frame paints the same rectangle and still backs its content', () => {
@@ -666,7 +677,7 @@ test('a quarter-turned frame paints the same rectangle and still backs its conte
     createElement(ELEMENT_TYPES.RECT, { name: 'Frame', x: 2, y: 2, w: 300, h: 92, strokePx: 2, rotation: 90 }),
     createElement(ELEMENT_TYPES.TEXT, { name: 'Inside', text: 'Hi', x: 8, y: 8, w: 280, h: 80 }),
   ], 200);
-  assert.deepEqual(layoutWarnings(doc), []);
+  assert.deepEqual(warningsOf(doc), []);
 });
 
 test('a rounded frame is tested against its inner rounded contour', () => {
@@ -674,13 +685,13 @@ test('a rounded frame is tested against its inner rounded contour', () => {
     createElement(ELEMENT_TYPES.RECT, { name: 'Rounded', x: 2, y: 2, w: 316, h: 92, strokePx: 2, radiusPx: 30 }),
     createElement(ELEMENT_TYPES.TEXT, { name: 'Corner', text: 'Hi', x: 8, y: 8, w: 40, h: 30 }),
   ], 200);
-  assert.deepEqual(layoutWarnings(corner), ['Frame "Rounded" and Text "Corner" overlap'], 'the corner arc covers that box');
+  assert.deepEqual(warningsOf(corner), ['Frame "Rounded" and Text "Corner" overlap'], 'the corner arc covers that box');
 
   const clear = documentWith([
     createElement(ELEMENT_TYPES.RECT, { name: 'Rounded', x: 2, y: 2, w: 316, h: 92, strokePx: 2, radiusPx: 30 }),
     createElement(ELEMENT_TYPES.TEXT, { name: 'Clear', text: 'Hi', x: 40, y: 8, w: 200, h: 80 }),
   ], 200);
-  assert.deepEqual(layoutWarnings(clear), [], 'content clear of the arcs is clean');
+  assert.deepEqual(warningsOf(clear), [], 'content clear of the arcs is clean');
 });
 
 /* ---------------- asymmetric raster fixture (R5G-1) ---------------- */

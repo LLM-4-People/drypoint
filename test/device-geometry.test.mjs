@@ -84,3 +84,17 @@ test('maxLengthFor accepts only a usable length and caps at the app maximum', ()
     assert.equal(maxLengthFor(reported), expected, `${reported} mm -> ${expected}`);
   }
 });
+
+test('the pitch owns the dpi bound, so any caller is bounded', (t) => {
+  t.after(resetGeometry);
+  // mergeCapabilities filters the report, but setGeometry is also called by
+  // tests and future callers; the conversion itself must refuse a hostile dpi.
+  for (const dpi of [CONFIG.geometry.maxDpi + 1, 65535, Infinity, 0, -1, Number.NaN]) {
+    setGeometry({ discovered: true, dpi, headWidthPx: 96, maxLengthMm: 200, source: { geometry: 'reported' } });
+    const active = geometry();
+    assert.equal(active.dotsPerMm, CONFIG.geometry.dotsPerMm, `${dpi} falls back to the configured pitch`);
+    assert.equal(mmToPx(200), 1600, `${dpi}: a 200 mm label stays a 1600-row raster`);
+  }
+  setGeometry({ discovered: true, dpi: CONFIG.geometry.maxDpi, headWidthPx: 96, maxLengthMm: 200 });
+  assert.ok(Math.abs(geometry().dotsPerMm - CONFIG.geometry.maxDpi / 25.4) < 1e-9, 'the bound itself is usable');
+});

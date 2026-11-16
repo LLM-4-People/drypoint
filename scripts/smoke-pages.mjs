@@ -17,6 +17,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
+import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
+
 export const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
 export const PRECACHE_FILE = 'assets/precache.js';
 
@@ -40,7 +42,23 @@ export async function smokePaths({ root = ROOT } = {}) {
   if (!Array.isArray(files) || files.length === 0) throw new Error(`${PRECACHE_FILE} has no file list`);
   const paths = new Set([ROOT_PATH]);
   for (const file of files) paths.add(file.startsWith('/') ? file : `/${file}`);
+  // The licence and notices ride beside the app, not inside the precache
+  // manifest, but a deployment that forgets them is incomplete. One list owns
+  // both distributions.
+  for (const file of DISTRIBUTION_FILES) paths.add(`/${file}`);
   return [...paths].sort();
+}
+
+/**
+ * GET for documents where the response body is the thing being checked, HEAD
+ * for binary assets where only the status matters. A host may serve HEAD for a
+ * notice without the body a reader would receive.
+ * @param {string} path
+ * @returns {'GET'|'HEAD'}
+ */
+export function probeMethod(path) {
+  const noticePath = DISTRIBUTION_FILES.some((file) => path === `/${file}`);
+  return path === MANIFEST_PATH || noticePath ? 'GET' : 'HEAD';
 }
 
 /** Why a Content-Type cannot be the manifest, or null. */
@@ -56,20 +74,30 @@ export function manifestTypeProblem(contentType) {
  * The Pages CDN can answer a previous build for a few seconds after a
  * deployment, so a single 404 is not a failure yet; twelve attempts is.
  *
- * @returns {Promise<{path: string, status: number, contentType: string|null}>}
+ * @returns {Promise<{path: string, status: number, contentType: string|null, contentLength: number|null}>}
  */
 export async function probe(
   base,
   path,
-  { attempts = 12, delayMs = 5000, query = '', fetchImpl = fetch, sleep = (ms) => new Promise((done) => setTimeout(done, ms)) } = {}
+  {
+    attempts = 12,
+    delayMs = 5000,
+    query = '',
+    method = probeMethod(path),
+    fetchImpl = fetch,
+    sleep = (ms) => new Promise((done) => setTimeout(done, ms)),
+  } = {}
 ) {
   const url = `${base.replace(/\/+$/, '')}${path}${query}`;
   let last = 'no attempt was made';
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const response = await fetchImpl(url, { method: 'HEAD', cache: 'no-store' });
+      const response = await fetchImpl(url, { method, cache: 'no-store' });
       const contentType = response.headers?.get?.('content-type') ?? null;
-      if (response.status === 200) return { path, status: 200, contentType };
+      const contentLength = Number(response.headers?.get?.('content-length'));
+      if (response.status === 200) {
+        return { path, status: 200, contentType, contentLength: Number.isFinite(contentLength) ? contentLength : null };
+      }
       last = `answered ${response.status}`;
     } catch (error) {
       last = error.message;

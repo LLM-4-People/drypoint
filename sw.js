@@ -18,7 +18,7 @@ try {
 }
 
 // Build stamp — written by scripts/precache.mjs. Do not edit by hand.
-const BUILD = '08f79c16d844d247';
+const BUILD = 'e5491994fb18e72d';
 
 const MANIFEST = self.__PRECACHE;
 const CACHE_PREFIX = 'drypoint-';
@@ -34,6 +34,14 @@ const INDEX_URL = new URL('index.html', BASE).href;
  * refuses an install that does not carry one.
  */
 const NAVIGATION_TIMEOUT_MS = MANIFEST?.navigationTimeoutMs;
+/**
+ * A transient network failure during install costs one file, not the whole
+ * offline shell. Only a rejected fetch or body read is retried; an HTTP
+ * non-200, a redirect or a content-type/hash problem is a real failure and
+ * fails the install immediately.
+ */
+const INSTALL_RETRIES = MANIFEST?.installRetries;
+const INSTALL_RETRY_DELAY_MS = MANIFEST?.installRetryDelayMs;
 
 const keyOf = (url) => `${url.origin}${url.pathname}`;
 const PRECACHED = new Set((MANIFEST?.files ?? []).map((file) => keyOf(new URL(file, BASE))));
@@ -75,6 +83,43 @@ function contentTypeProblem(file, contentType) {
 async function digestHex(buffer) {
   const digest = await crypto.subtle.digest('SHA-256', buffer);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Fetch and read one precache body, retrying only a network-level failure.
+ *
+ * A response that arrived but is wrong (a status, a redirect, a content type)
+ * is never retried: the host answered, and retrying would only delay the same
+ * refusal. A body read that fails mid-stream is network-level, so it shares
+ * the retry budget.
+ *
+ * @returns {Promise<{response?: Response, buffer?: ArrayBuffer, problem?: string}>}
+ */
+async function readForInstall(file, url) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= INSTALL_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, { cache: 'reload' });
+      if (!response.ok) return { problem: `${file}: HTTP ${response.status}` };
+      if (response.redirected) return { problem: `${file}: redirected to ${response.url}` };
+      const mismatch = contentTypeProblem(file, response.headers?.get?.('content-type') ?? null);
+      if (mismatch) return { problem: `${file}: ${mismatch}` };
+      const buffer = await response.clone().arrayBuffer();
+      return { response, buffer };
+    } catch (error) {
+      lastError = error;
+      if (attempt < INSTALL_RETRIES) {
+        console.info(
+          `[service-worker] network failure for ${file}; retrying (${attempt + 1}/${INSTALL_RETRIES})`,
+          error?.message ?? String(error)
+        );
+        await sleep(INSTALL_RETRY_DELAY_MS);
+      }
+    }
+  }
+  return { problem: `${file}: ${lastError?.message ?? 'network request failed'}` };
 }
 
 /**
@@ -124,7 +169,11 @@ async function install() {
     !Array.isArray(MANIFEST.required) ||
     MANIFEST.required.length === 0 ||
     !Number.isFinite(MANIFEST.navigationTimeoutMs) ||
-    MANIFEST.navigationTimeoutMs <= 0
+    MANIFEST.navigationTimeoutMs <= 0 ||
+    !Number.isInteger(MANIFEST.installRetries) ||
+    MANIFEST.installRetries < 0 ||
+    !Number.isFinite(MANIFEST.installRetryDelayMs) ||
+    MANIFEST.installRetryDelayMs <= 0
   ) {
     return failInstall(['assets/precache.js is missing or malformed']);
   }
@@ -175,26 +224,17 @@ async function install() {
             problems.push(`${file}: assets/precache.js has no digest for this file`);
             return;
           }
-          const response = await fetch(url, { cache: 'reload' });
-          if (!response.ok) {
-            problems.push(`${file}: HTTP ${response.status}`);
+          const staged = await readForInstall(file, url);
+          if (staged.problem) {
+            problems.push(staged.problem);
             return;
           }
-          if (response.redirected) {
-            problems.push(`${file}: redirected to ${response.url}`);
-            return;
-          }
-          const mismatch = contentTypeProblem(file, response.headers?.get?.('content-type') ?? null);
-          if (mismatch) {
-            problems.push(`${file}: ${mismatch}`);
-            return;
-          }
-          const actual = await digestHex(await response.clone().arrayBuffer());
+          const actual = await digestHex(staged.buffer);
           if (actual !== expected) {
             problems.push(`${file}: content hash ${actual} does not match the manifest digest ${expected}`);
             return;
           }
-          await staging.put(url, response);
+          await staging.put(url, staged.response);
         } catch (error) {
           problems.push(`${file}: ${error.message}`);
         }

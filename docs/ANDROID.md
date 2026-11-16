@@ -164,8 +164,8 @@ with the same key.
 
 `src/device/transports/android.js` owns the connection bridge;
 `src/core/dom.js` (`downloadJson`) is the only `saveFile` caller, used by the
-diagnostics export. `BleBridge.java` is the only implementation. Both sides own
-half of every rule, and neither guesses:
+diagnostics and label exports. `BleBridge.java` is the only implementation. Both
+sides own half of every rule, and neither guesses:
 
 | Concern | Web side | Java side |
 | --- | --- | --- |
@@ -194,20 +194,38 @@ involved. The service worker is skipped in the shell because the assets are
 already on disk (and a stale worker cache would survive an APK update).
 
 `MainActivity.isAppUrl` is the one definition of "the app": an `https` URL on the
-one host. Everything else is refused rather than released to the platform:
+one host. `isEmbeddedScheme` is the one definition of a locally resolved
+resource: `data:`, `blob:` and `about:` only. The interceptor applies them in
+this order:
 
-- `shouldInterceptRequest` answers **403 Forbidden** for a request that is not
-  the app. It used to return `null`, which let the WebView resolve that request
-  over the network and made the shell's offline guarantee depend on the absent
-  `INTERNET` permission.
-- `shouldOverrideUrlLoading` returns `true` for any navigation that leaves the
-  origin, so a link cannot hand the page to a browser or another app.
+- `data:`, `blob:` and `about:` are released (`return null`) to the WebView.
+  Imported images are data URLs and the editor creates blob URLs; refusing them
+  would break image import in the APK.
+- Any other request that is not the app answers **403 Forbidden**. It used to
+  return `null`, which let the WebView resolve that request over the network and
+  made the shell's offline guarantee depend on the absent `INTERNET` permission.
+- `shouldOverrideUrlLoading` still returns `true` for any navigation that leaves
+  the origin — including a `data:` navigation. The scheme allowlist is for
+  subresources the WebView resolves itself, never for handing the page to
+  another document.
 
 The manifest declares no `INTERNET` permission, no `provider`, `service` or
 `receiver`, and `android:exported="true"` only on the launcher activity.
 `android:allowBackup="false"`: the label documents, the layout state and the
 paired printer's Bluetooth address are never copied into a cloud or
 device-to-device backup.
+
+**On-device check for the scheme policy.** The native WebView path cannot run in
+CI, so verify it once on a phone:
+
+1. Install the APK and connect the D110_M.
+2. Design → Image, pick a photo. The image appears on the label and the stage
+   hint does not say it is still loading. That is the `data:` path.
+3. Print the label. That proves the same document painted from the local scheme
+   reaches the raster.
+4. Open the Print panel's diagnostics log: there is no `net::ERR_*` or
+   `403` entry for a `data:` or `blob:` URL. A foreign host is never reached
+   because the shell has no `INTERNET` permission.
 
 `index.html` carries a Content-Security-Policy meta element —
 `default-src 'self'; img-src 'self' data: blob:; style-src 'self'
@@ -231,17 +249,24 @@ canvas and object URLs it creates itself.
 
 ## Export and images
 
-- Diagnostics export uses the native bridge (`saveFile`), which writes to
-  Downloads on Android 10+ and to the app's external Downloads directory on
-  older versions. The bridge accepts only a single filename segment (no empty
-  name, separators, NUL, `.` or `..`) and canonicalises the legacy target under
-  the Downloads directory before writing.
+- **Document → Export label** writes one JSON file through the native bridge
+  (`saveFile`), which writes to Downloads on Android 10+ and to the app's
+  external Downloads directory on older versions. The filename carries a
+  timestamp because the bridge refuses a display name Downloads already holds.
+- **Document → Import label** opens the system file picker, checks the file size
+  before reading it, and applies the validated document to the editor as one
+  undoable step.
+- Diagnostics export uses the same bridge. The bridge accepts only a single filename segment (no empty
+  name, separators, NUL, `.` or `..`) and canonicalises the legacy target under the Downloads
+  directory before writing.
 - On Android 10+ the row is inserted with `IS_PENDING=1`, so the Files app never
   shows a half-written export; the flag is cleared only after the bytes are
   written, and a failed write deletes the pending row again. A display name that
   Downloads already holds is refused before the insert, because MediaStore would
   otherwise silently rename the new file to `name (1).json`.
-- Image import uses the system file picker exposed by the shell.
+- Image import uses the system file picker exposed by the shell. The picked file
+  becomes a data URL, which the interceptor releases to the WebView (see the
+  scheme policy above).
 
 `LICENSE` and `THIRD_PARTY_NOTICES.md` are staged into `assets/www` from the same
 list the site uses (`scripts/lib/distribution.mjs`), so both distributions carry
@@ -274,7 +299,9 @@ contract by `test/android-bridge.test.mjs` (ack watchdog, MTU reset and
 handshake, token settling, teardown guards) plus `test/android-shell.test.mjs`
 (method names, permissions, asset packaging). `SafeFileName` is compiled and
 executed by `test/safe-filename.test.mjs`, so its rule is a runtime assertion,
-not a source grep. The native GATT path itself needs a physical Android phone
+not a source grep. The interceptor's scheme allowlist is a source contract; the
+on-device image-import check above covers the behaviour a static test cannot. The
+native GATT path itself needs a physical Android phone
 and the printer; it cannot be exercised in CI or an emulator, so the GATT
 behaviour is a source contract verified by `javac` in
 `scripts/build-android.mjs`, not by execution.

@@ -320,15 +320,23 @@ export async function contentDigests(files) {
 /**
  * The exact text written to assets/precache.js.
  *
- * `navigationTimeoutMs` is stamped from CONFIG so the service worker — a
- * classic script that cannot import src/core/config.js — reads the one owner
- * of the bound instead of keeping a second literal.
+ * `navigationTimeoutMs` and the install retry budget are stamped from CONFIG so
+ * the service worker — a classic script that cannot import src/core/config.js —
+ * reads the one owner of the bounds instead of keeping a second literal.
  */
-export function renderPrecache({ version, files, required, digests, navigationTimeoutMs = CONFIG.offline.navigationTimeoutMs }) {
+export function renderPrecache({
+  version,
+  files,
+  required,
+  digests,
+  navigationTimeoutMs = CONFIG.offline.navigationTimeoutMs,
+  installRetries = CONFIG.offline.installRetries,
+  installRetryDelayMs = CONFIG.offline.installRetryDelayMs,
+}) {
   const requiredEntries = required.map((file) => `    '${file}',`).join('\n');
   const entries = files.map((file) => `    '${file}',`).join('\n');
   const digestEntries = files.map((file) => `    '${file}': '${digests[file]}',`).join('\n');
-  return `${GENERATED_HEADER}self.__PRECACHE = {\n  version: '${version}',\n  navigationTimeoutMs: ${navigationTimeoutMs},\n  required: [\n${requiredEntries}\n  ],\n  files: [\n${entries}\n  ],\n  digests: {\n${digestEntries}\n  },\n};\n`;
+  return `${GENERATED_HEADER}self.__PRECACHE = {\n  version: '${version}',\n  navigationTimeoutMs: ${navigationTimeoutMs},\n  installRetries: ${installRetries},\n  installRetryDelayMs: ${installRetryDelayMs},\n  required: [\n${requiredEntries}\n  ],\n  files: [\n${entries}\n  ],\n  digests: {\n${digestEntries}\n  },\n};\n`;
 }
 
 /**
@@ -365,6 +373,8 @@ export async function buildPrecache() {
     required: REQUIRED_FILES,
     digests,
     navigationTimeoutMs: CONFIG.offline.navigationTimeoutMs,
+    installRetries: CONFIG.offline.installRetries,
+    installRetryDelayMs: CONFIG.offline.installRetryDelayMs,
   });
   const swSource = await readFile(join(ROOT, SW_FILE), 'utf8');
   const swContent = stampWorker(swSource, version, BRAND.cachePrefix);

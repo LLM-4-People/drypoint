@@ -212,9 +212,9 @@ test('the canvas renderer never repaints an answered notice', () => {
     scrollContainer: dom.createElement('div'),
   });
 
-  assert.ok(canvasEditor.render().includes(notice), 'the live migration notice is painted once');
+  assert.ok(canvasEditor.render().warnings.includes(notice), 'the live migration notice is painted once');
   editor.dismissNotices();
   editor.updateElement(editor.selection, { text: 'Changed' });
   assert.ok(editor.undo());
-  assert.equal(canvasEditor.render().includes(notice), false, 'the undo snapshot must not resurrect the notice in the renderer');
+  assert.equal(canvasEditor.render().warnings.includes(notice), false, 'the undo snapshot must not resurrect the notice in the renderer');
 });

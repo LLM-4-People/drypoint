@@ -354,6 +354,20 @@ test('the support gate is the one owner of allowed, reason and kind', () => {
   }
 });
 
+test('a paper action says what did not move, without a second gate', () => {
+  const lidOpen = { ...printable(), sensors: { lidClosed: false, paperPresent: true } };
+  const noPaper = { ...printable(), sensors: { lidClosed: true, paperPresent: false } };
+  assert.equal(supportGate(lidOpen).reason, 'Close the printer lid before printing; nothing was printed.');
+  assert.equal(supportGate(lidOpen, { action: 'feed' }).reason, 'Close the printer lid before feeding; nothing was fed.');
+  assert.equal(supportGate(noPaper, { action: 'feed' }).reason, 'Load a label roll before feeding; nothing was fed.');
+  assert.equal(supportGate(noPaper, { action: 'advance' }).reason, 'Load a label roll before advancing; nothing was advanced.');
+  // An unknown action falls back to the print wording instead of throwing.
+  assert.equal(supportGate(lidOpen, { action: 'nope' }).reason, supportGate(lidOpen).reason);
+  // The model and geometry reasons are action-independent: they never moved paper.
+  const unsupported = printable({ info: { deviceType: 0x1000, model: 'B1', modelSupport: 'unsupported', task: 'd110mv4' } });
+  assert.equal(supportGate(unsupported, { action: 'feed' }).reason, supportGate(unsupported).reason);
+});
+
 test('a reported dpi above 600 is absent, makes geometry a guess and blocks printing', (t) => {
   t.after(resetGeometry);
   const info = { deviceType: 0x0910, model: 'D110_M', modelSupport: 'confirmed', task: 'd110mv4' };

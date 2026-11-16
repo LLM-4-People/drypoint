@@ -44,7 +44,7 @@ export function createCanvasEditor({
   let gestureSequence = 0;
   let lastDocument = null;
   let lastOptionsKey = null;
-  let lastWarnings = [];
+  let lastWarnings = { warnings: [], hidden: 0 };
   let accent = readAccent();
 
   function zoom() {
@@ -102,13 +102,13 @@ export function createCanvasEditor({
     // The cache key includes the resolved options: changing Image mode or
     // Threshold repaints immediately even though the document is unchanged.
     if (document !== lastDocument || optionsKey !== lastOptionsKey) {
-      const { canvas, warnings } = renderDocument(document, options);
+      const rendered = renderDocument(document, options);
       const ctx = labelCanvas.getContext('2d');
       ctx.clearRect(0, 0, labelCanvas.width, labelCanvas.height);
-      ctx.drawImage(canvas, 0, 0);
+      ctx.drawImage(rendered.canvas, 0, 0);
       lastDocument = document;
       lastOptionsKey = optionsKey;
-      lastWarnings = warnings;
+      lastWarnings = { warnings: rendered.warnings, hidden: rendered.hidden ?? 0 };
     }
     if (!drag) accent = readAccent();
     drawOverlay(scale, dpr);

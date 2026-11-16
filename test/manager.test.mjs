@@ -1343,6 +1343,21 @@ test('every mutating command is gated before a frame: allowed models run, blocke
   }
 });
 
+test('a feed refusal says nothing was fed, and sends no frame', async () => {
+  const lidOpen = Uint8Array.from([...ADVANCED.slice(0, 4), 1, 0, ...ADVANCED.slice(6)]);
+  const fake = harness({ advanced: lidOpen });
+  const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });
+  await manager.connect();
+  const instance = fake.instances[0];
+  const before = instance.writes.length;
+
+  await assert.rejects(manager.calibrate(), /Close the printer lid before feeding; nothing was fed\./);
+  assert.equal(instance.writes.length, before, 'the gate refuses before the feed frame');
+  // The self-test is a print; its refusal keeps the printed wording.
+  await assert.rejects(manager.testPage(), /Close the printer lid before printing; nothing was printed\./);
+  assert.equal(instance.writes.length, before, 'the gate refuses before the self-test frame');
+});
+
 test('a model or geometry refused print sends zero frames and runs no discovery', async () => {
   for (const entry of [
     { label: 'B1', code: 0x1000, reason: /B1 is not supported/ },

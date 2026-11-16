@@ -162,7 +162,7 @@ test('the empty stage footer collapses but stays a live region', () => {
   assert.doesNotMatch(css, /\.stage-foot:has\(#stageHint:empty\)\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.stage-foot:empty/);
   assert.match(html, /id="stageHint"[^>]*role="status"/);
-  assert.match(main, /setText\(ui\.stageHint, summariseWarnings\(warnings\)\)/);
+  assert.match(main, /setText\(ui\.stageHint, summariseWarnings\(report\)\)/);
 });
 
 test('safe-area insets cannot widen the app or squeeze the workspace', () => {
@@ -292,6 +292,10 @@ test('selection has exactly one render path', () => {
   const addElement = main.slice(main.indexOf('async function addElement'), main.indexOf('/** Box for a new barcode'));
   assert.doesNotMatch(addElement, /inspector\.render\(\)/, 'addElement relies on onSelection');
   assert.doesNotMatch(addElement, /controller\.select\(/, 'addElement already leaves the new element selected');
+  // A refused image add already reported its cap; the success toast must wait
+  // for the mutation owner to return an element.
+  assert.match(addElement, /const added = controller\.addElement\(/);
+  assert.ok(addElement.indexOf('if (!added) return;') < addElement.indexOf("toast('Image added'"), 'no success toast for a refused add');
 });
 
 test('breakpoint moves restore focus through one helper', () => {
@@ -307,6 +311,10 @@ test('stage placement and fit decisions come from one module', () => {
   assert.match(main, /from '\.\/ui\/stage-layout\.js'/);
   assert.doesNotMatch(main, /clientWidth - 40/, 'the desktop gutter is not duplicated in main');
   assert.doesNotMatch(main, /clientWidth - 24/, 'the compact gutter is not duplicated in main');
+  const fit = main.match(/function applyFitZoom\(\) \{\n([\s\S]*?)\n\}/)?.[1];
+  assert.ok(fit, 'applyFitZoom exists');
+  assert.match(fit, /const scale = stageFitZoom\(\);/, 'the Fit action reads the one fit owner');
+  assert.doesNotMatch(fit, /fitZoom\(/, 'the second fit input is gone');
 });
 
 
@@ -487,6 +495,36 @@ test('the Print and Test buttons quote the support gate in title and description
   assert.match(html, /id="printGateReason"/, 'the description target exists in the page');
 });
 
+test('the gate reason is visible above the action bar and hidden when allowed', () => {
+  assert.match(html, /<p class="gate-reason" id="printGateReason" role="status" hidden><\/p>/);
+  assert.doesNotMatch(html, /class="visually-hidden" id="printGateReason"/, 'the refusal is not screen-reader-only');
+  assert.match(css, /\.gate-reason\s*\{[^}]*position:\s*absolute/, 'showing it never reflows the bar');
+  assert.match(css, /\.gate-reason\s*\{[^}]*bottom:\s*100%/, 'it sits directly above the bar');
+  assert.match(css, /\.gate-reason\[hidden\]\s*\{[^}]*display:\s*none/);
+  const update = main.match(/function updatePrintButton\(\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.match(update, /ui\.printGateReason\.textContent = state\.supportBlocked/);
+  assert.match(update, /ui\.printGateReason\.hidden = !state\.supportBlocked/, 'the banner disappears when the gate allows');
+});
+
+test('the Document panel has one export action, one import action and one hidden input', () => {
+  assert.match(html, /<section class="panel document-panel">/);
+  assert.match(html, /<button id="exportDocumentButton" type="button">Export label<\/button>/);
+  assert.match(html, /<button id="importDocumentButton" type="button">Import label<\/button>/);
+  assert.equal((html.match(/id="importDocumentInput"/g) ?? []).length, 1, 'one file input');
+  assert.match(html, /id="importDocumentInput"[^>]*type="file"[^>]*hidden/);
+  assert.match(html, /<input id="importDocumentInput"[^>]*accept="application\/json,\.json"/);
+
+  assert.match(main, /from '\.\/label\/transfer\.js'/);
+  assert.match(main, /downloadJson\(documentFilename\(controller\.document\.name\), serializeDocument\(controller\.document\)\)/, 'the one download path');
+  assert.match(main, /const \{ document, notices \} = parseDocument\(text\)/);
+  assert.match(main, /controller\.replaceDocument\(document\)/, 'import applies through the one undoable owner');
+  const importBody = main.slice(main.indexOf('async function importDocumentFile'), main.indexOf('ui.exportDocument.addEventListener'));
+  assert.ok(importBody.indexOf('file.text()') > importBody.indexOf('TRANSFER_MAX_BYTES'), 'the size check runs before the file is read');
+  assert.match(importBody, /transferTooLargeMessage\(size\)/, 'the same size wording as the parser');
+  assert.doesNotMatch(importBody, /JSON\.parse|FileReader|localStorage/, 'no second parser or reader');
+  assert.match(read('src/ui/toast.js'), /export function toast/, 'failures use the existing toast channel');
+});
+
 
 test('safe-area and visual-viewport changes re-measure the action-bar clearance', () => {
   assert.match(main, /on\(window, 'resize', publishActionbarClearance\)/);
@@ -512,6 +550,14 @@ test('the diagnostics filename follows the authored app id', () => {
 test('a disconnect during a job says the label may be incomplete', () => {
   const handler = main.match(/device\.events\.on\('disconnected', \(\) => \{([\s\S]*?)\n\}\);/)?.[1];
   assert.ok(handler, 'the disconnected handler exists');
-  assert.match(handler, /if \(printFlow\.busy\)/);
-  assert.match(handler, /label may be incomplete/);
+  assert.match(handler, /reportDisconnect\(\{ phase: printFlow\.phase, setStatus \}\)/, 'one report owner reads the job phase');
+  const report = read('src/ui/disconnect-report.js');
+  assert.match(report, /Disconnected while preparing; nothing was printed\./);
+  assert.match(report, /Disconnected during print: the label may be incomplete/);
+  assert.match(handler, /setDeviceState\(\)/);
+  assert.doesNotMatch(handler, /toast\(/, 'the report owner is the one toast caller');
+  // The flow must not also toast a lost link the connection owner reports.
+  const flow = read('src/ui/print-flow.js');
+  assert.match(flow, /if \(!device\.connected\) \{/);
+  assert.match(flow, /setStatus\(''\);\s*\n\s*notify\(error\.message, \{ tone: 'error' \}\)/, 'only a connected failure takes the flow toast');
 });

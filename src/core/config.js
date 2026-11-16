@@ -29,6 +29,27 @@ const THRESHOLD = Object.freeze({ min: 5, max: 95, step: 5, default: 55 });
 const MAX_SRC_CHARS = 4_000_000;
 const DATA_URL_PREFIX_CHARS = 128;
 const MAX_IMAGE_FILE_BYTES = Math.floor(((MAX_SRC_CHARS - DATA_URL_PREFIX_CHARS) * 3) / 4);
+/**
+ * One decode-cache size. Together with `MAX_SRC_CHARS` it also sizes the
+ * document's image-text budget, so storage and transfer share one derivation.
+ */
+const IMAGE_CACHE_LIMIT = 16;
+/**
+ * Room for the transfer envelope, element metadata and notices around the
+ * image sources themselves. JSON escaping can expand one bounded text field up
+ * to six characters per input character; 200 elements plus the notice list stay
+ * inside 4 MiB, so the document's JSON cannot exceed the source budget plus this
+ * overhead. The importer therefore never rejects the app's own export.
+ */
+const TRANSFER_OVERHEAD_BYTES = 4 * 1024 * 1024;
+/**
+ * The image text one label may carry. Serialised documents repeat an image
+ * source once per element, so the distinct-source cache limit alone does not
+ * bound the file: a label that reuses one large source still grows with every
+ * copy. The editor, validation and the transfer envelope share this budget, so
+ * a label the app can produce always fits the file it can import.
+ */
+const MAX_SOURCE_CHARS = IMAGE_CACHE_LIMIT * MAX_SRC_CHARS;
 
 export const CONFIG = deepFreeze({
   app: {
@@ -239,8 +260,8 @@ export const CONFIG = deepFreeze({
 
   /**
    * One input-boundary policy. These are the caps every trust boundary (stored
-   * label, import, inspector) applies to a document; they are not physical
-   * printer limits and never change what a valid label can contain.
+   * label, import, inspector) applies to one document. They bound memory and
+   * file size, not the printer: the full tape is still available to a label.
    */
   bounds: {
     maxElements: 200,
@@ -249,6 +270,8 @@ export const CONFIG = deepFreeze({
     maxNameChars: 120,
     /** An image data URL longer than this is dropped, never truncated. */
     maxSrcChars: MAX_SRC_CHARS,
+    /** Total image-source text one document may carry; see MAX_SOURCE_CHARS. */
+    maxSourceChars: MAX_SOURCE_CHARS,
     maxNotices: 50,
     maxNoticeChars: 300,
     /** Layout warnings collected before one "… and N more" line. */
@@ -259,9 +282,20 @@ export const CONFIG = deepFreeze({
 
   image: {
     /** Decoded bitmaps retained before the least recently used source is evicted. */
-    cacheLimit: 16,
+    cacheLimit: IMAGE_CACHE_LIMIT,
     /** An image file larger than this cannot fit `bounds.maxSrcChars` as a data URL. */
     maxFileBytes: MAX_IMAGE_FILE_BYTES,
+  },
+
+  /**
+   * Document transfer bounds derive from the same owners as storage: every
+   * valid label carries at most `bounds.maxSourceChars` of image text, plus the
+   * envelope and element metadata, so an exported label always imports.
+   */
+  document: {
+    transfer: {
+      maxBytes: MAX_SOURCE_CHARS + TRANSFER_OVERHEAD_BYTES,
+    },
   },
 
   diagnostics: {
@@ -276,6 +310,13 @@ export const CONFIG = deepFreeze({
      * would otherwise keep the navigation pending for many seconds.
      */
     navigationTimeoutMs: 3000,
+    /**
+     * A first install can lose one request to a transient network failure.
+     * Only a network-level failure (a rejected fetch or body read) is retried;
+     * an HTTP non-200 or a validation problem fails the install immediately.
+     */
+    installRetries: 2,
+    installRetryDelayMs: 250,
   },
 });
 
