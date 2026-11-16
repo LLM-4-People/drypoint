@@ -220,17 +220,21 @@ test('a switch never announces a state it has not read', () => {
   const control = toggle({ label: 'Bluetooth sound', checked: null, hintId: 'soundHint' });
   const button = control.node.querySelector('button');
   assert.equal(button.getAttribute('aria-checked'), null, 'unknown is not "off"');
+  assert.equal(button.getAttribute('role'), null, 'an unknown value is not a switch without its required state');
   assert.equal(button.getAttribute('aria-describedby'), 'soundHint', 'the hint explains the unknown state');
 
   control.set(true);
+  assert.equal(button.getAttribute('role'), 'switch');
   assert.equal(button.getAttribute('aria-checked'), 'true');
   assert.equal(button.getAttribute('aria-describedby'), null, 'a known value needs no description');
 
   control.set(null);
   assert.equal(button.getAttribute('aria-checked'), null);
+  assert.equal(button.getAttribute('role'), null);
   assert.equal(button.getAttribute('aria-describedby'), 'soundHint');
 
   control.set(false);
+  assert.equal(button.getAttribute('role'), 'switch');
   assert.equal(button.getAttribute('aria-checked'), 'false');
 });
 

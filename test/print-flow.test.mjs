@@ -970,8 +970,14 @@ test('a committed job lost before the PrintEnd ack is not "may be incomplete"', 
 test('a connection refresh does not overwrite a job status', () => {
   // The post-print discovery publishes the same event as a plain connect.
   assert.equal(connectionStatus({ jobBusy: true, remaining: 117 }), null, 'a busy job owns #status');
-  assert.equal(connectionStatus({ jobBusy: false, remaining: 117 }), 'Connected · 117 labels left');
-  assert.equal(connectionStatus({ jobBusy: false, remaining: 0 }), 'Connected · 0 labels left', 'zero is a value, not absence');
+  for (const [remaining, expected] of [
+    [0, 'Connected · 0 labels left'],
+    [1, 'Connected · 1 label left'],
+    [2, 'Connected · 2 labels left'],
+    [117, 'Connected · 117 labels left'],
+  ]) {
+    assert.equal(connectionStatus({ jobBusy: false, remaining }), expected, `${remaining} labels`);
+  }
   assert.equal(connectionStatus({ jobBusy: false, remaining: null }), 'Connected');
   assert.equal(connectionStatus(), 'Connected');
 });

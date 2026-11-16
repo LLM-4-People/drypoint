@@ -1226,14 +1226,13 @@ input[type="range"]::-webkit-slider-thumb {
   transition: width 0.12s linear;
 }
 
-/* The support-gate refusal, visible above the bar. Absolutely positioned so a
-   model/geometry block never moves the buttons or the status line. */
+/**
+ * The support-gate refusal, in normal flow above the bar's action row. It is
+ * not an overlay: an absolutely positioned banner permanently covered the
+ * inspector tabs and the Document actions under it on a phone.
+ */
 .gate-reason {
-  position: absolute;
-  left: max(12px, env(safe-area-inset-left));
-  right: max(12px, env(safe-area-inset-right));
-  bottom: 100%;
-  margin: 0 0 6px;
+  margin: 8px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
   padding: 8px 12px;
   border: 1px solid var(--danger-border, var(--line-2));
   border-radius: 9px;
@@ -1677,6 +1676,13 @@ input[type="range"]::-webkit-slider-thumb {
     background: var(--bg);
   }
 
+  /* A persistent gate refusal adds a row to the bar. A sticky bar would then
+     grow upward over the inspector tabs; while the gate is showing, nothing in
+     the bar can print anyway, so let it take its normal place at the end. */
+  .actionbar:has(.gate-reason:not([hidden])) {
+    position: static;
+  }
+
   .action-row {
     flex-wrap: wrap;
     padding: 8px calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
@@ -1759,6 +1765,7 @@ input[type="range"]::-webkit-slider-thumb {
   .tabs button,
   .template-grid button,
   .document-actions button,
+  .storage-alert-actions button,
   .segmented button,
   .btn,
   .btn.small,

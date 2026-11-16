@@ -508,14 +508,19 @@ test('the Print and Test buttons quote the support gate in title and description
   assert.match(html, /id="printGateReason"/, 'the description target exists in the page');
 });
 
-test('the gate reason is visible above the action bar and hidden when allowed', () => {
+test('the gate reason sits in flow above the action row and hides when allowed', () => {
   // The class is pinned positively: the gate reason is not screen-reader-only.
   // (K-F6: `.visually-hidden` is live CSS now — the P-F4 h1 uses it — so the
   // old negative assertion, which could never match the element's attribute
   // order, is gone rather than kept as a vacuous pass.)
   assert.match(html, /<p class="gate-reason" id="printGateReason" role="status" hidden><\/p>/);
-  assert.match(css, /\.gate-reason\s*\{[^}]*position:\s*absolute/, 'showing it never reflows the bar');
-  assert.match(css, /\.gate-reason\s*\{[^}]*bottom:\s*100%/, 'it sits directly above the bar');
+  assert.ok(
+    html.indexOf('id="printGateReason"') < html.indexOf('class="action-row"'),
+    'the banner precedes the buttons it describes'
+  );
+  assert.doesNotMatch(css, /\.gate-reason\s*\{[^}]*position:\s*absolute/, 'the banner is not an overlay');
+  assert.doesNotMatch(css, /\.gate-reason\s*\{[^}]*bottom:\s*100%/, 'the banner does not hang above the bar');
+  assert.match(css, /\.gate-reason\s*\{[^}]*margin:\s*8px/, 'the banner takes its own row above the buttons');
   assert.match(css, /\.gate-reason\[hidden\]\s*\{[^}]*display:\s*none/);
   const update = main.match(/function updatePrintButton\(\) \{([\s\S]*?)\n\}/)?.[1];
   assert.match(update, /setText\(ui\.printGateReason, state\.supportBlocked\)/, 'the shared writer skips identical text');

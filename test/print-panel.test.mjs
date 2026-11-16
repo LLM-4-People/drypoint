@@ -256,6 +256,7 @@ test('sound controls follow the capability across connected and disconnected', a
       if (status === 'connected') {
         assert.deepEqual(switches.map((row) => row.getAttribute('data-state')), ['known', 'known'], `${label}: the read resolved`);
         assert.deepEqual(buttons.map((button) => button.getAttribute('aria-checked')), ['true', 'true'], `${label}: the printer's value is applied`);
+        assert.deepEqual(buttons.map((button) => button.getAttribute('role')), ['switch', 'switch'], `${label}: a known value is a switch`);
       } else {
         assert.deepEqual(switches.map((row) => row.getAttribute('data-state')), ['unknown', 'unknown'], `${label}: offline is unknown`);
         assert.deepEqual(
@@ -263,6 +264,7 @@ test('sound controls follow the capability across connected and disconnected', a
           [null, null],
           `${label}: an unread value is never announced as off`
         );
+        assert.deepEqual(buttons.map((button) => button.getAttribute('role')), [null, null], `${label}: an unknown value is not a switch`);
       }
     }
   }

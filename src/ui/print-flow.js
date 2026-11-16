@@ -10,6 +10,7 @@
 
 import { CONFIG } from '../core/config.js';
 import { createLogger } from '../core/log.js';
+import { plural } from '../core/format.js';
 import { hydrateImages } from '../label/images.js';
 import { canvasToRaster } from '../label/raster.js';
 import { renderDocument, summariseWarnings } from '../label/render.js';
@@ -111,7 +112,7 @@ export function printButtonState({
  */
 export function connectionStatus({ jobBusy = false, remaining = null } = {}) {
   if (jobBusy) return null;
-  return remaining != null ? `Connected · ${remaining} labels left` : 'Connected';
+  return remaining != null ? `Connected · ${remaining} ${plural(remaining, 'label')} left` : 'Connected';
 }
 
 /**
