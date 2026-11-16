@@ -35,7 +35,7 @@ import { createDocument, createElement, documentHeightPx, documentWidthPx, excee
 import { summariseWarnings } from './label/render.js';
 import { TEMPLATES, testDocument } from './label/templates.js';
 import { barcodeFitMessage, barcodeFrame } from './label/barcode.js';
-import { createVisibleImageHydrator, hydrateImages } from './label/images.js';
+import { createVisibleImageHydrator, hydrateImages, documentSourceChars, documentSourceBudgetMessage } from './label/images.js';
 import { documentFilename, parseDocument, serializeDocument, transferTooLargeMessage, TRANSFER_MAX_BYTES } from './label/transfer.js';
 
 const log = createLogger('main');
@@ -128,6 +128,13 @@ const controller = createEditor({
   onSelection: () => {
     inspector.render();
     layers.render();
+  },
+  // One refusal channel: an Add that the element or image budget refused is a
+  // fact about the click, not a layout hint, so it must not be buried in a
+  // saturated stage summary.
+  onRefusal: (message) => {
+    log.warn('editor refused a change', { message });
+    toast(message, { tone: 'error' });
   },
 });
 
@@ -350,7 +357,7 @@ function rerender() {
   const warnings = canvasEditor.render();
   const active = geometry();
   ui.labelSize.textContent = `${round1(active.widthMm)} × ${controller.document.lengthMm} mm`;
-  ui.labelPx.textContent = `${documentWidthPx(controller.document)} × ${documentHeightPx(controller.document)} px · ${round1(active.dotsPerMm)} dots/mm (${active.dpi} dpi${active.reported ? '' : ' assumed'})`;
+  ui.labelPx.textContent = `${documentWidthPx(controller.document)} × ${documentHeightPx(controller.document)} px · ${round1(active.dotsPerMm)} dots/mm (${active.dpi ?? 'unknown'} dpi${active.reported ? '' : ' assumed'})`;
   setStageWarnings(warnings);
   layers.render();
   inspector.sync();
@@ -530,6 +537,15 @@ function applyTemplate(template) {
  * already holds.
  */
 function exportDocument() {
+  // The budget is an authoring boundary, not a normalise step: a document that
+  // already exists in memory (a legacy label, a test fixture) is exported or
+  // refused whole, never silently emptied on the way out.
+  const chars = documentSourceChars(controller.document);
+  if (chars > CONFIG.bounds.maxSourceChars) {
+    log.warn('label export refused an over-budget document', { chars, limit: CONFIG.bounds.maxSourceChars });
+    toast(documentSourceBudgetMessage(chars), { tone: 'error' });
+    return;
+  }
   try {
     const saved = downloadJson(documentFilename(controller.document.name), serializeDocument(controller.document));
     if (saved === false) {

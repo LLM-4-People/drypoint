@@ -5,6 +5,9 @@ import { CONFIG } from '../src/core/config.js';
 import {
   IMAGE_SOURCE_LIMIT,
   createVisibleImageHydrator,
+  documentSourceChars,
+  documentSourceBudgetMessage,
+  exceedsSourceBudget,
   forgetImage,
   getImage,
   hydrateImages,
@@ -200,4 +203,39 @@ test('the editor refuses the 17th distinct image before insertion with the print
     'reusing an existing source does not consume a new slot'
   );
   assert.deepEqual(imageSources(editor.document).slice(0, IMAGE_SOURCE_LIMIT), sources);
+});
+
+/* ---------------- the one source measurement (A-F1) ---------------- */
+
+test('imageSources can exclude the element an edit replaces', () => {
+  const document = {
+    elements: [
+      { id: 'a', type: 'image', src: 'shared.png' },
+      { id: 'b', type: 'image', src: 'shared.png' },
+      { id: 'c', type: 'text', text: 'not an image' },
+      { id: 'd', type: 'image', src: 'other.png' },
+    ],
+  };
+  assert.deepEqual(imageSources(document), ['shared.png', 'other.png']);
+  assert.deepEqual(imageSources(document, { excludeId: 'a' }), ['shared.png', 'other.png'], 'b still uses it');
+  assert.deepEqual(imageSources(document, { excludeId: 'b' }), ['shared.png', 'other.png']);
+  assert.deepEqual(imageSources(document, { excludeId: 'd' }), ['shared.png']);
+  assert.deepEqual(imageSources(document, { excludeId: 'missing' }), ['shared.png', 'other.png']);
+});
+
+test('documentSourceChars counts every occurrence, not distinct sources', () => {
+  const document = {
+    elements: [
+      { type: 'image', src: 'aaa' },
+      { type: 'image', src: 'aaa' },
+      { type: 'image', src: '' },
+      { type: 'text', text: 'ignored' },
+    ],
+  };
+  assert.equal(documentSourceChars(document), 6, 'the serialised label repeats the source');
+  assert.equal(documentSourceChars({ elements: [] }), 0);
+  assert.equal(documentSourceChars(null), 0);
+  assert.equal(exceedsSourceBudget(document), false);
+  assert.match(documentSourceBudgetMessage(64_000_001), /64000001 characters of image data/);
+  assert.match(documentSourceBudgetMessage(64_000_001), /import or save/);
 });

@@ -4,18 +4,11 @@
  */
 
 import { CONFIG } from '../core/config.js';
-import { maxLengthFor, pitchFor } from '../core/geometry.js';
+import { maxLengthFor, pitchFor, usableDpi } from '../core/geometry.js';
 import { modelFor } from '../protocol/models.js';
 
 
 const reported = (value) => value !== null && value !== undefined;
-
-/**
- * A reported resolution is usable only inside the supported printer range.
- * A hostile `0xFFFF` would otherwise become 2580 dots/mm and a 516k-row
- * raster for a 200 mm label; an invalid report is treated as absent.
- */
-const usableDpi = (value) => Number.isFinite(value) && value > 0 && value <= CONFIG.geometry.maxDpi;
 
 /** Human names for the `source` groups, so the UI never prints internal keys. */
 export const CAPABILITY_GROUP_LABELS = Object.freeze({

@@ -10,8 +10,8 @@
  */
 
 import { CONFIG } from '../core/config.js';
-import { imageSourceLimitMessage, imageSources, IMAGE_SOURCE_LIMIT } from './images.js';
-import { validateDocument } from './schema.js';
+import { documentSourceChars, documentSourceBudgetMessage, imageSourceLimitMessage, imageSources, IMAGE_SOURCE_LIMIT } from './images.js';
+import { migrateDocument } from './schema.js';
 
 /** The one format token a transfer file must carry. */
 export const TRANSFER_FORMAT = CONFIG.app.id;
@@ -70,8 +70,9 @@ export function documentFilename(name, at = Date.now()) {
  *
  * The byte bound runs before JSON.parse, so an over-size file never becomes a
  * huge in-memory object graph. The reviver drops the two prototype keys a
- * hostile file could use to reach an object prototype. The document then goes
- * through the same `validateDocument` call storage uses.
+ * hostile file could use to reach an object prototype. The document then takes
+ * the same `migrateDocument` path storage takes, so an older document rotates
+ * on import exactly as it does on load and reports the same notice.
  *
  * @param {string} text the file contents
  * @returns {{document: object, notices: string[]}}
@@ -113,12 +114,19 @@ export function parseDocument(text) {
     throw new Error('That label file has no label document.');
   }
 
-  const document = validateDocument(envelope.document);
+  // The version check and the v3 rotation live in one owner, the same one the
+  // stored label uses. A file that this build cannot read as a label is refused
+  // by the shape owner with one message.
+  const document = migrateDocument(envelope.document);
   const sources = imageSources(document);
   if (sources.length > IMAGE_SOURCE_LIMIT) {
     // The same distinct-source cap the editor and the print path enforce.
     throw new Error(imageSourceLimitMessage(sources.length, 'importing this label'));
   }
+  // The document budget is an authoring boundary, not a normalise step: the
+  // importer refuses the file whole instead of silently emptying a source.
+  const chars = documentSourceChars(document);
+  if (chars > CONFIG.bounds.maxSourceChars) throw new Error(documentSourceBudgetMessage(chars));
   return {
     document,
     notices: Array.isArray(document.notices) ? [...document.notices] : [],

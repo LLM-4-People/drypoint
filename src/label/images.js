@@ -14,13 +14,22 @@ export const IMAGE_SOURCE_LIMIT = CONFIG.image.cacheLimit;
  * Distinct image sources a document references. The print path counts only
  * visible images (hidden ones are not painted); the editor counts every source
  * so a hidden image cannot become a seventeenth visible one later.
+ *
+ * `excludeId` drops one element from the count. An edit computes the document
+ * it *would* produce that way: the element being replaced no longer contributes
+ * its old source, while any other element that still uses the same source keeps
+ * its slot. Callers must not re-implement this loop for that case.
+ *
+ * @param {object|null} labelDocument
+ * @param {{visibleOnly?: boolean, excludeId?: string|null}} [options]
  * @returns {string[]} insertion-ordered, duplicate-free sources
  */
-export function imageSources(labelDocument, { visibleOnly = false } = {}) {
+export function imageSources(labelDocument, { visibleOnly = false, excludeId = null } = {}) {
   const sources = new Set();
   for (const element of labelDocument?.elements ?? []) {
     if (element?.type !== 'image' || !element.src) continue;
     if (visibleOnly && element.visible === false) continue;
+    if (excludeId !== null && element.id === excludeId) continue;
     sources.add(element.src);
   }
   return [...sources];
@@ -32,6 +41,43 @@ export function imageSourceLimitMessage(count, action = 'printing') {
     `A label can use at most ${IMAGE_SOURCE_LIMIT} different images; this one uses ${count}. ` +
     `Remove or reuse an image before ${action}.`
   );
+}
+
+/**
+ * Total image-source characters one document carries.
+ *
+ * This is the one measurement of the document budget: the serialised label
+ * repeats a source once per element, so a label that reuses one large image is
+ * as large as one that uses many. It is enforced where an image enters the
+ * label (the editor and the importer) and where the label leaves it (export),
+ * never by rewriting a document that already exists — validation is a
+ * normalise pass on every undo, geometry change and print, so dropping sources
+ * there silently destroyed a valid label.
+ *
+ * @param {object|null} labelDocument
+ * @returns {number} UTF-16 code units of image text
+ */
+export function documentSourceChars(labelDocument) {
+  let chars = 0;
+  for (const element of labelDocument?.elements ?? []) {
+    if (element?.type !== 'image' || typeof element.src !== 'string') continue;
+    chars += element.src.length;
+  }
+  return chars;
+}
+
+/** Whether the document is over the one image-text budget. */
+export function exceedsSourceBudget(labelDocument) {
+  return documentSourceChars(labelDocument) > CONFIG.bounds.maxSourceChars;
+}
+
+/**
+ * The one wording for a document over the image-text budget at a transfer
+ * boundary. Import and export quote it: a label either side can produce must be
+ * a file the other side accepts.
+ */
+export function documentSourceBudgetMessage(chars) {
+  return `This label carries ${chars} characters of image data, more than the ${CONFIG.bounds.maxSourceChars} this app can import or save. Remove or reuse an image.`;
 }
 
 /** Mark a source as recently used so eviction drops the coldest entry first. */

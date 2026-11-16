@@ -518,6 +518,14 @@ test('the Document panel has one export action, one import action and one hidden
   assert.match(main, /downloadJson\(documentFilename\(controller\.document\.name\), serializeDocument\(controller\.document\)\)/, 'the one download path');
   assert.match(main, /const \{ document, notices \} = parseDocument\(text\)/);
   assert.match(main, /controller\.replaceDocument\(document\)/, 'import applies through the one undoable owner');
+  // The export boundary refuses an over-budget in-memory document with the
+  // importer's own wording, before any file is written (A-F1).
+  const exportBody = main.slice(main.indexOf('function exportDocument()'), main.indexOf('ui.exportDocument.addEventListener'));
+  assert.ok(
+    exportBody.indexOf('documentSourceChars(controller.document)') < exportBody.indexOf('downloadJson('),
+    'the budget runs before the download'
+  );
+  assert.match(exportBody, /documentSourceBudgetMessage\(chars\)/);
   const importBody = main.slice(main.indexOf('async function importDocumentFile'), main.indexOf('ui.exportDocument.addEventListener'));
   assert.ok(importBody.indexOf('file.text()') > importBody.indexOf('TRANSFER_MAX_BYTES'), 'the size check runs before the file is read');
   assert.match(importBody, /transferTooLargeMessage\(size\)/, 'the same size wording as the parser');

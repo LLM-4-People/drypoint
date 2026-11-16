@@ -6,36 +6,48 @@
 import { CONFIG } from '../core/config.js';
 import { deepClone } from '../core/format.js';
 
-/** Per-snapshot and per-element overhead, excluding the strings inside them. */
+/** Per-snapshot overhead that excludes the strings inside the snapshot. */
 const DOCUMENT_OVERHEAD_BYTES = 256;
-const ELEMENT_OVERHEAD_BYTES = 96;
-const ELEMENT_STRING_FIELDS = Object.freeze(['name', 'text', 'value', 'src']);
 
 /**
- * Retained size of one plain-JSON snapshot, without serialising it.
+ * Retained size of one plain-JSON value, without serialising it.
+ *
+ * Every retained string counts, whatever its key: the estimate is a memory
+ * bound, not a schema. Counting only known fields let a hostile import keep
+ * 250 kB unknown strings in 80 snapshots while the budget reported 29 kB. The
+ * result is deliberately a little larger than `JSON.stringify(value).length`
+ * (quotes, braces, commas and colons are counted too), so a document that fits
+ * the budget can never be larger than its serialisation.
+ *
+ * @returns {number} UTF-16 code units plus JSON punctuation
+ */
+function retainedChars(value) {
+  if (typeof value === 'string') return value.length + 2;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).length;
+  if (Array.isArray(value)) {
+    let sum = 2;
+    for (const item of value) sum += retainedChars(item) + 1;
+    return sum;
+  }
+  if (value && typeof value === 'object') {
+    let sum = 2;
+    for (const key of Object.keys(value)) sum += key.length + 4 + retainedChars(value[key]) + 1;
+    return sum;
+  }
+  // null
+  return 4;
+}
+
+/**
+ * Retained size of one plain-JSON snapshot.
  *
  * Image data URLs dominate a label: a 3.8 M-character source is most of a
- * snapshot. Element count and every element string are counted here, and the
- * fixed overhead keeps a document with many small fields from looking free.
- * This runs on every commit, so it must not allocate a second copy of the
- * document through `JSON.stringify`.
+ * snapshot. This runs on every commit, so it must not allocate a second copy of
+ * the document through `JSON.stringify`.
  */
 export function estimateDocumentBytes(document) {
   if (!document || typeof document !== 'object') return 0;
-  let bytes = DOCUMENT_OVERHEAD_BYTES;
-  if (typeof document.name === 'string') bytes += document.name.length;
-  if (Array.isArray(document.notices)) {
-    for (const notice of document.notices) if (typeof notice === 'string') bytes += notice.length;
-  }
-  const elements = Array.isArray(document.elements) ? document.elements : [];
-  for (const element of elements) {
-    bytes += ELEMENT_OVERHEAD_BYTES;
-    if (!element || typeof element !== 'object') continue;
-    for (const field of ELEMENT_STRING_FIELDS) {
-      if (typeof element[field] === 'string') bytes += element[field].length;
-    }
-  }
-  return bytes;
+  return DOCUMENT_OVERHEAD_BYTES + retainedChars(document);
 }
 
 /**

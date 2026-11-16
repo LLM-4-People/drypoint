@@ -93,6 +93,63 @@ test('validateDocument turns unusable geometry into the type defaults', () => {
   assert.equal(infinite.h, 80);
 });
 
+/* ---------------- trust boundaries (PR-F1, PR-F3, K-F2) ---------------- */
+
+test('a structurally wrong element list is refused, not normalised to a blank label', () => {
+  for (const elements of ['nope', { type: 'text' }, 7, true, null]) {
+    assert.throws(
+      () => validateDocument({ lengthMm: 40, elements }),
+      /no valid element list/,
+      `${JSON.stringify(elements)} must not become an empty label`
+    );
+  }
+  // A missing key is a document with no elements, and a real array is legal.
+  assert.deepEqual(validateDocument({ lengthMm: 40 }).elements, []);
+  assert.deepEqual(validateDocument({ lengthMm: 40, elements: [] }).elements, []);
+  // A non-object root is not a label either.
+  for (const root of [null, undefined, 7, 'label', []]) {
+    assert.throws(() => validateDocument(root), /no valid element list/);
+  }
+});
+
+test('an unusable coordinate is replaced and reported once, naming the fields', () => {
+  const doc = validateDocument({
+    lengthMm: 40,
+    elements: [{ type: 'text', text: 'x', x: 'NaN', y: 1e308, w: 'not-a-number', h: null }],
+  });
+  const notices = doc.notices.filter((notice) => /position or size/.test(notice));
+  assert.equal(notices.length, 1, 'one notice for the whole document');
+  assert.match(notices[0], /^4 position or size values/);
+  for (const field of ['x', 'y', 'w', 'h']) assert.ok(notices[0].includes(field), `the notice names ${field}`);
+  const element = doc.elements[0];
+  for (const field of ['x', 'y', 'w', 'h']) assert.ok(Number.isFinite(element[field]), `${field} is usable`);
+
+  // Shrinking a label is a re-layout, not a damaged file: clamping to the new
+  // tape is normal and must not raise the coercion notice.
+  const cable = validateDocument({ ...TEMPLATES.find((template) => template.id === 'cable').build(), lengthMm: 25 });
+  assert.equal(cable.notices?.some((notice) => /position or size/.test(notice)) ?? false, false);
+});
+
+test('unknown document and element fields are stripped at the shape owner', () => {
+  const padded = 'z'.repeat(250_000);
+  const doc = validateDocument({
+    lengthMm: 40,
+    extraDocumentField: padded,
+    templateId: 'kept-nowhere',
+    elements: [{ type: 'text', text: 'x', extraElementField: padded, style: { color: 'red' } }],
+  });
+  assert.equal(Object.hasOwn(doc, 'extraDocumentField'), false);
+  assert.equal(Object.hasOwn(doc, 'templateId'), false);
+  assert.deepEqual(Object.keys(doc).sort(), ['copies', 'elements', 'lengthMm', 'name', 'version']);
+  const element = doc.elements[0];
+  assert.equal(Object.hasOwn(element, 'extraElementField'), false);
+  assert.equal(Object.hasOwn(element, 'style'), false);
+  assert.deepEqual(
+    Object.keys(element).sort(),
+    ['align', 'bold', 'fontPx', 'h', 'id', 'locked', 'name', 'rotation', 'text', 'type', 'valign', 'visible', 'w', 'x', 'y']
+  );
+});
+
 test('validateDocument allows an empty document and does not seed "Hello"', () => {
   assert.deepEqual(validateDocument({ lengthMm: 40 }).elements, []);
   assert.deepEqual(validateDocument({ lengthMm: 40, elements: [] }).elements, []);
@@ -517,7 +574,7 @@ test('an over-long image source is dropped whole, never truncated, with one noti
   assert.equal(atCap.notices, undefined);
 });
 
-test('a document cannot carry more image text than the shared transfer budget', () => {
+test('validation never drops image text, even past the document budget', () => {
   const src = 'a'.repeat(CONFIG.bounds.maxSrcChars);
   const atCap = CONFIG.bounds.maxSourceChars / src.length;
   assert.equal(atCap, CONFIG.image.cacheLimit, 'the budget is the cache limit times the source cap');
@@ -528,16 +585,19 @@ test('a document cannot carry more image text than the shared transfer budget', 
   assert.equal(full.elements.filter((element) => element.src).length, atCap);
   assert.equal(full.notices, undefined, 'a document at the budget is untouched');
 
-  // One more occurrence of the same source is over the budget: the element
-  // survives, its source is dropped whole, and one notice says why.
+  // One more occurrence is over the budget and is still preserved whole:
+  // validation runs on every undo, geometry change and print, so dropping a
+  // source here would silently destroy a document that already exists. The
+  // budget is enforced where an image enters the label, not on a normalise
+  // pass (A-F1).
   const over = validateDocument({ lengthMm: 40, elements: Array.from({ length: atCap + 1 }, () => ({ type: 'image', src })) });
   assert.equal(over.elements.length, atCap + 1);
-  assert.equal(over.elements.filter((element) => element.src).length, atCap);
-  assert.equal(over.elements.at(-1).src, '');
-  const notices = over.notices.filter((notice) => /image data exceeds/.test(notice));
-  assert.equal(notices.length, 1, 'one notice for the whole document');
-  assert.match(notices[0], /^1 image source was dropped/);
-  assert.match(notices[0], new RegExp(`${CONFIG.bounds.maxSourceChars} characters`));
+  assert.equal(over.elements.filter((element) => element.src).length, atCap + 1, 'every source survives');
+  assert.equal(over.notices, undefined, 'preserving is not a notice-worthy rewrite');
+
+  // Validation is idempotent: a second pass keeps every source too.
+  const again = validateDocument(over);
+  assert.equal(again.elements.filter((element) => element.src).length, atCap + 1);
 });
 
 test('notices are bounded in count and length', () => {

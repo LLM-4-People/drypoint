@@ -27,7 +27,15 @@ export const IMAGE_DITHERS = Object.freeze(['auto', ...DITHER_MODES]);
 const SYMBOLOGY_IDS = Object.freeze(Object.keys(SYMBOLOGIES));
 
 const { minLengthMm, defaultLengthMm, paddingPx } = CONFIG.geometry;
-const { maxElements, maxTextChars, maxValueChars, maxNameChars, maxSrcChars, maxSourceChars, maxNotices, maxNoticeChars } = CONFIG.bounds;
+const { maxElements, maxTextChars, maxValueChars, maxNameChars, maxSrcChars, maxNotices, maxNoticeChars } = CONFIG.bounds;
+
+/**
+ * The one message for a document whose element list is not a list. A stored or
+ * imported value like `"elements": "nope"` used to be normalised to an empty
+ * label, which then looked like a valid, blank label and was persisted over the
+ * operator's data. The shape owner refuses it instead.
+ */
+export const INVALID_ELEMENT_LIST_MESSAGE = 'That label has no valid element list.';
 
 function defaultsFor(type) {
   const widthPx = geometry().widthPx;
@@ -168,19 +176,44 @@ export function clampElement(element, document) {
 }
 
 /**
- * A usable number or the fallback. Only finite numbers and non-empty numeric
- * strings are converted: `Number()` throws on `{"toString":null}` and happily
- * turns booleans and arrays into 0/1, which would silently move an element.
+ * A usable number, or null when the value is not one. Only finite numbers and
+ * non-empty numeric strings are converted: `Number()` throws on
+ * `{"toString":null}` and happily turns booleans and arrays into 0/1, which
+ * would silently move an element.
+ * @returns {number|null}
  */
-function finite(value, fallback) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+function usableNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    if (!trimmed) return fallback;
+    if (!trimmed) return null;
     const number = Number(trimmed);
-    return Number.isFinite(number) ? number : fallback;
+    return Number.isFinite(number) ? number : null;
   }
-  return fallback;
+  return null;
+}
+
+function finite(value, fallback) {
+  const number = usableNumber(value);
+  return number === null ? fallback : number;
+}
+
+/**
+ * A coordinate or size this app can use, or null.
+ *
+ * A file may carry a value that is finite but meaningless — `1e308` is not a
+ * position on a label this app can author. Those are replaced and reported.
+ * A value that merely exceeds the *current* tape is not: shortening a label
+ * legitimately clamps every box, and that is a re-layout, not a damaged file.
+ * The bound is the largest label the app can author, in dots, plus the widest
+ * head it can report.
+ */
+const COORDINATE_LIMIT =
+  CONFIG.geometry.maxLengthMm * (CONFIG.geometry.maxDpi / 25.4) + CONFIG.geometry.maxHeadWidthPx;
+
+function usableCoordinate(value) {
+  const number = usableNumber(value);
+  return number !== null && Math.abs(number) <= COORDINATE_LIMIT ? number : null;
 }
 
 function pick(value, allowed, fallback) {
@@ -232,19 +265,12 @@ export function droppedSourceNotice() {
  * One wording for the per-document image budget. An element may be within the
  * per-source cap and still push the label past what one transfer file can
  * carry, because every element repeats its own source in the serialised
- * document.
- */
-export function sourceBudgetNotice(count = 1) {
-  const subject = count === 1 ? '1 image source was' : `${count} image sources were`;
-  return `${subject} dropped because the label's image data exceeds ${maxSourceChars} characters. Remove or reuse an image.`;
-}
-
-/**
- * The refusal the editor shows when one more source would pass the document
- * budget. Same owner and limit as `sourceBudgetNotice`, different action.
+ * document. The budget is enforced where images enter the label (editor and
+ * import) and where the label leaves it (export) — never by rewriting a
+ * document that already exists.
  */
 export function sourceBudgetRefusalNotice() {
-  return `Adding this image would give the label more than ${maxSourceChars} characters of image data. Remove or reuse an image first.`;
+  return `Adding this image would give the label more than ${CONFIG.bounds.maxSourceChars} characters of image data. Remove or reuse an image first.`;
 }
 
 /**
@@ -256,6 +282,25 @@ export function truncatedNotice(count = 1) {
   return count === 1
     ? '1 element had text shortened to fit the label limits.'
     : `${count} elements had text shortened to fit the label limits.`;
+}
+
+/** The order geometry fields are named in, so a notice reads the same every time. */
+const GEOMETRY_FIELDS = Object.freeze(['x', 'y', 'w', 'h']);
+
+/**
+ * One wording for coordinates and sizes that a trust boundary could not use as
+ * given. Replacing them is correct; doing it silently is not, because the label
+ * the operator sees is then not the label the file described.
+ *
+ * @param {Iterable<string>} fields the field names that were replaced
+ */
+export function adjustedGeometryNotice(fields) {
+  const names = [...new Set(fields)].sort((a, b) => GEOMETRY_FIELDS.indexOf(a) - GEOMETRY_FIELDS.indexOf(b));
+  const subject =
+    names.length === 1
+      ? '1 position or size value was not a usable number and was replaced'
+      : `${names.length} position or size values were not usable numbers and were replaced`;
+  return `${subject} (${names.join(', ')}).`;
 }
 
 /**
@@ -286,9 +331,19 @@ export function boundElementText(element) {
   return { element, droppedSrc: false, truncated };
 }
 
-/** Normalise one element against its type defaults without mutating the input. */
-function normaliseElement(input, defaults) {
-  const element = { ...defaults, ...input };
+/**
+ * Normalise one element against its type defaults without mutating the input.
+ *
+ * The defaults object is the shape owner: a key it does not declare is dropped.
+ * A stored or imported document must not be able to carry arbitrary strings —
+ * history counts what validation retains, and an unknown 250 kB field used to
+ * be retained while the estimate counted only known fields.
+ */
+function normaliseElement(input, defaults, report) {
+  const element = { ...defaults };
+  for (const key of Object.keys(element)) {
+    if (Object.prototype.hasOwnProperty.call(input, key)) element[key] = input[key];
+  }
   // An element id is a non-empty string: numbers, whitespace and empty values
   // are replaced, and the replacement stays unique in validateDocument.
   if (typeof element.id !== 'string' || !element.id.trim()) element.id = defaults.id;
@@ -299,10 +354,15 @@ function normaliseElement(input, defaults) {
   element.rotation = ROTATIONS.includes(rotation) ? rotation : defaults.rotation;
   element.locked = toBool(element.locked, defaults.locked);
   element.visible = toBool(element.visible, defaults.visible);
-  element.x = finite(element.x, defaults.x);
-  element.y = finite(element.y, defaults.y);
-  element.w = finite(element.w, defaults.w);
-  element.h = finite(element.h, defaults.h);
+  for (const field of GEOMETRY_FIELDS) {
+    const value = usableCoordinate(element[field]);
+    if (value === null) {
+      report.unusable.add(field);
+      element[field] = defaults[field];
+    } else {
+      element[field] = value;
+    }
+  }
 
   switch (element.type) {
     case ELEMENT_TYPES.TEXT:
@@ -346,12 +406,20 @@ function normaliseElement(input, defaults) {
  * Normalise a document without mutating the input: drop unknown element types,
  * clamp geometry, validate enums and keep a valid length. An empty elements
  * array is legal; createDocument is the only owner of the first-run "Hello".
+ *
+ * @throws {Error} when `elements` is present but is not an array: a blank label
+ *         that merely looks valid would be persisted over the operator's data.
  */
 export function validateDocument(input) {
-  const source = deepClone(input && typeof input === 'object' ? input : {});
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
+  if (Object.prototype.hasOwnProperty.call(input, 'elements') && !Array.isArray(input.elements)) {
+    throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
+  }
+  const source = deepClone(input);
   const lengthMm = clamp(finite(source.lengthMm, defaultLengthMm), minLengthMm, geometry().maxLengthMm);
+  // The document shape has one owner too: only these keys survive, so a hostile
+  // or future field can never ride along into history or a saved file.
   const document = {
-    ...source,
     version: CONFIG.app.documentVersion,
     name: clampText(typeof source.name === 'string' ? source.name : 'Untitled', maxNameChars),
     lengthMm,
@@ -364,14 +432,13 @@ export function validateDocument(input) {
   const notices = Array.isArray(source.notices)
     ? [...new Set(source.notices.filter((notice) => typeof notice === 'string' && notice.trim()).map((notice) => notice.trim()))]
     : [];
-  delete document.notices;
   const seen = new Set();
   let droppedElements = 0;
   let droppedSources = 0;
   let droppedUnknown = 0;
   let truncatedElements = 0;
-  let droppedBudget = 0;
-  let sourceChars = 0;
+  /** Coordinates a trust boundary could not use as given; reported once. */
+  const report = { unusable: new Set() };
   for (const raw of Array.isArray(source.elements) ? source.elements : []) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Object.values(ELEMENT_TYPES).includes(raw.type)) {
       droppedUnknown++;
@@ -384,20 +451,7 @@ export function validateDocument(input) {
       continue;
     }
     if (raw.type === ELEMENT_TYPES.IMAGE && typeof raw.src === 'string' && raw.src.length > maxSrcChars) droppedSources++;
-    // A source that survives the per-element cap still shares one document
-    // budget: the serialised label repeats a source once per element, so a
-    // reused image grows the file too. Drop the source here, at the same owner
-    // that bounds every stored and imported document.
-    let candidate = raw;
-    if (raw.type === ELEMENT_TYPES.IMAGE && typeof raw.src === 'string' && raw.src.length && raw.src.length <= maxSrcChars) {
-      if (sourceChars + raw.src.length > maxSourceChars) {
-        droppedBudget++;
-        candidate = { ...raw, src: '' };
-      } else {
-        sourceChars += raw.src.length;
-      }
-    }
-    const { element, truncated } = normaliseElement(candidate, defaultsFor(candidate.type));
+    const { element, truncated } = normaliseElement(raw, defaultsFor(raw.type), report);
     if (truncated) truncatedElements++;
     if (seen.has(element.id)) element.id = createId(raw.type);
     seen.add(element.id);
@@ -420,8 +474,8 @@ export function validateDocument(input) {
   if (truncatedElements) {
     notices.push(truncatedNotice(truncatedElements));
   }
-  if (droppedBudget) {
-    notices.push(sourceBudgetNotice(droppedBudget));
+  if (report.unusable.size) {
+    notices.push(adjustedGeometryNotice(report.unusable));
   }
   if (droppedSources) {
     notices.push(droppedSourceNotice());

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { CONFIG } from '../src/core/config.js';
 import { createHistory, estimateDocumentBytes } from '../src/label/history.js';
+import { validateDocument } from '../src/label/schema.js';
 
 const doc = (text) => ({ version: 4, name: 'Untitled', lengthMm: 40, copies: 1, elements: [{ id: 'a', type: 'text', text }] });
 
@@ -93,4 +94,54 @@ test('the size estimate counts the image source and every element, without seria
   const large = estimateDocumentBytes(imageDoc(0));
   assert.ok(large > IMAGE_SRC.length, 'a snapshot is at least its image source');
   assert.ok(large > small + IMAGE_SRC.length / 2, 'the image dominates the estimate');
+});
+
+/* ---------------- the estimate is a memory bound, not a schema (K-F2) ---------------- */
+
+test('the estimate counts every retained string, whatever its key', () => {
+  const documents = [
+    { elements: [] },
+    { elements: [{ type: 'text', text: 'x'.repeat(1000) }] },
+    { unknownTopLevel: 'y'.repeat(250_000), elements: [] },
+    { elements: [{ type: 'text', text: 'ok', unknownField: 'z'.repeat(250_000), nested: { deep: 'w'.repeat(10_000) } }] },
+    {
+      version: 4,
+      name: 'N'.repeat(120),
+      copies: 3,
+      lengthMm: 40,
+      notices: Array.from({ length: 20 }, (_, index) => `notice ${index} ${'q'.repeat(290)}`),
+      elements: Array.from({ length: 50 }, (_, index) => ({ id: `e${index}`, type: 'rect', w: 10, h: 10, name: 'box' })),
+    },
+  ];
+  for (const document of documents) {
+    const estimate = estimateDocumentBytes(document);
+    const serialised = JSON.stringify(document).length;
+    assert.ok(estimate >= serialised, `estimate ${estimate} covers the serialised ${serialised} characters`);
+    assert.ok(estimate <= serialised * 2 + 1024, `estimate ${estimate} stays proportional to ${serialised}`);
+  }
+});
+
+test('a 250 kB unknown-field import keeps the snapshot budget and the entries', () => {
+  const padded = 'z'.repeat(250_000);
+  const hostile = {
+    version: 4,
+    name: 'Hostile',
+    lengthMm: 40,
+    copies: 1,
+    padding: padded,
+    elements: [{ id: 'a', type: 'text', text: 'x', padding: padded }],
+  };
+  // The shape owner strips the unknown fields, so every snapshot is a small
+  // document and the estimate can tell the truth about it.
+  const clean = validateDocument(hostile);
+  assert.equal(Object.hasOwn(clean, 'padding'), false);
+  assert.equal(Object.hasOwn(clean.elements[0], 'padding'), false);
+
+  const history = createHistory({ initial: clean });
+  for (let index = 1; index <= 80; index++) {
+    history.commit({ ...clean, elements: [{ ...clean.elements[0], text: `x${index}` }] });
+  }
+  assert.ok(history.retainedBytes <= CONFIG.history.maxBytes, 'the byte budget holds');
+  assert.equal(history.retainedEntries, 81, 'the count keeps all eighty edits, because the snapshots are small');
+  assert.equal(history.undo().elements[0].text, 'x79');
 });
