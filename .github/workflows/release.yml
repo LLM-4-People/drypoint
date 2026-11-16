@@ -473,27 +473,42 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # A dedicated empty directory: a file already in dist/ cannot be
+          # selected instead of the bundle this run downloads.
+          rm -rf dist/attest
+          mkdir -p dist/attest
           (
-            cd dist
-            # Linux writes sha256:<digest>.jsonl; Windows uses a dash. There is
-            # no --bundle flag, so find the one file either spelling wrote.
+            cd dist/attest
             gh attestation download "drypoint-${VERSION}.apk" -R "$GITHUB_REPOSITORY"
-            bundle="$(find . -maxdepth 1 -type f -name 'sha256*.jsonl' -print -quit)"
-            if [ -z "$bundle" ]; then
-              echo "::error::gh attestation download wrote no bundle"
-              exit 1
-            fi
-            mv "$bundle" "drypoint-${VERSION}.apk.intoto.jsonl"
           )
+          shopt -s nullglob
+          files=(dist/attest/*.jsonl)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "::error::gh attestation download wrote ${#files[@]} bundles; exactly one is required"
+            exit 1
+          fi
+          mv "${files[0]}" "dist/drypoint-${VERSION}.apk.intoto.jsonl"
           test -f "dist/drypoint-${VERSION}.apk.intoto.jsonl"
       - name: Prove the provenance binds the tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bundle="dist/drypoint-${VERSION}.apk.intoto.jsonl"
+          apk="dist/drypoint-${VERSION}.apk"
           apk_sha="$(sha256sum "dist/drypoint-${VERSION}.apk" | awk '{print $1}')"
-          # gh attestation download writes one bundle per line. The DSSE payload
-          # is the in-toto statement. Every statement for this APK must carry
-          # exactly one resolved dependency and it must be the resolved commit.
+          # Verify the Sigstore bundle and the signer workflow before parsing
+          # it. A forged unsigned JSON file planted in dist/ fails here.
+          gh attestation verify "$apk" \
+            --bundle "$bundle" \
+            -R "$GITHUB_REPOSITORY" \
+            --signer-workflow "LLM-4-People/drypoint/.github/workflows/release.yml" \
+            --predicate-type "https://slsa.dev/provenance/v1"
+          # The DSSE payload is the in-toto statement. At least one statement
+          # for this exact APK digest must carry exactly one resolved
+          # dependency and it must be the resolved commit. A prior dry run or
+          # GitHub's automatic release attestation may add statements; they
+          # cannot satisfy the binding unless they name this commit.
           if ! jq -es --arg sha "$SHA" --arg apk "$apk_sha" '
             [ .[]
               | (.dsseEnvelope.payload // .bundle.dsseEnvelope.payload // empty)
@@ -502,7 +517,7 @@ jobs:
               | select(.subject[0].digest.sha256 == $apk)
             ] as $statements
             | ($statements | length) >= 1
-              and all($statements[];
+              and any($statements[];
                 (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies
                 | ($dependencies | length) == 1
                   and $dependencies[0].digest.gitCommit == $sha)
@@ -540,6 +555,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.resolve.outputs.tag }}
       VERSION: ${{ needs.resolve.outputs.version }}
+      SHA: ${{ needs.resolve.outputs.sha }}
     steps:
       - name: Download the release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -561,15 +577,44 @@ jobs:
           # run built and verified.
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release download "$TAG" --dir "$RUNNER_TEMP/existing" --clobber
+            # The APK and its checksum are reproducible: compare those bytes.
             for asset in \
               "drypoint-${VERSION}.apk" \
-              "drypoint-${VERSION}.apk.sha256" \
-              "drypoint-${VERSION}.apk.intoto.jsonl"; do
+              "drypoint-${VERSION}.apk.sha256"; do
               if ! cmp -s "dist/${asset}" "$RUNNER_TEMP/existing/${asset}"; then
                 echo "::error::the existing release asset ${asset} differs from this build"
                 exit 1
               fi
             done
+            # The attestation bundle is not reproducible: every signing makes a
+            # fresh certificate and signature, and GitHub adds its own release
+            # attestation. Verify the published APK against the repository and
+            # the signer workflow, then require a statement for its exact
+            # digest that binds this commit, instead of comparing bundle bytes.
+            existing_apk="$RUNNER_TEMP/existing/drypoint-${VERSION}.apk"
+            existing_bundle="$RUNNER_TEMP/existing/drypoint-${VERSION}.apk.intoto.jsonl"
+            existing_sha="$(sha256sum "$existing_apk" | awk '{print $1}')"
+            gh attestation verify "$existing_apk" \
+              --bundle "$existing_bundle" \
+              -R "$GITHUB_REPOSITORY" \
+              --signer-workflow "LLM-4-People/drypoint/.github/workflows/release.yml" \
+              --predicate-type "https://slsa.dev/provenance/v1"
+            if ! jq -es --arg sha "$SHA" --arg apk "$existing_sha" '
+              [ .[]
+                | (.dsseEnvelope.payload // .bundle.dsseEnvelope.payload // empty)
+                | select(. != null)
+                | @base64d | fromjson
+                | select(.subject[0].digest.sha256 == $apk)
+              ] as $statements
+              | ($statements | length) >= 1
+                and any($statements[];
+                  (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies
+                  | ($dependencies | length) == 1
+                    and $dependencies[0].digest.gitCommit == $sha)
+            ' "$existing_bundle" > /dev/null; then
+              echo "::error::the existing release attestation does not bind the published APK to the resolved commit $SHA"
+              exit 1
+            fi
             # The assets are immutable, the body is not. A re-run with a changed
             # changelog must not exit 0 while the published notes still lie.
             gh release edit "$TAG" --notes-file "$notes"

@@ -66,29 +66,50 @@ function statement({ gitCommit, apkSha, predicate = null }) {
   };
 }
 
-async function harness(t, { gitCommit = SHA, apkSha = null, predicate = null } = {}) {
+async function harness(t, { statements = null, gitCommit = SHA, apkSha = null, predicate = null } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'drypoint-attest-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = join(root, 'bin');
   await mkdir(join(root, 'dist'));
+  await mkdir(bin);
+  const log = join(root, 'gh.log');
+  // The signature check is `gh`'s job, not this test's: the shim proves the
+  // step runs it with the pinned flags and fails closed when it says no.
+  await writeFile(
+    join(bin, 'gh'),
+    ['#!/bin/sh', 'printf "%s\\n" "$*" >> "$GH_LOG"', 'exit "${GH_VERIFY_STATUS:-0}"', ''].join('\n'),
+    { mode: 0o755 }
+  );
   const apk = join(root, 'dist', 'drypoint-1.0.3.apk');
   await writeFile(apk, 'signed apk bytes');
   const digest = createHash('sha256').update(await readFile(apk)).digest('hex');
   const bundle = join(root, 'dist', 'drypoint-1.0.3.apk.intoto.jsonl');
-  const payload = Buffer.from(JSON.stringify(statement({ gitCommit, apkSha: apkSha ?? digest, predicate }))).toString('base64');
-  await writeFile(
-    bundle,
-    `${JSON.stringify({
+  const entries = statements ?? [{ gitCommit, apkSha, predicate }];
+  const lines = entries.map((entry) => {
+    const payload = Buffer.from(
+      JSON.stringify(statement({ gitCommit: entry.gitCommit, apkSha: entry.apkSha ?? digest, predicate: entry.predicate ?? null }))
+    ).toString('base64');
+    return JSON.stringify({
       mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
       dsseEnvelope: { payloadType: 'application/vnd.in-toto+json', payload, signatures: [] },
-    })}\n`
-  );
-  return { root, digest };
+    });
+  });
+  await writeFile(bundle, `${lines.join('\n')}\n`);
+  return { root, digest, bin, log };
 }
 
-function runStep(paths, sha = SHA) {
+function runStep(paths, sha = SHA, environment = {}) {
   return execFileSync('bash', ['-c', VERIFY.run], {
     cwd: paths.root,
-    env: { ...process.env, VERSION, SHA: sha },
+    env: {
+      ...process.env,
+      PATH: `${paths.bin}:${process.env.PATH}`,
+      GH_LOG: paths.log,
+      VERSION,
+      SHA: sha,
+      GITHUB_REPOSITORY: 'LLM-4-People/drypoint',
+      ...environment,
+    },
     encoding: 'utf8',
     stdio: 'pipe',
   });
@@ -170,6 +191,39 @@ test('the generated predicate passes the workflow assertion', async (t) => {
   const paths = await harness(t);
   const output = runStep(paths);
   assert.match(output, new RegExp(`provenance binds ${paths.digest} to ${SHA}`));
+  const calls = (await readFile(paths.log, 'utf8')).trim().split('\n');
+  const verify = calls.find((call) => call.startsWith('attestation verify'));
+  assert.ok(verify, 'the step verifies the bundle signature before parsing it');
+  for (const flag of ['--bundle', '-R', '--signer-workflow', '--predicate-type']) {
+    assert.ok(verify.includes(flag), `the verification passes ${flag}`);
+  }
+  assert.ok(verify.includes('LLM-4-People/drypoint/.github/workflows/release.yml'), 'the signer workflow is pinned');
+  assert.ok(verify.includes('https://slsa.dev/provenance/v1'), 'the predicate type is pinned');
+});
+
+test('a signature check that rejects the bundle fails before parsing it', async (t) => {
+  const paths = await harness(t);
+  assert.throws(
+    () => runStep(paths, SHA, { GH_VERIFY_STATUS: '1' }),
+    (error) => error.status !== 0 && !/provenance binds/.test(`${error.stdout}${error.stderr}`),
+    'a forged or unsigned bundle never reaches the jq assertion'
+  );
+});
+
+test('an older attestation for another commit does not block this release', async (t) => {
+  // A dry run or GitHub's automatic release attestation can add a statement.
+  // At least one statement for this APK must bind the resolved commit.
+  const paths = await harness(t, { statements: [{ gitCommit: MAIN_HEAD }, { gitCommit: SHA }] });
+  const output = runStep(paths);
+  assert.match(output, new RegExp(`provenance binds ${paths.digest} to ${SHA}`));
+});
+
+test('no statement binding the resolved commit still fails', async (t) => {
+  const paths = await harness(t, { statements: [{ gitCommit: MAIN_HEAD }, { gitCommit: 'e'.repeat(40) }] });
+  assert.throws(
+    () => runStep(paths),
+    (error) => error.status !== 0 && /does not bind the signed APK to the resolved commit/.test(`${error.stdout}${error.stderr}`)
+  );
 });
 
 test('a predicate carrying the default-branch HEAD fails the release', async (t) => {

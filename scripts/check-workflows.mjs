@@ -114,6 +114,266 @@ export const TRUSTED_STEPS = Object.freeze({
   ]),
 });
 
+export const CHECKS_STEPS = Object.freeze({
+  web: Object.freeze([
+  {
+    "name": "Checkout",
+    "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "with": {
+      "persist-credentials": false
+    }
+  },
+  {
+    "name": "Use Node ${{ matrix.node }}",
+    "uses": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+    "with": {
+      "node-version": "${{ matrix.node }}"
+    }
+  },
+  {
+    "name": "Install the one dev-only dependency",
+    "run": "npm ci"
+  },
+  {
+    "name": "Generated files are current",
+    "run": "npm run build:brand -- --check"
+  },
+  {
+    "name": "The precache manifest is current",
+    "run": "npm run check:precache"
+  },
+  {
+    "name": "Privacy gate",
+    "run": "npm run privacy:check"
+  },
+  {
+    "name": "Unit test suite (the browser suites have their own job)",
+    "run": "npm run test:unit"
+  },
+  {
+    "name": "Generated documentation is current",
+    "run": "node scripts/build-docs.mjs --check"
+  },
+  {
+    "name": "Documentation links and generated docs",
+    "run": "npm run docs:check"
+  },
+  {
+    "name": "Workflow policy",
+    "run": "npm run workflows:check"
+  },
+  {
+    "name": "No tracked file changed",
+    "run": "git diff --exit-code"
+  },
+  {
+    "name": "No untracked file was left behind",
+    "run": "test -z \"$(git status --porcelain)\""
+  }
+]),
+  browser: Object.freeze([
+  {
+    "name": "Checkout",
+    "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "with": {
+      "persist-credentials": false
+    }
+  },
+  {
+    "name": "Use the pinned Node",
+    "uses": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+    "with": {
+      "node-version-file": ".node-version"
+    }
+  },
+  {
+    "name": "Install the one dev-only dependency",
+    "run": "npm ci"
+  },
+  {
+    "name": "Locate a Chromium binary",
+    "run": "node scripts/find-chrome.mjs"
+  },
+  {
+    "name": "Measured layout suites",
+    "env": {
+      "CI": "true"
+    },
+    "run": "npm run test:browser"
+  }
+]),
+  android: Object.freeze([
+  {
+    "name": "Checkout",
+    "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "with": {
+      "persist-credentials": false
+    }
+  },
+  {
+    "name": "Use the pinned Node",
+    "uses": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+    "with": {
+      "node-version-file": ".node-version"
+    }
+  },
+  {
+    "name": "Install the one dev-only dependency",
+    "run": "npm ci"
+  },
+  {
+    "name": "Use JDK 21",
+    "uses": "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880",
+    "with": {
+      "distribution": "temurin",
+      "java-version": "21"
+    }
+  },
+  {
+    "name": "Install the pinned SDK packages",
+    "run": "bash scripts/android-sdk.sh"
+  },
+  {
+    "name": "Create a throwaway signing key",
+    "run": "node scripts/ci-keystore.mjs"
+  },
+  {
+    "name": "Build and sign the APK",
+    "run": "npm run build:android"
+  },
+  {
+    "name": "Prove the package identity and print the digest",
+    "run": "set -euo pipefail\nversion=\"$(node -p \"require('./package.json').version\")\"\npackage_id=\"$(node -p \"require('./brand.json').appId\")\"\nversion_code=\"$(node scripts/build-android.mjs --version-code)\"\napk=\"android/build/drypoint-${version}.apk\"\ntest -f \"$apk\"\nbadging=\"$(\"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2\" dump badging \"$apk\")\"\n# The package the phone installs must be the one brand.json names,\n# with the versionCode the version arithmetic produces — not only the\n# human-readable versionName.\nprintf '%s\\n' \"$badging\" | grep -F \"package: name='${package_id}' versionCode='${version_code}' versionName='${version}'\"\nsha256sum \"$apk\"\n"
+  },
+  {
+    "name": "The built APK matches its manifest and policy",
+    "run": "node scripts/check-apk.mjs --aapt2 \"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2\" --apksigner \"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner\""
+  },
+  {
+    "name": "No tracked file changed",
+    "run": "git diff --exit-code"
+  },
+  {
+    "name": "No untracked file was left behind",
+    "run": "test -z \"$(git status --porcelain)\""
+  },
+  {
+    "name": "Upload the APK",
+    "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    "with": {
+      "name": "drypoint-apk",
+      "path": "android/build/drypoint-*.apk",
+      "if-no-files-found": "error",
+      "retention-days": 14
+    }
+  }
+]),
+});
+
+export const RELEASE_JOBS_STEPS = Object.freeze({
+  resolve: Object.freeze([
+  {
+    "name": "Checkout main with tags",
+    "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "with": {
+      "ref": "main",
+      "fetch-depth": 0,
+      "fetch-tags": true,
+      "persist-credentials": false
+    }
+  },
+  {
+    "name": "Resolve the tag",
+    "id": "tag",
+    "env": {
+      "EVENT": "${{ github.event_name }}",
+      "INPUT_TAG": "${{ inputs.tag }}",
+      "RUN_SHA": "${{ github.event.workflow_run.head_sha }}",
+      "INPUT_PUBLISH": "${{ inputs.publish }}"
+    },
+    "run": "set -euo pipefail\nout() { printf '%s\\n' \"$1\" >> \"$GITHUB_OUTPUT\"; }\n\nif [ \"$EVENT\" = workflow_dispatch ]; then\n  input=\"$INPUT_TAG\"\n  # A full SHA is the pre-tag dry run: the commit is built and signed,\n  # but a synthetic tag name is never treated as a real tag.\n  if [[ \"$input\" =~ ^[0-9a-f]{40}$ ]]; then\n    if [ \"$INPUT_PUBLISH\" = true ]; then\n      echo \"::error::publish=true requires a release tag, not the commit $input; a SHA dry run never publishes\"\n      exit 1\n    fi\n    if ! git cat-file -e \"${input}^{commit}\" 2>/dev/null; then\n      echo \"::error::commit $input does not exist in this repository\"\n      exit 1\n    fi\n    if ! git merge-base --is-ancestor \"$input\" origin/main; then\n      echo \"::error::$input is not an ancestor of origin/main\"\n      exit 1\n    fi\n    sha=\"$input\"\n    version=\"$(git show \"$sha:package.json\" | jq -r .version)\"\n    if ! [[ \"$version\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n      echo \"::error::package.json at $sha has no strict semantic version (got $version)\"\n      exit 1\n    fi\n    # The tag is the notes and version binding only; the commit is\n    # what gets checked out, and nothing is published.\n    tag=\"v$version\"\n    ref=\"$sha\"\n    publish=false\n  elif [[ \"$input\" =~ ^[0-9a-f]{7,39}$ ]]; then\n    echo \"::error::commit $input is not a full 40-character SHA; pass the full SHA for a dry run\"\n    exit 1\n  else\n    tag=\"$input\"\n    if ! [[ \"$tag\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n      echo \"::error::$tag is not a strict release tag or a full 40-character commit SHA\"\n      exit 1\n    fi\n    if ! git rev-parse --verify --quiet \"refs/tags/$tag\" > /dev/null; then\n      echo \"::error::tag $tag does not exist\"\n      exit 1\n    fi\n    sha=\"$(git rev-list -n1 \"$tag\")\"\n    if ! git merge-base --is-ancestor \"$sha\" origin/main; then\n      echo \"::error::$sha is not an ancestor of origin/main\"\n      exit 1\n    fi\n    version=\"$(git show \"$tag:package.json\" | jq -r .version)\"\n    if [ \"$version\" != \"${tag#v}\" ]; then\n      echo \"::error::tag $tag does not match package.json version $version\"\n      exit 1\n    fi\n    ref=\"$tag\"\n    publish=\"$INPUT_PUBLISH\"\n  fi\nelse\n  # A tag that points at main HEAD produces two successful Checks\n  # runs for one commit (the branch push and the tag push). Deriving\n  # the tag from the commit makes both runs agree without depending\n  # on head_branch.\n  sha=\"$RUN_SHA\"\n  mapfile -t tags < <(git tag --points-at \"$sha\" | grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$' || true)\n  if [ \"${#tags[@]}\" -eq 0 ]; then\n    out \"publish=false\"\n    echo \"no release tag at $sha\"\n    exit 0\n  fi\n  if [ \"${#tags[@]}\" -ne 1 ]; then\n    echo \"::error::multiple release tags at $sha: ${tags[*]}\"\n    exit 1\n  fi\n  tag=\"${tags[0]}\"\n  if ! git merge-base --is-ancestor \"$sha\" origin/main; then\n    echo \"::error::$sha is not an ancestor of origin/main\"\n    exit 1\n  fi\n  version=\"$(git show \"$tag:package.json\" | jq -r .version)\"\n  if [ \"$version\" != \"${tag#v}\" ]; then\n    echo \"::error::tag $tag does not match package.json version $version\"\n    exit 1\n  fi\n  ref=\"$tag\"\n  publish=true\nfi\n\nout \"publish=$publish\"\nout \"tag=$tag\"\nout \"sha=$sha\"\nout \"version=$version\"\nout \"ref=$ref\"\n"
+  }
+]),
+  sign: Object.freeze([
+  {
+    "name": "Download the unsigned artifact",
+    "uses": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+    "with": {
+      "name": "drypoint-unsigned",
+      "path": "dist"
+    }
+  },
+  {
+    "name": "Use the gate-proved JDK",
+    "uses": "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880",
+    "with": {
+      "distribution": "temurin",
+      "java-version": "21"
+    }
+  },
+  {
+    "name": "Install the pinned build tools",
+    "run": "set -euo pipefail\nsdkmanager=\"$(command -v sdkmanager)\"\n\"$sdkmanager\" \"platforms;${ANDROID_PLATFORM}\" \"build-tools;${ANDROID_BUILD_TOOLS}\"\n"
+  },
+  {
+    "name": "Sign, verify and describe the APK",
+    "env": {
+      "ANDROID_KEYSTORE_BASE64": "${{ secrets.ANDROID_KEYSTORE_BASE64 }}",
+      "ANDROID_KEYSTORE_PASSWORD": "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}",
+      "ANDROID_KEYSTORE_KEY_PASSWORD": "${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}",
+      "ANDROID_KEY_ALIAS": "${{ vars.ANDROID_KEY_ALIAS }}"
+    },
+    "run": "set -euo pipefail\ntools=\"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS\"\nunsigned=\"dist/drypoint-${VERSION}-unsigned.apk\"\nsigned=\"dist/drypoint-${VERSION}.apk\"\nnotes=\"dist/notes.md\"\nbrand=\"dist/brand.json\"\ntrap 'rm -f \"$RUNNER_TEMP/release.jks\" \"$RUNNER_TEMP/ks-pass\" \"$RUNNER_TEMP/key-pass\" \"$RUNNER_TEMP/signed.apk\"' EXIT\n\n( cd dist && sha256sum -c \"drypoint-${VERSION}-unsigned.apk.sha256\" )\ntest -f \"$notes\"\ntest -f \"$brand\"\n# The build wrote both answers from their one owners: the versionCode\n# arithmetic in build-android.mjs and the manifest's minSdk. The sign\n# job reads them with jq/cat, never re-derives them.\ntest -f dist/version-code.txt\ntest -f dist/signing.json\nexpected_version_code=\"$(cat dist/version-code.txt)\"\nmin_sdk=\"$(jq -r .minSdkVersion dist/signing.json)\"\nv1_signing=\"$(jq -r .v1SigningEnabled dist/signing.json)\"\nif ! [[ \"$expected_version_code\" =~ ^[0-9]+$ ]] || ! [[ \"$min_sdk\" =~ ^[0-9]+$ ]] || ! [[ \"$v1_signing\" =~ ^(true|false)$ ]]; then\n  echo \"::error::the build did not publish a valid versionCode/signing scheme\"\n  exit 1\nfi\nif [ -z \"${EXPECTED_CERT:-}\" ]; then\n  echo \"::error::RELEASE_CERT_SHA256 is not pinned in the release environment\"\n  exit 1\nfi\nif [ -z \"${ANDROID_KEYSTORE_BASE64:-}\" ]; then\n  echo \"::error::ANDROID_KEYSTORE_BASE64 is not set; a release must be signed by the project key\"\n  exit 1\nfi\nprintf '%s' \"$ANDROID_KEYSTORE_BASE64\" | base64 --decode > \"$RUNNER_TEMP/release.jks\"\nprintf '%s' \"$ANDROID_KEYSTORE_PASSWORD\" > \"$RUNNER_TEMP/ks-pass\"\nprintf '%s' \"$ANDROID_KEYSTORE_KEY_PASSWORD\" > \"$RUNNER_TEMP/key-pass\"\nchmod 600 \"$RUNNER_TEMP/release.jks\" \"$RUNNER_TEMP/ks-pass\" \"$RUNNER_TEMP/key-pass\"\n\n\"$tools/apksigner\" sign \\\n  --ks \"$RUNNER_TEMP/release.jks\" \\\n  --ks-key-alias \"$ANDROID_KEY_ALIAS\" \\\n  --ks-pass \"file:$RUNNER_TEMP/ks-pass\" \\\n  --key-pass \"file:$RUNNER_TEMP/key-pass\" \\\n  --min-sdk-version \"$min_sdk\" \\\n  --v1-signing-enabled \"$v1_signing\" \\\n  --v2-signing-enabled true \\\n  --v3-signing-enabled true \\\n  --out \"$signed\" \\\n  \"$unsigned\"\n\nverify=\"$(\"$tools/apksigner\" verify --verbose --print-certs \"$signed\")\"\nprintf '%s\\n' \"$verify\"\nprintf '%s\\n' \"$verify\" | grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true'\nprintf '%s\\n' \"$verify\" | grep -F 'Verified using v3 scheme (APK Signature Scheme v3): true'\n\nsigner=\"$(printf '%s\\n' \"$verify\" | grep -oE 'Signer #1 certificate SHA-256 digest: [0-9a-f]{64}' | awk '{print $NF}')\"\nif [ \"$signer\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::the APK signer $signer is not the pinned $EXPECTED_CERT\"\n  exit 1\nfi\n# brand.json is repository data, read with jq and never executed. A\n# silent fingerprint drift must fail even when the key itself is\n# right, because the downloader reads this file.\nbrand_cert=\"$(jq -r .androidSigningCertificateSha256 \"$brand\")\"\nif [ \"$brand_cert\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::brand.json records $brand_cert, not the environment pin $EXPECTED_CERT\"\n  exit 1\nfi\nnotes_cert=\"$(grep -F 'Signing certificate SHA-256' \"$notes\" | grep -oE '[0-9a-f]{64}' | tail -1)\"\nif [ \"$notes_cert\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::the release notes name $notes_cert, not the environment pin $EXPECTED_CERT\"\n  exit 1\nfi\n\n\"$tools/zipalign\" -c -v 4 \"$signed\" > /dev/null\nbadging=\"$(\"$tools/aapt2\" dump badging \"$signed\")\"\npackage_id=\"$(jq -r .appId \"$brand\")\"\n# The exact package, versionCode and versionName — the same values\n# check-apk asserts against the unsigned artifact. A hard-coded\n# versionCode fails here even when it is positive.\nexpected_package=\"package: name='${package_id}' versionCode='${expected_version_code}' versionName='${VERSION}'\"\nif ! printf '%s\\n' \"$badging\" | grep -qF \"$expected_package\"; then\n  echo \"::error::the APK does not carry ${expected_package}\"\n  exit 1\nfi\nif printf '%s\\n' \"$badging\" | grep -q 'android.permission.INTERNET'; then\n  echo \"::error::the APK requests android.permission.INTERNET\"\n  exit 1\nfi\nlaunchers=\"$(printf '%s\\n' \"$badging\" | grep -c \"^launchable-activity: name='\")\"\nif [ \"$launchers\" -ne 1 ]; then\n  echo \"::error::the APK must have exactly one MAIN/LAUNCHER activity, found $launchers\"\n  exit 1\nfi\n\nxmltree=\"$(\"$tools/aapt2\" dump xmltree --file AndroidManifest.xml \"$signed\")\"\nprintf '%s\\n' \"$xmltree\" | grep -qE 'android:allowBackup\\([^)]*\\)=(false|\\(type 0x12\\)0x0)'\nif printf '%s\\n' \"$xmltree\" | grep -q 'android:debuggable'; then\n  echo \"::error::the APK is debuggable\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -q 'android:usesCleartextTraffic'; then\n  echo \"::error::the APK allows cleartext traffic\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -q 'android.permission.INTERNET'; then\n  echo \"::error::the manifest grants android.permission.INTERNET\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -qE 'E: (provider|service|receiver)( |$)'; then\n  echo \"::error::the APK declares a provider, service or receiver\"\n  exit 1\nfi\nactivities=\"$(printf '%s\\n' \"$xmltree\" | grep -cE 'E: activity( |$)')\"\nexported=\"$(printf '%s\\n' \"$xmltree\" | grep -cE 'android:exported\\([^)]*\\)=true')\"\nif [ \"$activities\" -ne 1 ] || [ \"$exported\" -ne 1 ]; then\n  echo \"::error::the APK must have one activity and one exported component (activities=$activities exported=$exported)\"\n  exit 1\nfi\nif ! printf '%s\\n' \"$xmltree\" | grep -q 'android.intent.action.MAIN'; then\n  echo \"::error::the launcher activity has no MAIN action\"\n  exit 1\nfi\nif ! printf '%s\\n' \"$xmltree\" | grep -q 'android.intent.category.LAUNCHER'; then\n  echo \"::error::the launcher activity has no LAUNCHER category\"\n  exit 1\nfi\n\n(\n  cd dist\n  sha256sum \"drypoint-${VERSION}.apk\" > \"drypoint-${VERSION}.apk.sha256\"\n  cat \"drypoint-${VERSION}.apk.sha256\"\n)\n"
+  },
+  {
+    "name": "Attest the signed APK",
+    "uses": "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
+    "with": {
+      "subject-path": "dist/drypoint-${{ needs.resolve.outputs.version }}.apk",
+      "predicate-type": "https://slsa.dev/provenance/v1",
+      "predicate-path": "dist/provenance.json"
+    }
+  },
+  {
+    "name": "Download the provenance bundle",
+    "env": {
+      "GH_TOKEN": "${{ github.token }}"
+    },
+    "run": "set -euo pipefail\n# A dedicated empty directory: a file already in dist/ cannot be\n# selected instead of the bundle this run downloads.\nrm -rf dist/attest\nmkdir -p dist/attest\n(\n  cd dist/attest\n  gh attestation download \"drypoint-${VERSION}.apk\" -R \"$GITHUB_REPOSITORY\"\n)\nshopt -s nullglob\nfiles=(dist/attest/*.jsonl)\nif [ \"${#files[@]}\" -ne 1 ]; then\n  echo \"::error::gh attestation download wrote ${#files[@]} bundles; exactly one is required\"\n  exit 1\nfi\nmv \"${files[0]}\" \"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\ntest -f \"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\n"
+  },
+  {
+    "name": "Prove the provenance binds the tag commit",
+    "env": {
+      "GH_TOKEN": "${{ github.token }}"
+    },
+    "run": "set -euo pipefail\nbundle=\"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\napk=\"dist/drypoint-${VERSION}.apk\"\napk_sha=\"$(sha256sum \"dist/drypoint-${VERSION}.apk\" | awk '{print $1}')\"\n# Verify the Sigstore bundle and the signer workflow before parsing\n# it. A forged unsigned JSON file planted in dist/ fails here.\ngh attestation verify \"$apk\" \\\n  --bundle \"$bundle\" \\\n  -R \"$GITHUB_REPOSITORY\" \\\n  --signer-workflow \"LLM-4-People/drypoint/.github/workflows/release.yml\" \\\n  --predicate-type \"https://slsa.dev/provenance/v1\"\n# The DSSE payload is the in-toto statement. At least one statement\n# for this exact APK digest must carry exactly one resolved\n# dependency and it must be the resolved commit. A prior dry run or\n# GitHub's automatic release attestation may add statements; they\n# cannot satisfy the binding unless they name this commit.\nif ! jq -es --arg sha \"$SHA\" --arg apk \"$apk_sha\" '\n  [ .[]\n    | (.dsseEnvelope.payload // .bundle.dsseEnvelope.payload // empty)\n    | select(. != null)\n    | @base64d | fromjson\n    | select(.subject[0].digest.sha256 == $apk)\n  ] as $statements\n  | ($statements | length) >= 1\n    and any($statements[];\n      (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies\n      | ($dependencies | length) == 1\n        and $dependencies[0].digest.gitCommit == $sha)\n' \"$bundle\" > /dev/null; then\n  echo \"::error::the provenance does not bind the signed APK to the resolved commit $SHA\"\n  exit 1\nfi\necho \"provenance binds $apk_sha to $SHA\"\n"
+  },
+  {
+    "name": "Upload the release files",
+    "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    "with": {
+      "name": "drypoint-release",
+      "path": "dist/drypoint-${{ needs.resolve.outputs.version }}.apk\ndist/drypoint-${{ needs.resolve.outputs.version }}.apk.sha256\ndist/drypoint-${{ needs.resolve.outputs.version }}.apk.intoto.jsonl\ndist/notes.md\n",
+      "if-no-files-found": "error",
+      "retention-days": 7
+    }
+  }
+]),
+  publish: Object.freeze([
+  {
+    "name": "Download the release files",
+    "uses": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+    "with": {
+      "name": "drypoint-release",
+      "path": "dist"
+    }
+  },
+  {
+    "name": "Publish the release, or prove it already is",
+    "run": "set -euo pipefail\napk=\"dist/drypoint-${VERSION}.apk\"\nchecksum=\"${apk}.sha256\"\nbundle=\"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\nnotes=\"dist/notes.md\"\nfor file in \"$apk\" \"$checksum\" \"$bundle\" \"$notes\"; do test -f \"$file\"; done\n\n# A re-run of this workflow for the same tag must not fail, and must\n# not silently accept a release that carries different bytes. It\n# exits 0 only when the existing release's assets match the ones this\n# run built and verified.\nif gh release view \"$TAG\" > /dev/null 2>&1; then\n  gh release download \"$TAG\" --dir \"$RUNNER_TEMP/existing\" --clobber\n  # The APK and its checksum are reproducible: compare those bytes.\n  for asset in \\\n    \"drypoint-${VERSION}.apk\" \\\n    \"drypoint-${VERSION}.apk.sha256\"; do\n    if ! cmp -s \"dist/${asset}\" \"$RUNNER_TEMP/existing/${asset}\"; then\n      echo \"::error::the existing release asset ${asset} differs from this build\"\n      exit 1\n    fi\n  done\n  # The attestation bundle is not reproducible: every signing makes a\n  # fresh certificate and signature, and GitHub adds its own release\n  # attestation. Verify the published APK against the repository and\n  # the signer workflow, then require a statement for its exact\n  # digest that binds this commit, instead of comparing bundle bytes.\n  existing_apk=\"$RUNNER_TEMP/existing/drypoint-${VERSION}.apk\"\n  existing_bundle=\"$RUNNER_TEMP/existing/drypoint-${VERSION}.apk.intoto.jsonl\"\n  existing_sha=\"$(sha256sum \"$existing_apk\" | awk '{print $1}')\"\n  gh attestation verify \"$existing_apk\" \\\n    --bundle \"$existing_bundle\" \\\n    -R \"$GITHUB_REPOSITORY\" \\\n    --signer-workflow \"LLM-4-People/drypoint/.github/workflows/release.yml\" \\\n    --predicate-type \"https://slsa.dev/provenance/v1\"\n  if ! jq -es --arg sha \"$SHA\" --arg apk \"$existing_sha\" '\n    [ .[]\n      | (.dsseEnvelope.payload // .bundle.dsseEnvelope.payload // empty)\n      | select(. != null)\n      | @base64d | fromjson\n      | select(.subject[0].digest.sha256 == $apk)\n    ] as $statements\n    | ($statements | length) >= 1\n      and any($statements[];\n        (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies\n        | ($dependencies | length) == 1\n          and $dependencies[0].digest.gitCommit == $sha)\n  ' \"$existing_bundle\" > /dev/null; then\n    echo \"::error::the existing release attestation does not bind the published APK to the resolved commit $SHA\"\n    exit 1\n  fi\n  # The assets are immutable, the body is not. A re-run with a changed\n  # changelog must not exit 0 while the published notes still lie.\n  gh release edit \"$TAG\" --notes-file \"$notes\"\n  echo \"::notice::release $TAG already exists with these exact assets; notes refreshed\"\n  exit 0\nfi\n\n# Tags are strict vMAJOR.MINOR.PATCH and the resolve step verified the\n# tag's own tree, so this command only ever creates the release the\n# build job proved.\ngh release create \"$TAG\" \\\n  \"$apk\" \\\n  \"$checksum\" \\\n  \"$bundle\" \\\n  --verify-tag \\\n  --title \"v${VERSION}\" \\\n  --notes-file \"$notes\" \\\n  --latest\n"
+  }
+]),
+});
 /**
  * The exact step names of the four release jobs. The names are the step list's
  * identity: an added, removed or reordered step changes the list even when the
@@ -221,6 +481,9 @@ export const INJECTION_KEYS = Object.freeze([
   'LD_PRELOAD',
   'LD_LIBRARY_PATH',
   'PATH',
+  'HOME',
+  'SHELL',
+  'IFS',
   'GITHUB_ENV',
   'GITHUB_PATH',
   'GITHUB_OUTPUT',
@@ -313,7 +576,7 @@ const SHA = /^[0-9a-f]{40}$/;
 /** A masked gate step is rejected in both workflows that hold authority. */
 const MASKABLE_WORKFLOWS = new Set(['checks.yml', RELEASE_FILE]);
 /** A secret reference in any job that is not the one signing job. */
-const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/;
+const SECRET_REFERENCE = /secrets(?:\.|\[)/;
 /** The exact opt-in a gated step may put before its registered command. */
 const GATE_PREAMBLE = 'set -euo pipefail';
 /** The one owner of the CI throwaway key; both unprivileged jobs call it. */
@@ -655,7 +918,12 @@ function injectionFindings(workflow, file) {
   const check = (env, where) => {
     if (!isMap(env)) return;
     for (const key of Object.keys(env)) {
-      if (INJECTION_KEYS.includes(key)) findings.push(`${file}: ${where} must not set ${key}`);
+      // npm reads its config from `npm_config_*` and the spelling's case is not
+      // a guarantee: `npm_config_script_shell=/bin/true` turns `npm run <gate>`
+      // into a no-op.
+      if (INJECTION_KEYS.includes(key) || key.toLowerCase().startsWith('npm_config_')) {
+        findings.push(`${file}: ${where} must not set ${key}`);
+      }
     }
   };
   check(workflow?.env, 'the workflow env');
@@ -682,15 +950,19 @@ export function exactConditionFindings(value, expected, file, where) {
  * is a finding, as is a job-level `defaults`, `container`, `env` or
  * `continue-on-error`.
  */
-function trustedStepFindings(job, file, jobName) {
-  const expected = TRUSTED_STEPS[jobName];
+/**
+ * One exact step list. Any added, missing, reordered or reshaped step is a
+ * finding, as is a job-level `defaults`, `container`, `services`,
+ * `continue-on-error`, or an unapproved job `env`.
+ */
+function expectedStepFindings(job, file, jobName, expected, { allowJobEnv = false } = {}) {
   if (!expected) return [];
   if (!isMap(job)) return [`${file}: job "${jobName}" is missing`];
   const findings = [];
-  for (const key of ['defaults', 'container']) {
+  for (const key of ['defaults', 'container', 'services']) {
     if (job[key] != null) findings.push(`${file}: job "${jobName}" must not declare ${key}`);
   }
-  if (job.env != null) findings.push(`${file}: job "${jobName}" must not declare job-level env`);
+  if (!allowJobEnv && job.env != null) findings.push(`${file}: job "${jobName}" must not declare job-level env`);
   if (job['continue-on-error'] != null && job['continue-on-error'] !== false) {
     findings.push(`${file}: job "${jobName}" must not set continue-on-error`);
   }
@@ -701,7 +973,7 @@ function trustedStepFindings(job, file, jobName) {
   if (steps.length !== expected.length) {
     findings.push(`${file}: job "${jobName}" must have exactly ${expected.length} steps; found ${steps.length}`);
   }
-  const allowed = ['name', 'if', 'uses', 'with', 'run', 'env'];
+  const allowed = ['name', 'if', 'uses', 'with', 'run', 'env', 'id'];
   for (let index = 0; index < Math.min(steps.length, expected.length); index++) {
     const step = steps[index];
     const wanted = expected[index];
@@ -725,11 +997,18 @@ function trustedStepFindings(job, file, jobName) {
     if (!sameMap(step.env, wanted.env)) {
       findings.push(`${file}: ${where} env: must be exactly ${JSON.stringify(wanted.env ?? null)}`);
     }
-    if ((step.run == null ? '' : String(step.run).trim()) !== (wanted.run ?? '')) {
-      findings.push(`${file}: ${where} run: must be the trusted body, not ${JSON.stringify(step.run ?? null)}`);
+    if ((step.id ?? '') !== (wanted.id ?? '')) {
+      findings.push(`${file}: ${where} id must be ${JSON.stringify(wanted.id ?? null)}`);
+    }
+    if ((step.run == null ? '' : String(step.run).trim()) !== (wanted.run == null ? '' : String(wanted.run).trim())) {
+      findings.push(`${file}: ${where} run: must be the exact body, not ${JSON.stringify(step.run ?? null)}`);
     }
   }
   return findings;
+}
+
+function trustedStepFindings(job, file, jobName) {
+  return expectedStepFindings(job, file, jobName, TRUSTED_STEPS[jobName], { allowJobEnv: false });
 }
 
 /** The exact step names of one release job. */
@@ -738,7 +1017,7 @@ function releaseStepNamesFindings(job, file, jobName) {
   if (!expected) return [];
   if (!isMap(job)) return [`${file}: job "${jobName}" is missing`];
   const findings = [];
-  for (const key of ['defaults', 'container']) {
+  for (const key of ['defaults', 'container', 'services']) {
     if (job[key] != null) findings.push(`${file}: job "${jobName}" must not declare ${key}`);
   }
   const names = stepsOf(job).map((step) => step.name);
@@ -1000,6 +1279,11 @@ export function parsedWorkflowFindings(workflow, file) {
     }
     findings.push(...trustedStepFindings(jobs.policy, file, 'policy'));
     findings.push(...trustedStepFindings(jobs.required, file, 'required'));
+    // The unprivileged legs publish the merge gate's answer. An extra step is a
+    // place to run something else, so their step lists are exact too.
+    for (const name of ['web', 'browser', 'android']) {
+      findings.push(...expectedStepFindings(jobs[name], file, name, CHECKS_STEPS[name], { allowJobEnv: true }));
+    }
   }
   if (file === 'checks.yml' && !jobs[AGGREGATE_JOB]) {
     findings.push(`${file}: job "${AGGREGATE_JOB}" is missing`);
@@ -1093,50 +1377,51 @@ function gateFindings(workflow, jobs, file) {
   return findings;
 }
 
-/**
- * The environment names one `environment:` value declares. GitHub accepts a
- * bare name or a map with `name`; both are the same environment grant.
- */
-function environmentNames(value) {
-  if (typeof value === 'string') return [value];
-  if (isMap(value) && typeof value.name === 'string') return [value.name];
-  return [];
-}
+/** The one non-release environment the repository owns: Pages deployment. */
+const PAGES_ENVIRONMENT = Object.freeze({
+  name: 'github-pages',
+  url: '${{ steps.deployment.outputs.page_url }}',
+});
 
 /**
- * Only `release.yml`'s `sign` job may enter the release environment. Every
- * other job in every workflow is rejected, including a map-form spelling of the
- * same name. The environment holds the signing key; `environment:` is a grant
- * exactly like a permission.
+ * Only `release.yml`'s `sign` job may enter the release environment, and only
+ * as the literal string. A map or expression (`name: ${{ ... }}`) can resolve
+ * to `release` at run time, so it is rejected everywhere else. The one other
+ * declared environment is the Pages deployment's fixed map; anything else is a
+ * secret grant this policy does not approve.
  */
 function environmentFindings(workflow, file) {
   const findings = [];
   for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
     if (!isMap(job) || job.environment == null) continue;
-    if (!environmentNames(job.environment).includes(RELEASE_ENVIRONMENT)) continue;
-    const owner = file === RELEASE_FILE && name === 'sign' && job.environment === RELEASE_ENVIRONMENT;
-    if (!owner) {
-      findings.push(
-        `${file}: job "${name}" must not use the ${RELEASE_ENVIRONMENT} environment; only ${RELEASE_FILE}'s "sign" job may`
-      );
-    }
+    const signOwner = file === RELEASE_FILE && name === 'sign' && job.environment === RELEASE_ENVIRONMENT;
+    const pagesOwner = file === 'pages.yml' && name === 'deploy' && sameMap(job.environment, PAGES_ENVIRONMENT);
+    if (signOwner || pagesOwner) continue;
+    findings.push(
+      `${file}: job "${name}" must not declare environment; only ${RELEASE_FILE}'s "sign" (release) and pages.yml's "deploy" (github-pages) may`
+    );
   }
   return findings;
 }
 
 /**
- * A secret reference anywhere in a job (env, step env, `with:`, or the `run:`
- * body itself) is a grant of the secret to that job. Only the signing job may
- * read one.
+ * A secret reference anywhere (workflow env, job env or condition, step env,
+ * `with:`, `if:` or the `run:` body) is a grant of the secret. Only the signing
+ * job may read one. The workflow env is read by every job, so it may never name
+ * a secret even though `sign` is allowed to.
  */
 function secretFindings(workflow, file) {
   const findings = [];
+  if (SECRET_REFERENCE.test(JSON.stringify(workflow?.env ?? {}))) {
+    findings.push(`${file}: the workflow env must not read secrets; only ${RELEASE_FILE}'s "sign" job may`);
+  }
   for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
     if (!isMap(job)) continue;
     if (file === RELEASE_FILE && name === 'sign') continue;
     const text = JSON.stringify([
       job.env ?? {},
-      stepsOf(job).map((step) => ({ env: step.env ?? {}, with: step.with ?? {}, run: step.run ?? '' })),
+      job.if ?? '',
+      stepsOf(job).map((step) => ({ env: step.env ?? {}, with: step.with ?? {}, run: step.run ?? '', if: step.if ?? '' })),
     ]);
     if (SECRET_REFERENCE.test(text)) {
       findings.push(`${file}: job "${name}" must not read secrets; only ${RELEASE_FILE}'s "sign" job may`);
@@ -1240,7 +1525,7 @@ function resolveFindings(workflow, file) {
   const expectedCondition =
     "github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')";
   findings.push(...exactConditionFindings(job.if, expectedCondition, file, 'job "resolve" if:'));
-  findings.push(...releaseStepNamesFindings(job, file, 'resolve'));
+  findings.push(...expectedStepFindings(job, file, 'resolve', RELEASE_JOBS_STEPS.resolve, { allowJobEnv: true }));
 
   const outputs = isMap(job.outputs) ? job.outputs : {};
   const expectedOutputs = ['publish', 'ref', 'sha', 'tag', 'version'];
@@ -1408,8 +1693,7 @@ function signFindings(workflow, file) {
       'job "sign" if:'
     )
   );
-  findings.push(...releaseStepNamesFindings(job, file, 'sign'));
-  findings.push(...plainStepFindings(job, file, 'sign'));
+  findings.push(...expectedStepFindings(job, file, 'sign', RELEASE_JOBS_STEPS.sign, { allowJobEnv: true }));
   findings.push(...sourceFindings(job, file, 'sign'));
   for (const [name, value] of [
     ['TAG', '${{ needs.resolve.outputs.tag }}'],
@@ -1500,6 +1784,36 @@ function signFindings(workflow, file) {
     if (attest.with?.predicate != null) {
       findings.push(`${file}: job "sign" attest step must use predicate-path, not an inline predicate`);
     }
+    if (attest.with?.['subject-path'] !== 'dist/drypoint-${{ needs.resolve.outputs.version }}.apk') {
+      findings.push(
+        `${file}: job "sign" attest step must attest dist/drypoint-\${{ needs.resolve.outputs.version }}.apk, not ${JSON.stringify(attest.with?.['subject-path'] ?? null)}`
+      );
+    }
+  }
+  // The bundle is verified as a signed artifact and parsed from an empty
+  // dedicated directory. A glob over dist/ selects a planted file.
+  for (const [needle, message] of [
+    ['gh attestation verify "$apk"', 'verify the bundle signature before parsing it'],
+    ['--signer-workflow "LLM-4-People/drypoint/.github/workflows/release.yml"', 'pin the signer workflow on gh attestation verify'],
+    ['--predicate-type "https://slsa.dev/provenance/v1"', 'pin the SLSA v1 predicate type on gh attestation verify'],
+    ['dist/attest/*.jsonl', 'download the bundle into the dedicated dist/attest directory'],
+    ['${#files[@]}', 'require exactly one downloaded bundle'],
+    ['-ne 1', 'fail on zero or multiple downloaded bundles'],
+    ['apk_sha="$(sha256sum "dist/drypoint-${VERSION}.apk" | awk \'{print $1}\')"', 'hash the signed APK itself'],
+  ]) {
+    if (!joined.includes(needle)) findings.push(`${file}: job "sign" must ${message}`);
+  }
+  if (/find\b[^\n]*-print\s+-quit/.test(joined)) {
+    findings.push(`${file}: job "sign" must not select the bundle with find -print -quit`);
+  }
+  if (joined.includes('sha256*.jsonl')) {
+    findings.push(`${file}: job "sign" must not select the bundle with a glob`);
+  }
+  if (!/any\(\$statements\[\];/.test(joined)) {
+    findings.push(`${file}: job "sign" must accept any verified statement whose dependency binds the resolved commit`);
+  }
+  if (/all\(\$statements\[\];/.test(joined)) {
+    findings.push(`${file}: job "sign" must not require every statement to bind one commit`);
   }
   return findings;
 }
@@ -1522,8 +1836,7 @@ function publishFindings(workflow, file) {
     findings.push(`${file}: job "publish" must need resolve and sign`);
   }
   findings.push(...exactConditionFindings(job.if, "needs.resolve.outputs.publish == 'true'", file, 'job "publish" if:'));
-  findings.push(...releaseStepNamesFindings(job, file, 'publish'));
-  findings.push(...plainStepFindings(job, file, 'publish'));
+  findings.push(...expectedStepFindings(job, file, 'publish', RELEASE_JOBS_STEPS.publish, { allowJobEnv: true }));
   findings.push(...sourceFindings(job, file, 'publish'));
   // The tag is the resolved tag, never the ref name, the workflow_run branch or
   // a literal. Equality is the contract; a substring check let every alternate
@@ -1533,6 +1846,9 @@ function publishFindings(workflow, file) {
   }
   if (job.env?.VERSION !== '${{ needs.resolve.outputs.version }}') {
     findings.push(`${file}: job "publish" env VERSION must be exactly \${{ needs.resolve.outputs.version }}`);
+  }
+  if (job.env?.SHA !== '${{ needs.resolve.outputs.sha }}') {
+    findings.push(`${file}: job "publish" env SHA must be exactly \${{ needs.resolve.outputs.sha }}`);
   }
   for (const step of stepsOf(job)) {
     if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {
@@ -1549,6 +1865,8 @@ function publishFindings(workflow, file) {
   }
   // Publish is a command allowlist. `gh release upload --clobber` can replace
   // an asset after the byte comparison; delete/api/raw shell can do worse.
+  // `gh attestation verify` is the one non-release command: it only checks the
+  // existing bundle and must name the bundle, the repository and the signer.
   const allowedRelease = new Set(['view', 'download', 'create', 'edit']);
   for (const command of stepsOf(job).flatMap(stepCommands)) {
     const tokens = shellTokens(command);
@@ -1557,6 +1875,26 @@ function publishFindings(workflow, file) {
     }
     for (let index = 0; index < tokens.length; index++) {
       if (tokens[index] !== 'gh') continue;
+      if (tokens[index + 1] === 'attestation') {
+        if (tokens[index + 2] !== 'verify') {
+          findings.push(`${file}: job "publish" may only run gh attestation verify`);
+          break;
+        }
+        for (const flag of ['--bundle', '-R', '--signer-workflow', '--predicate-type']) {
+          if (!tokens.includes(flag)) findings.push(`${file}: job "publish" gh attestation verify must pass ${flag}`);
+        }
+        const bundle = tokens[tokens.indexOf('--bundle') + 1];
+        if (bundle !== '$existing_bundle') {
+          findings.push(`${file}: job "publish" gh attestation verify must read the downloaded existing bundle`);
+        }
+        if (!tokens.includes('LLM-4-People/drypoint/.github/workflows/release.yml')) {
+          findings.push(`${file}: job "publish" gh attestation verify must pin the signer workflow`);
+        }
+        if (!tokens.includes('https://slsa.dev/provenance/v1')) {
+          findings.push(`${file}: job "publish" gh attestation verify must pin the SLSA v1 predicate type`);
+        }
+        continue;
+      }
       if (tokens[index + 1] !== 'release') {
         findings.push(`${file}: job "publish" may only run gh release commands: "${command}"`);
         break;
@@ -1591,8 +1929,12 @@ function existingReleaseFindings(workflow, file) {
   for (const [pattern, message] of [
     [/gh release view "\$TAG"/, 'detect an existing release'],
     [/gh release download "\$TAG"/, 'download the existing assets'],
-    [/cmp -s/, 'compare the existing assets byte-for-byte'],
+    [/cmp -s/, 'compare the existing APK and checksum byte-for-byte'],
     [/differs from this build/, 'fail when an existing asset differs'],
+    [/gh attestation verify "\$existing_apk"/, 'verify the existing bundle signature and signer'],
+    [/existing_bundle="\$RUNNER_TEMP\/existing\//, 'verify the bundle the release downloaded'],
+    [/does not bind the published APK/, 'fail when the existing attestation binds another commit'],
+    [/any\(\$statements\[\];/, 'accept a verified statement that binds the resolved commit'],
     [/exit 0/, 'treat an identical existing release as a pass'],
     [/--latest/, 'mark the release latest'],
     [/--notes-file/, 'publish the generated notes'],
