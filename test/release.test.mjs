@@ -26,11 +26,16 @@ test('package.json, the app config and the changelog agree on one version', () =
   }));
   assert.ok(headings.length > 0, 'the changelog has dated release sections');
   assert.equal(headings[0].version, pkg.version, 'the newest section is the package version');
-  assert.equal(headings[0].date, '2026-11-15');
+  for (const { date } of headings) {
+    const parsed = new Date(`${date}T00:00:00Z`);
+    assert.equal(Number.isNaN(parsed.valueOf()), false, `${date} is a real date`);
+    assert.equal(parsed.toISOString().slice(0, 10), date, `${date} is a calendar date`);
+  }
   assert.equal(new Set(headings.map((heading) => heading.version)).size, headings.length, 'no duplicate section');
 
-  // The release is the only thing that may turn this version into a tag.
-  assert.equal(`v${pkg.version}`, 'v1.0.0');
+  // The release is the only thing that may turn this version into a tag, and
+  // the tag is derived from package.json rather than copied here.
+  assert.equal(versionFromTag(`v${pkg.version}`), pkg.version);
 });
 
 test('the release workflow reads the version, never a copy of it', () => {
@@ -45,7 +50,7 @@ test('the release notes are the matching changelog section', () => {
   assert.equal(notes.version, pkg.version);
   assert.equal(notes.title, `${BRAND.name} ${pkg.version}`);
   assert.equal(notes.body, changelogSection(changelog, pkg.version));
-  assert.match(notes.body, /^First public release:/);
+  assert.ok(notes.body.trim().length > 0, 'the release has notes');
   assert.doesNotMatch(notes.body, /^## /m, 'the body does not repeat the section heading');
 });
 
@@ -54,9 +59,10 @@ test('a tag that is not v<version> is refused', () => {
     assert.throws(() => versionFromTag(tag), /tag must be vMAJOR\.MINOR\.PATCH/, `${tag} is refused`);
   }
   assert.equal(versionFromTag('v1.0.0'), '1.0.0');
+  const escapedVersion = pkg.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   assert.throws(
     () => releaseNotes({ tag: 'v2.0.0', version: pkg.version, changelog }),
-    /tag v2\.0\.0 does not match package\.json version 1\.0\.0/
+    new RegExp(`tag v2\\.0\\.0 does not match package\\.json version ${escapedVersion}`)
   );
 });
 
@@ -107,6 +113,6 @@ test('the changelog keeps the Keep a Changelog shape', () => {
   assert.match(changelog, /Keep a Changelog/);
   assert.match(changelog, /Semantic Versioning/);
   for (const section of ['### Added', '### Changed', '### Fixed', '### Security']) {
-    assert.ok(changelog.includes(section), `${section} is present in 1.0.0`);
+    assert.ok(changelog.includes(section), `${section} is present in the changelog`);
   }
 });

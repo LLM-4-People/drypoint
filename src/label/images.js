@@ -7,6 +7,33 @@ import { CONFIG } from '../core/config.js';
 
 const cache = new Map();
 
+/** The same distinct-source limit the print path and the editor enforce. */
+export const IMAGE_SOURCE_LIMIT = CONFIG.image.cacheLimit;
+
+/**
+ * Distinct image sources a document references. The print path counts only
+ * visible images (hidden ones are not painted); the editor counts every source
+ * so a hidden image cannot become a seventeenth visible one later.
+ * @returns {string[]} insertion-ordered, duplicate-free sources
+ */
+export function imageSources(labelDocument, { visibleOnly = false } = {}) {
+  const sources = new Set();
+  for (const element of labelDocument?.elements ?? []) {
+    if (element?.type !== 'image' || !element.src) continue;
+    if (visibleOnly && element.visible === false) continue;
+    sources.add(element.src);
+  }
+  return [...sources];
+}
+
+/** The one wording for the distinct-source limit, shared by print and add. */
+export function imageSourceLimitMessage(count, action = 'printing') {
+  return (
+    `A label can use at most ${IMAGE_SOURCE_LIMIT} different images; this one uses ${count}. ` +
+    `Remove or reuse an image before ${action}.`
+  );
+}
+
 /** Mark a source as recently used so eviction drops the coldest entry first. */
 function touch(src) {
   const entry = cache.get(src);
@@ -96,19 +123,8 @@ export function forgetImage(src) {
  * message instead of blaming an image that decoded fine.
  */
 export async function hydrateImages(labelDocument) {
-  const sources = new Set();
-  for (const element of labelDocument?.elements ?? []) {
-    if (element?.type !== 'image' || !element.src) continue;
-    if (element.visible === false) continue;
-    sources.add(element.src);
-  }
-  const list = [...sources];
-  if (list.length > CONFIG.image.cacheLimit) {
-    throw new Error(
-      `A label can use at most ${CONFIG.image.cacheLimit} different images; this one uses ${list.length}. ` +
-        'Remove or reuse an image before printing.'
-    );
-  }
+  const list = imageSources(labelDocument, { visibleOnly: true });
+  if (list.length > IMAGE_SOURCE_LIMIT) throw new Error(imageSourceLimitMessage(list.length));
   const results = await Promise.allSettled(list.map((src) => preloadImage(src)));
   // A resolved decode is not enough: the LRU cache may already have dropped it
   // while a later source was decoded, and the renderer would paint nothing.
@@ -121,4 +137,45 @@ export async function hydrateImages(labelDocument) {
     );
   }
   return list.length;
+}
+
+/**
+ * The render-driven decoder. One attempt per visible source and document
+ * revision, including a failed attempt, so an evicted source cannot start a
+ * decode loop: with more sources than the cache holds, every pass used to
+ * evict one more and the next render decoded it again forever.
+ *
+ * A new document object clears the attempt set, because an edit may have
+ * revealed an image that was hidden before. The cache still owns readiness:
+ * a source already ready or failed is never decoded twice.
+ *
+ * @param {{decode?: (src:string)=>Promise<unknown>, state?: (src:string)=>string,
+ *          onSettled?: (src:string)=>void}} [options]
+ * @returns {(document:object)=>number} number of decodes started this pass
+ */
+export function createVisibleImageHydrator({
+  decode = preloadImage,
+  state = imageState,
+  onSettled = () => {},
+} = {}) {
+  let currentDocument = null;
+  const attempted = new Set();
+  return function hydrateVisible(document) {
+    if (document !== currentDocument) {
+      currentDocument = document;
+      attempted.clear();
+    }
+    let started = 0;
+    for (const src of imageSources(document, { visibleOnly: true })) {
+      if (attempted.has(src) || state(src) !== 'missing') continue;
+      attempted.add(src);
+      started += 1;
+      // The renderer owns the repaint; a failure is already cached and shown
+      // by the image placeholder, so this drain must not reject.
+      decode(src)
+        .catch(() => {})
+        .finally(() => onSettled(src));
+    }
+    return started;
+  };
 }

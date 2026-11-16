@@ -20,6 +20,7 @@ src/
   main.js                  composition root: wiring, shortcut dispatch, compact layout
   core/
     brand.js               GENERATED from brand.json; the one app-side identity
+    version.js             GENERATED from package.json; the one app-side version
     config.js              every constant, default, limit and storage prefix
     dom.js                 el(), $, on(), text helpers, JSON download
     events.js              tiny emitter used by the device manager and session
@@ -85,7 +86,7 @@ scripts/
   serve.mjs                zero-dependency dev server + pid tracking
   stop.mjs                 validated stop for the tracked server
   precache.mjs             dependency-graph walker, allowlist, manifest generator
-  build-brand.mjs          brand.json → manifest, strings.xml, BRAND module, icon
+  build-brand.mjs          brand.json + package.json → manifest, strings.xml, BRAND/version modules, icon
   build-android.mjs        APK pipeline: precache → aapt2 → javac → d8 → sign
   build-pages.mjs          Pages staging: runtime list + worker + 404 + .nojekyll
   check-docs.mjs           Markdown relative links, heading anchors and images
@@ -506,6 +507,8 @@ itself: `v<version>` on a commit in `main`.
 
 1. Change `package.json` and add the matching `CHANGELOG.md` section in the same
    pull request. The section heading is exactly `## [<version>] - YYYY-MM-DD`.
+   Run `node scripts/build-brand.mjs --write`; it regenerates
+   `src/core/version.js` from the package version.
 2. Merge to `main`. `Checks` runs on the push; its aggregate job `required` is
    the only required status check.
 3. Tag that commit and push the tag:

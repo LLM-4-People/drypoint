@@ -34,7 +34,7 @@ import { createDocument, createElement, documentHeightPx, documentWidthPx, excee
 import { summariseWarnings } from './label/render.js';
 import { TEMPLATES, testDocument } from './label/templates.js';
 import { barcodeFitMessage, barcodeFrame } from './label/barcode.js';
-import { hydrateImages, imageState, preloadImage } from './label/images.js';
+import { createVisibleImageHydrator, hydrateImages } from './label/images.js';
 
 const log = createLogger('main');
 
@@ -346,20 +346,16 @@ function rerender() {
 /**
  * Decode any visible image the document reveals without a load. Hidden images
  * are never decoded (they are not painted), so making one visible has to start
- * its decode here; otherwise the canvas shows "still loading" forever.
+ * its decode here; otherwise the canvas shows "still loading" forever. The
+ * hydrator attempts each source once per document revision, so an evicted
+ * source cannot start a decode/render loop above the cache limit.
  */
-function hydrateVisibleImages() {
-  for (const element of controller.document.elements) {
-    if (element.type !== 'image' || !element.src || element.visible === false) continue;
-    if (imageState(element.src) !== 'missing') continue;
-    preloadImage(element.src)
-      .catch(() => {})
-      .finally(() => {
-        canvasEditor.invalidate();
-        rerender();
-      });
-  }
-}
+const hydrateVisibleImages = createVisibleImageHydrator({
+  onSettled: () => {
+    canvasEditor.invalidate();
+    rerender();
+  },
+});
 
 /** One owner for the stage footer text, shared by the canvas and print flow. */
 function setStageWarnings(warnings) {

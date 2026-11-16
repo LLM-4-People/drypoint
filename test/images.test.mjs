@@ -2,7 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { CONFIG } from '../src/core/config.js';
-import { forgetImage, getImage, hydrateImages, imageState, preloadImage } from '../src/label/images.js';
+import {
+  IMAGE_SOURCE_LIMIT,
+  createVisibleImageHydrator,
+  forgetImage,
+  getImage,
+  hydrateImages,
+  imageState,
+  imageSources,
+  preloadImage,
+} from '../src/label/images.js';
+import { createEditor } from '../src/editor/controller.js';
 
 /**
  * Minimal Image stand-in: a source containing "broken" fails to decode, one
@@ -138,4 +148,56 @@ test('a hidden image is not decoded at all', async () => {
   FakeImage.created = [];
   assert.equal(await hydrateImages({ elements: [{ type: 'image', src: 'hidden-only.png', visible: false }] }), 0);
   assert.deepEqual(FakeImage.created, []);
+});
+
+/* ---------------- hydration fixed point and the 17th image (P2a) ---------------- */
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('a 17-source document attempts each source once and then stops decoding', async () => {
+  FakeImage.created = [];
+  const sources = Array.from({ length: CONFIG.image.cacheLimit + 1 }, (_, index) => `fixed-${index}.png`);
+  const document = { elements: sources.map((src) => ({ type: 'image', src })) };
+  const hydrateVisible = createVisibleImageHydrator();
+
+  let started = hydrateVisible(document);
+  assert.equal(started, sources.length, 'the first pass starts every missing source');
+  await settle();
+  for (let pass = 0; pass < 20; pass++) started += hydrateVisible(document);
+
+  assert.equal(started, sources.length, 'no later pass starts a decode for the same document');
+  assert.equal(FakeImage.created.length, sources.length, 'each source was decoded exactly once');
+  assert.equal(hydrateVisible(document), 0, 'the fixed point is zero new decodes');
+});
+
+test('sixteen images hydrate and reach the same zero-decode fixed point', async () => {
+  FakeImage.created = [];
+  const sources = Array.from({ length: CONFIG.image.cacheLimit }, (_, index) => `settled-${index}.png`);
+  const document = { elements: sources.map((src) => ({ type: 'image', src })) };
+  const hydrateVisible = createVisibleImageHydrator();
+
+  assert.equal(hydrateVisible(document), sources.length);
+  await settle();
+  for (let pass = 0; pass < 10; pass++) assert.equal(hydrateVisible(document), 0);
+  assert.equal(FakeImage.created.length, sources.length);
+  for (const src of sources) assert.equal(imageState(src), 'ready', `${src} remains cached`);
+});
+
+test('the editor refuses the 17th distinct image before insertion with the print limit', () => {
+  const editor = createEditor({ document: { version: 4, lengthMm: 40, copies: 1, elements: [] } });
+  const sources = Array.from({ length: IMAGE_SOURCE_LIMIT }, (_, index) => `editor-image-${index}.png`);
+  for (const src of sources) assert.ok(editor.addElement('image', { src }), `${src} is accepted`);
+
+  assert.equal(editor.document.elements.length, IMAGE_SOURCE_LIMIT);
+  assert.equal(editor.addElement('image', { src: 'editor-image-17.png' }), null, 'the 17th is refused');
+  assert.equal(editor.document.elements.length, IMAGE_SOURCE_LIMIT, 'nothing was inserted');
+  const notice = editor.document.notices.at(-1);
+  assert.match(notice, new RegExp(`at most ${IMAGE_SOURCE_LIMIT} different images`));
+  assert.match(notice, /uses 17/);
+  assert.equal(
+    editor.addElement('image', { src: sources[0] }).src,
+    sources[0],
+    'reusing an existing source does not consume a new slot'
+  );
+  assert.deepEqual(imageSources(editor.document).slice(0, IMAGE_SOURCE_LIMIT), sources);
 });

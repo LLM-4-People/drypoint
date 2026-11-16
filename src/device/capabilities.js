@@ -10,6 +10,13 @@ import { modelFor } from '../protocol/models.js';
 
 const reported = (value) => value !== null && value !== undefined;
 
+/**
+ * A reported resolution is usable only inside the supported printer range.
+ * A hostile `0xFFFF` would otherwise become 2580 dots/mm and a 516k-row
+ * raster for a 200 mm label; an invalid report is treated as absent.
+ */
+const usableDpi = (value) => Number.isFinite(value) && value > 0 && value <= CONFIG.geometry.maxDpi;
+
 /** Human names for the `source` groups, so the UI never prints internal keys. */
 export const CAPABILITY_GROUP_LABELS = Object.freeze({
   model: 'Model',
@@ -169,7 +176,14 @@ export function mergeCapabilities({ heartbeat, advanced, capabilities, statusDat
   const model = info.model ?? prior.model ?? modelFor(info.deviceType).name;
   const modelSupport = info.modelSupport ?? prior.modelSupport ?? null;
   const task = info.task ?? prior.task ?? null;
-  const dpi = capabilities?.dpi ?? heartbeat?.dpi ?? prior.dpi;
+  // The TLV is preferred, but a value outside the printer's range is not a
+  // resolution: keep a usable heartbeat class if there is one, otherwise the
+  // dpi is absent and the geometry is a guess. A hostile value must never
+  // reach `pitchFor`.
+  const reportedDpis = [capabilities?.dpi, heartbeat?.dpi].filter(reported);
+  const reportedDpi = reportedDpis.find(usableDpi) ?? null;
+  const invalidDpi = reportedDpis.length > 0 && reportedDpi === null;
+  const dpi = reportedDpi ?? (reportedDpis.length ? null : prior.dpi);
   const maxPrintHeightPx = capabilities?.maxPrintHeightPx ?? null;
   // A reported maximum below the shortest label the app can author is not a
   // usable limit: keep what the previous pass or the defaults established.
@@ -182,9 +196,11 @@ export function mergeCapabilities({ heartbeat, advanced, capabilities, statusDat
 
   const source = {
     model: reported(info.model) ? 'reported' : prior.source.model,
-    // The gate's "reported" fact is the head width: a known dpi with a
-    // fallback 96-dot head is still a guessed label width.
-    geometry: reportedHeadWidth !== null ? 'reported' : prior.source.geometry,
+    // The gate's "reported" fact is the head width plus a usable resolution:
+    // a known dpi with a fallback 96-dot head is still a guessed label width,
+    // and a hostile dpi leaves the pitch unknown even when the head width was
+    // reported.
+    geometry: invalidDpi ? 'default' : reportedHeadWidth !== null ? 'reported' : prior.source.geometry,
     density: reported(capabilities?.densityRange) || reported(info.density) ? 'reported' : prior.source.density,
     labelType: capabilities?.labelTypes?.length || reported(info.labelType) ? 'reported' : prior.source.labelType,
     battery: battery ? 'reported' : prior.source.battery,

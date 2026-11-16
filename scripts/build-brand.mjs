@@ -19,12 +19,14 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const BRAND_FILE = 'brand.json';
+export const PACKAGE_FILE = 'package.json';
 
 /** One declaration of every generated surface. */
 export const OUTPUTS = Object.freeze({
   manifest: 'manifest.webmanifest',
   strings: 'android/app/src/main/res/values/strings.xml',
   module: 'src/core/brand.js',
+  version: 'src/core/version.js',
   icon: 'assets/icon.svg',
 });
 
@@ -123,6 +125,16 @@ export function renderBrandModule(brand) {
   return `// ${HEADER}\nexport const BRAND = Object.freeze({\n${fields}\n});\n`;
 }
 
+/**
+ * `src/core/version.js`: package.json is the one version owner. The app imports
+ * the generated constant instead of keeping a second handwritten literal.
+ */
+export function renderVersionModule(version) {
+  const text = String(version ?? '');
+  if (!/^\d+\.\d+\.\d+$/.test(text)) throw new Error(`package.json version is not MAJOR.MINOR.PATCH: ${JSON.stringify(text)}`);
+  return `// ${HEADER}\nexport const APP_VERSION = ${JSON.stringify(text)};\n`;
+}
+
 /** The web app manifest, with colours taken from the CSS theme owner. */
 export function renderWebManifest(brand, { background, theme }) {
   return `${JSON.stringify(
@@ -167,12 +179,13 @@ export function readThemeColor(css) {
   return value;
 }
 
-/** Render every generated surface from the authored brand and the theme. */
-export function renderAll(brand, { background = '#08080a' } = {}) {
+/** Render every generated surface from the authored brand, version and theme. */
+export function renderAll(brand, { background = '#08080a', version } = {}) {
   return {
     [OUTPUTS.manifest]: assertNoPlaceholders(OUTPUTS.manifest, renderWebManifest(brand, { background, theme: background })),
     [OUTPUTS.strings]: assertNoPlaceholders(OUTPUTS.strings, renderStringsXml(brand)),
     [OUTPUTS.module]: assertNoPlaceholders(OUTPUTS.module, renderBrandModule(brand)),
+    [OUTPUTS.version]: assertNoPlaceholders(OUTPUTS.version, renderVersionModule(version)),
     [OUTPUTS.icon]: assertNoPlaceholders(OUTPUTS.icon, renderIconSvg(brand)),
   };
 }
@@ -188,9 +201,14 @@ async function readExisting(file) {
 
 /** Build every generated file in memory from the current sources. */
 export async function buildBrand() {
-  const brand = parseBrand(await readFile(join(ROOT, BRAND_FILE), 'utf8'));
-  const css = await readFile(join(ROOT, 'assets', 'app.css'), 'utf8');
-  return { brand, files: renderAll(brand, { background: readThemeColor(css) }) };
+  const [brandText, packageText, css] = await Promise.all([
+    readFile(join(ROOT, BRAND_FILE), 'utf8'),
+    readFile(join(ROOT, PACKAGE_FILE), 'utf8'),
+    readFile(join(ROOT, 'assets', 'app.css'), 'utf8'),
+  ]);
+  const brand = parseBrand(brandText);
+  const version = JSON.parse(packageText).version;
+  return { brand, version, files: renderAll(brand, { background: readThemeColor(css), version }) };
 }
 
 /** Compare every generated file on disk with the renderer. Never writes. */
