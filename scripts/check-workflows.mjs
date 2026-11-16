@@ -97,6 +97,11 @@ export const GATE_COMMANDS = Object.freeze({
       'git diff --exit-code',
       'test -z "$(git status --porcelain)"',
     ]),
+    policy: Object.freeze([
+      'npm ci',
+      'node scripts/check-workflows.mjs --workflows "$PR_TREE/.github/workflows"',
+      'node scripts/check-privacy.mjs --root "$PR_TREE"',
+    ]),
     required: Object.freeze(['node scripts/check-required.mjs']),
   }),
 });
