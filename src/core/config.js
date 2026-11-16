@@ -194,9 +194,11 @@ export const CONFIG = deepFreeze({
       unsupported: 'This app prints 12 mm labels on the NIIMBOT D110 family; no frame was sent.',
       unknownModel: 'Unknown model: the printer did not report a model this app knows; no frame was sent and printing is disabled.',
       // Both facts make a label width real: the head width and the dots per mm
-      // that turn millimetres into dots. Either one missing leaves the size a
-      // guess, so the message names both rather than blaming the head alone.
-      guessedGeometry: 'The printer did not report its head width and resolution, so the label size is a guess; no frame was sent and printing is disabled.',
+      // that turn millimetres into dots. The gate picks the message for the
+      // fact the printer actually withheld; this one is the both-missing case.
+      guessedGeometry: 'The printer did not report enough geometry to size the label (a head width and a usable resolution), so the label size is a guess; no frame was sent and printing is disabled.',
+      missingHeadWidth: 'The printer did not report its head width, so the label size is a guess; no frame was sent and printing is disabled.',
+      missingResolution: 'The printer did not report a usable resolution, so the label size is a guess; no frame was sent and printing is disabled.',
       experimental: 'This model is experimental: the D110M V4 sequence is verified on the D110_M, not on this printer.',
     },
   },

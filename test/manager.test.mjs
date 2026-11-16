@@ -1314,7 +1314,7 @@ test('every mutating command is gated before a frame: allowed models run, blocke
     { label: 'D11_H', code: 0x0210, allowed: true },
     { label: 'B1', code: 0x1000, allowed: false, reason: /B1 is not supported[\s\S]*no frame was sent/ },
     { label: 'unknown', code: 0x1234, allowed: false, reason: /did not report a model[\s\S]*no frame was sent/i },
-    { label: 'guessed head', code: 0x0910, guessedHead: true, allowed: false, reason: /did not report its head width and resolution[\s\S]*no frame was sent/ },
+    { label: 'guessed head', code: 0x0910, guessedHead: true, allowed: false, reason: /did not report its head width[\s\S]*no frame was sent/ },
   ];
   for (const entry of cases) {
     const { fake, manager } = managerForModel(entry.code, { guessedHead: entry.guessedHead });
@@ -1364,7 +1364,7 @@ test('a model or geometry refused print sends zero frames and runs no discovery'
   for (const entry of [
     { label: 'B1', code: 0x1000, reason: /B1 is not supported/ },
     { label: 'unknown', code: 0x1234, reason: /did not report a model/i },
-    { label: 'guessed head', code: 0x0910, guessedHead: true, reason: /did not report its head width and resolution/ },
+    { label: 'guessed head', code: 0x0910, guessedHead: true, reason: /did not report its head width/ },
   ]) {
     const { fake, manager } = managerForModel(entry.code, { guessedHead: entry.guessedHead });
     await manager.connect();

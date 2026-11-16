@@ -119,6 +119,6 @@ test('a forged reported geometry cannot keep a hostile dpi on screen', (t) => {
     info: { deviceType: 0x0910, model: 'D110_M', modelSupport: 'confirmed' },
   });
   assert.equal(merged.dpi, null, 'an invalid TLV dpi is not a report');
-  assert.equal(printBlockReason(merged), CONFIG.device.printGate.guessedGeometry);
+  assert.equal(printBlockReason(merged), CONFIG.device.printGate.missingResolution);
   assert.equal(mergeCapabilities({ capabilities: { dpi: 65535, headWidthPx: 96 }, heartbeat: { dpi: 203 } }).dpi, 203, 'a usable class still answers');
 });

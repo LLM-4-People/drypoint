@@ -210,7 +210,7 @@ test('a 0 or 65535 head report is not geometry and blocks as a guess', () => {
     const merged = printable({ capabilities: { headWidthPx: head, dpi: 200 }, heartbeat });
     assert.equal(merged.source.geometry, 'default', `${head}: a malformed head is not a report`);
     assert.equal(merged.headWidthPx, CONFIG.geometry.widthPx, `${head}: the fallback width is used`);
-    assert.equal(printBlockReason(merged), CONFIG.device.printGate.guessedGeometry);
+    assert.equal(printBlockReason(merged), CONFIG.device.printGate.missingHeadWidth);
   }
 });
 

@@ -552,29 +552,34 @@ export function migrateDocument(input) {
     return validateDocument(input);
   }
   const headWidthPx = geometry().widthPx;
+  // A v3 label with anything but an element list is corrupt, not empty: the
+  // same refusal the current format gives, so storage quarantines it and the
+  // import refuses it instead of replacing the only copy with a blank label.
+  if (!Array.isArray(input.elements)) throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
   // One malformed entry must cost that entry, not the whole label: the map
   // below cannot rotate null, a number or an array. An unknown element type is
   // dropped for the same reason and counted in the same notice: the current
   // model has no way to paint it.
   const knownType = (element) => Object.values(ELEMENT_TYPES).includes(element.type);
-  const source = Array.isArray(input.elements) ? input.elements : [];
+  const source = input.elements;
   const notices = Array.isArray(input.notices) ? [...input.notices] : [];
-  if (input.elements !== undefined && !Array.isArray(input.elements)) {
-    notices.push('The saved label had no element list, so it was loaded with no elements.');
-  }
   const valid = source.filter((element) => element && typeof element === 'object' && !Array.isArray(element) && knownType(element));
   const dropped = source.length - valid.length;
   const elements = valid.map((element) => {
-    const x = finite(element.x, 0);
-    const y = finite(element.y, 0);
-    const w = finite(element.w, 8);
-    const h = finite(element.h, 8);
+    // An unusable coordinate is carried through the rotation, not pre-cleaned
+    // into a default: validateDocument is the one bounds owner and names the
+    // field it replaces. `usableNumber` only converts what a coordinate may
+    // be, so a numeric string still rotates exactly.
+    const x = usableNumber(element.x);
+    const y = usableNumber(element.y);
+    const w = usableNumber(element.w);
+    const h = usableNumber(element.h);
     return {
       ...element,
-      x: y,
-      y: headWidthPx - x - w,
-      w: h,
-      h: w,
+      x: y ?? element.y,
+      y: headWidthPx - (x ?? Number.NaN) - (w ?? Number.NaN),
+      w: h ?? element.h,
+      h: w ?? element.w,
       rotation: (finite(element.rotation, 0) + 270) % 360,
     };
   });

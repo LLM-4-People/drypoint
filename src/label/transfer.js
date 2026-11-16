@@ -77,6 +77,28 @@ export function documentFilename(name, at = Date.now()) {
  * @param {string} text the file contents
  * @returns {{document: object, notices: string[]}}
  */
+/** The longest untrusted token a message may quote. */
+const FORMAT_EXCERPT_CHARS = 24;
+
+/**
+ * Quote a bounded, escaped excerpt of an untrusted value for a message.
+ *
+ * A message is a toast and a log line. JSON.parse happily yields a 1 MB
+ * `format`, and echoing it whole produced a 1,000,073-character toast. The
+ * excerpt keeps the value recognisable, the message short, and JSON quoting
+ * escapes newlines and controls. Objects are stringified rather than coerced,
+ * so a value with a null `toString` cannot throw inside the error path.
+ *
+ * @param {unknown} value
+ * @param {number} [limit] maximum quoted source characters
+ * @returns {string}
+ */
+function quotedExcerpt(value, limit = FORMAT_EXCERPT_CHARS) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+  const head = text.slice(0, limit);
+  return `${JSON.stringify(head)}${text.length > limit ? '…' : ''}`;
+}
+
 export function parseDocument(text) {
   if (typeof text !== 'string') throw new Error('That label file could not be read.');
   // UTF-8 bytes are never fewer than UTF-16 code units, so this rejects the
@@ -97,7 +119,7 @@ export function parseDocument(text) {
     throw new Error(`That file is not a ${CONFIG.app.name} label document.`);
   }
   if (envelope.format !== TRANSFER_FORMAT) {
-    const found = typeof envelope.format === 'string' ? JSON.stringify(envelope.format) : 'missing';
+    const found = envelope.format === undefined ? 'missing' : quotedExcerpt(envelope.format);
     throw new Error(
       `That file is not a ${CONFIG.app.name} label: its format is ${found}, expected ${JSON.stringify(TRANSFER_FORMAT)}.`
     );

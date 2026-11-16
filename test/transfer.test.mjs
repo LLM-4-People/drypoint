@@ -273,3 +273,33 @@ test('the export filename is timestamped and bridge-safe', () => {
     assert.ok(!filename.split('.').includes('..'), 'no parent-directory segment');
   }
 });
+
+test('an untrusted format is quoted as a bounded, escaped excerpt', () => {
+  // Triple-check Low: a 1 MB `format` was echoed whole into the error, which
+  // becomes a toast and a log line. The one excerpt owner keeps the message
+  // short, keeps a normal wrong format recognisable, and cannot throw on a
+  // hostile value (an object with a null toString).
+  const document = validateDocument({ lengthMm: 40, elements: [] });
+  const attempt = (format) => {
+    try {
+      parseDocument(JSON.stringify({ format, version: CONFIG.app.documentVersion, document }));
+      return null;
+    } catch (error) {
+      return error.message;
+    }
+  };
+
+  const huge = attempt('x'.repeat(1_000_000));
+  assert.ok(huge.length < 300, `the message is bounded (${huge.length} chars)`);
+  assert.match(huge, /its format is "x{24}"…/);
+
+  const normal = attempt('other-app');
+  assert.match(normal, /its format is "other-app"/, 'a normal wrong format is still named');
+
+  const hostile = attempt({ toString: null });
+  assert.ok(hostile.length < 300, `an object format is bounded (${hostile.length} chars)`);
+  assert.match(hostile, /its format is "\{\\"toString\\":null\}"/);
+
+  const missing = attempt(undefined);
+  assert.match(missing, /its format is missing/);
+});

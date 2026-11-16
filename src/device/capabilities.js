@@ -131,6 +131,10 @@ export function emptyCapabilities() {
     /** 'reported' when the printer answered, 'default' when the value is a guess. */
     source: {
       model: 'default',
+      // The gate's two geometry facts are marked separately so a refusal can
+      // name the one the printer withheld. `geometry` is the combined claim.
+      headWidth: 'default',
+      dpi: 'default',
       geometry: 'default',
       density: 'default',
       labelType: 'default',
@@ -198,6 +202,8 @@ export function mergeCapabilities({ heartbeat, advanced, capabilities, statusDat
     // must not claim to be reported and the gate must refuse to print. A
     // previously reported dpi counts (it is the same session's printer), and a
     // hostile dpi stays a default even with a usable head.
+    headWidth: reportedHeadWidth !== null ? 'reported' : prior.source.headWidth,
+    dpi: invalidDpi ? 'default' : reportedDpi !== null ? 'reported' : prior.source.dpi,
     geometry:
       invalidDpi || dpi === null
         ? 'default'
@@ -350,7 +356,21 @@ export function supportGate(capabilities, { requiresPaper = true, action = 'prin
     return blocked(`${capabilities?.model ?? 'This printer'} is not supported. ${CONFIG.device.printGate.unsupported}`, 'model');
   }
   if (!capabilities?.model || support === 'unknown') return blocked(CONFIG.device.printGate.unknownModel, 'model');
-  if (capabilities?.source?.geometry !== 'reported') return blocked(CONFIG.device.printGate.guessedGeometry, 'geometry');
+  if (capabilities?.source?.geometry !== 'reported') {
+    // Name the fact the printer withheld. A dpi-only report is not a missing
+    // resolution, and a head-only report is not a missing head width; only the
+    // both-missing case uses the general sentence.
+    const marks = capabilities?.source ?? {};
+    const headMissing = marks.headWidth !== 'reported';
+    const dpiMissing = marks.dpi !== 'reported';
+    const reason =
+      headMissing && dpiMissing
+        ? CONFIG.device.printGate.guessedGeometry
+        : headMissing
+          ? CONFIG.device.printGate.missingHeadWidth
+          : CONFIG.device.printGate.missingResolution;
+    return blocked(reason, 'geometry');
+  }
   if (!requiresPaper) return allowed;
   const words = PAPER_ACTIONS[action] ?? PAPER_ACTIONS.print;
   const sensors = capabilities?.sensors;

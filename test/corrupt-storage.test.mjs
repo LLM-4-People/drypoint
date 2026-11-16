@@ -120,3 +120,30 @@ test('a truncated stored label is quarantined the same way', async (t) => {
     assert.match(state.text, /could not be read/);
   });
 });
+
+test('a v3 label with a non-array element list is quarantined, not blanked', async (t) => {
+  // Triple-check Low: the v3 migration used to turn this into an empty label,
+  // so the next edit overwrote the only copy. It is a shape error now, and the
+  // same banner and write veto apply.
+  const V3_INVALID = '{"version":3,"lengthMm":40,"elements":"nope"}';
+  await withPage(t, async ({ cdp, port }) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 900, deviceScaleFactor: 1, mobile: false });
+    await openApp(cdp, port);
+
+    const state = await seedAndReload(cdp, port, V3_INVALID);
+    assert.equal(state.raw, V3_INVALID, 'the raw v3 value is kept exactly');
+    assert.equal(state.visible, true, 'the quarantine banner is shown');
+    assert.match(state.text, /could not be read/);
+    assert.match(state.text, /until you reset the label/);
+
+    const afterEdit = await cdp.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const name = document.querySelector('#docName');
+      name.value = 'Edited while unreadable v3';
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(500);
+      return localStorage.getItem(${JSON.stringify(KEY)});
+    })()`);
+    assert.equal(afterEdit, V3_INVALID, 'an edit cannot overwrite the quarantined v3 value');
+  });
+});

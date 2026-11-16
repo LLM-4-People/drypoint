@@ -33,12 +33,12 @@ Chromium is discovered from `D110_CHROME`, then `CHROME_PATH`, then
 browser cache.
 
 <!-- generated:suites -->
-The browser leg runs **19 tests in 12 files**:
+The browser leg runs **20 tests in 12 files**:
 
 - `accessibility.test.mjs` (2 tests)
 - `actionbar-clearance.test.mjs` (1 test)
 - `content-security.test.mjs` (2 tests)
-- `corrupt-storage.test.mjs` (2 tests)
+- `corrupt-storage.test.mjs` (3 tests)
 - `deep-link.test.mjs` (1 test)
 - `document-transfer.test.mjs` (1 test)
 - `image-hydration.test.mjs` (1 test)

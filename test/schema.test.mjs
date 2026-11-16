@@ -13,6 +13,7 @@ import {
   exceedsPrinterLimits,
   documentWidthPx,
   validateDocument,
+  hydrateStoredDocument,
   migrateDocument,
 } from '../src/label/schema.js';
 import { TEMPLATES } from '../src/label/templates.js';
@@ -623,13 +624,24 @@ test('legacy migration counts unknown element types as dropped, not silently', (
   assert.ok(migrated.notices.some((notice) => /2 legacy elements were dropped because they were not valid elements/.test(notice)));
 });
 
-test('a non-array legacy element list is reported instead of silently emptied', () => {
-  const migrated = migrateDocument({ version: 3, lengthMm: 40, elements: { type: 'text', text: 'x' } });
-  assert.deepEqual(migrated.elements, []);
-  assert.ok(migrated.notices.some((notice) => /had no element list, so it was loaded with no elements/.test(notice)));
-  // A document that simply has no elements key is not noise.
-  const empty = migrateDocument({ version: 3, lengthMm: 40 });
-  assert.equal(empty.notices, undefined);
+test('a v3 label without an element list is invalid, not an empty label', () => {
+  // Triple-check Low: the v3 path used to turn elements:"nope" (or a missing
+  // list) into a blank label. Storage then accepted it, and the next edit
+  // overwrote the only copy. It is the same shape error the current format
+  // gives, so the quarantine keeps the raw value.
+  for (const elements of [{ type: 'text', text: 'x' }, 'nope', 7, null, undefined]) {
+    assert.throws(
+      () => migrateDocument({ version: 3, lengthMm: 40, elements }),
+      /no valid element list/,
+      JSON.stringify(elements)
+    );
+    assert.throws(() => hydrateStoredDocument({ version: 3, lengthMm: 40, elements }), /no valid element list/);
+  }
+  // An explicit empty list is a real empty label and still migrates.
+  const empty = migrateDocument({ version: 3, lengthMm: 40, elements: [] });
+  assert.deepEqual(empty.elements, []);
+  assert.equal(empty.version, CONFIG.app.documentVersion);
+  assert.equal(empty.notices, undefined, 'an empty list is not a notice');
 });
 
 test('a label saved by a newer version says so instead of being coerced silently', () => {
@@ -676,4 +688,27 @@ test('the migration owner refuses a non-object root instead of inventing a label
   assert.equal(migrateDocument({ lengthMm: 40, elements: [] }).elements.length, 0);
   assert.equal(migrateDocument({ version: 3, lengthMm: 40, elements: [] }).version, CONFIG.app.documentVersion);
   assert.equal(migrateDocument({ version: CONFIG.app.documentVersion + 1, lengthMm: 40, elements: [] }).elements.length, 0);
+});
+
+
+test('v3 hostile geometry is bounded with the current path’s one notice', () => {
+  // Triple-check Low: the v3 map pre-cleaned NaN/Infinity into defaults, so the
+  // bounds owner never saw them and the operator lost the notice the current
+  // format emits. The rotated values now reach validateDocument unchanged when
+  // unusable, and the one notice owner names the fields.
+  const migrated = migrateDocument({
+    version: 3,
+    lengthMm: 40,
+    elements: [{ type: 'text', x: Number.NaN, y: Number.POSITIVE_INFINITY, w: -5, h: 0, text: 'Hi' }],
+  });
+  assert.equal(migrated.notices.length, 1, 'exactly one geometry notice');
+  assert.match(migrated.notices[0], /position or size values were not usable numbers and were replaced/);
+  assert.match(migrated.notices[0], /\(x, y\)/);
+  for (const field of ['x', 'y', 'w', 'h']) {
+    assert.ok(Number.isFinite(migrated.elements[0][field]), `${field} is bounded`);
+    assert.ok(migrated.elements[0][field] >= 0, `${field} is not negative`);
+  }
+  // The current-format path is unchanged: same notice, same boundary.
+  const current = validateDocument({ lengthMm: 40, elements: [{ type: 'text', x: Number.NaN, y: Number.POSITIVE_INFINITY }] });
+  assert.deepEqual(current.notices, migrated.notices, 'one notice owner for both paths');
 });
