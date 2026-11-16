@@ -272,147 +272,473 @@ export const CHECKS_STEPS = Object.freeze({
 
 export const RELEASE_JOBS_STEPS = Object.freeze({
   resolve: Object.freeze([
-  {
-    "name": "Checkout main with tags",
-    "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-    "with": {
-      "ref": "main",
-      "fetch-depth": 0,
-      "fetch-tags": true,
-      "persist-credentials": false
-    }
-  },
-  {
-    "name": "Resolve the tag",
-    "id": "tag",
-    "env": {
-      "EVENT": "${{ github.event_name }}",
-      "INPUT_TAG": "${{ inputs.tag }}",
-      "RUN_SHA": "${{ github.event.workflow_run.head_sha }}",
-      "INPUT_PUBLISH": "${{ inputs.publish }}"
+    {
+      "name": "Checkout main with tags",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "ref": "main",
+        "fetch-depth": 0,
+        "fetch-tags": true,
+        "persist-credentials": false
+      }
     },
-    "run": "set -euo pipefail\nout() { printf '%s\\n' \"$1\" >> \"$GITHUB_OUTPUT\"; }\n\nif [ \"$EVENT\" = workflow_dispatch ]; then\n  input=\"$INPUT_TAG\"\n  # A full SHA is the pre-tag dry run: the commit is built and signed,\n  # but a synthetic tag name is never treated as a real tag.\n  if [[ \"$input\" =~ ^[0-9a-f]{40}$ ]]; then\n    if [ \"$INPUT_PUBLISH\" = true ]; then\n      echo \"::error::publish=true requires a release tag, not the commit $input; a SHA dry run never publishes\"\n      exit 1\n    fi\n    if ! git cat-file -e \"${input}^{commit}\" 2>/dev/null; then\n      echo \"::error::commit $input does not exist in this repository\"\n      exit 1\n    fi\n    if ! git merge-base --is-ancestor \"$input\" origin/main; then\n      echo \"::error::$input is not an ancestor of origin/main\"\n      exit 1\n    fi\n    sha=\"$input\"\n    version=\"$(git show \"$sha:package.json\" | jq -r .version)\"\n    if ! [[ \"$version\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n      echo \"::error::package.json at $sha has no strict semantic version (got $version)\"\n      exit 1\n    fi\n    # The tag is the notes and version binding only; the commit is\n    # what gets checked out, and nothing is published.\n    tag=\"v$version\"\n    ref=\"$sha\"\n    publish=false\n  elif [[ \"$input\" =~ ^[0-9a-f]{7,39}$ ]]; then\n    echo \"::error::commit $input is not a full 40-character SHA; pass the full SHA for a dry run\"\n    exit 1\n  else\n    tag=\"$input\"\n    if ! [[ \"$tag\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n      echo \"::error::$tag is not a strict release tag or a full 40-character commit SHA\"\n      exit 1\n    fi\n    if ! git rev-parse --verify --quiet \"refs/tags/$tag\" > /dev/null; then\n      echo \"::error::tag $tag does not exist\"\n      exit 1\n    fi\n    sha=\"$(git rev-list -n1 \"$tag\")\"\n    if ! git merge-base --is-ancestor \"$sha\" origin/main; then\n      echo \"::error::$sha is not an ancestor of origin/main\"\n      exit 1\n    fi\n    version=\"$(git show \"$tag:package.json\" | jq -r .version)\"\n    if [ \"$version\" != \"${tag#v}\" ]; then\n      echo \"::error::tag $tag does not match package.json version $version\"\n      exit 1\n    fi\n    ref=\"$tag\"\n    publish=\"$INPUT_PUBLISH\"\n  fi\nelse\n  # A tag that points at main HEAD produces two successful Checks\n  # runs for one commit (the branch push and the tag push). Deriving\n  # the tag from the commit makes both runs agree without depending\n  # on head_branch.\n  sha=\"$RUN_SHA\"\n  mapfile -t tags < <(git tag --points-at \"$sha\" | grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$' || true)\n  if [ \"${#tags[@]}\" -eq 0 ]; then\n    out \"publish=false\"\n    echo \"no release tag at $sha\"\n    exit 0\n  fi\n  if [ \"${#tags[@]}\" -ne 1 ]; then\n    echo \"::error::multiple release tags at $sha: ${tags[*]}\"\n    exit 1\n  fi\n  tag=\"${tags[0]}\"\n  if ! git merge-base --is-ancestor \"$sha\" origin/main; then\n    echo \"::error::$sha is not an ancestor of origin/main\"\n    exit 1\n  fi\n  version=\"$(git show \"$tag:package.json\" | jq -r .version)\"\n  if [ \"$version\" != \"${tag#v}\" ]; then\n    echo \"::error::tag $tag does not match package.json version $version\"\n    exit 1\n  fi\n  ref=\"$tag\"\n  publish=true\nfi\n\nout \"publish=$publish\"\nout \"tag=$tag\"\nout \"sha=$sha\"\nout \"version=$version\"\nout \"ref=$ref\"\n"
-  }
-]),
+    {
+      "name": "Resolve the tag",
+      "id": "tag",
+      "env": {
+        "EVENT": "${{ github.event_name }}",
+        "INPUT_TAG": "${{ inputs.tag }}",
+        "RUN_SHA": "${{ github.event.workflow_run.head_sha }}",
+        "INPUT_PUBLISH": "${{ inputs.publish }}"
+      },
+      "run": "set -euo pipefail\nout() { printf '%s\\n' \"$1\" >> \"$GITHUB_OUTPUT\"; }\n\nif [ \"$EVENT\" = workflow_dispatch ]; then\n  input=\"$INPUT_TAG\"\n  # A full SHA is the pre-tag dry run: the commit is built and signed,\n  # but a synthetic tag name is never treated as a real tag.\n  if [[ \"$input\" =~ ^[0-9a-f]{40}$ ]]; then\n    if [ \"$INPUT_PUBLISH\" = true ]; then\n      echo \"::error::publish=true requires a release tag, not the commit $input; a SHA dry run never publishes\"\n      exit 1\n    fi\n    if ! git cat-file -e \"${input}^{commit}\" 2>/dev/null; then\n      echo \"::error::commit $input does not exist in this repository\"\n      exit 1\n    fi\n    if ! git merge-base --is-ancestor \"$input\" origin/main; then\n      echo \"::error::$input is not an ancestor of origin/main\"\n      exit 1\n    fi\n    sha=\"$input\"\n    version=\"$(git show \"$sha:package.json\" | jq -r .version)\"\n    if ! [[ \"$version\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n      echo \"::error::package.json at $sha has no strict semantic version (got $version)\"\n      exit 1\n    fi\n    # The tag is the notes and version binding only; the commit is\n    # what gets checked out, and nothing is published.\n    tag=\"v$version\"\n    ref=\"$sha\"\n    publish=false\n  elif [[ \"$input\" =~ ^[0-9a-f]{7,39}$ ]]; then\n    echo \"::error::commit $input is not a full 40-character SHA; pass the full SHA for a dry run\"\n    exit 1\n  else\n    tag=\"$input\"\n    if ! [[ \"$tag\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n      echo \"::error::$tag is not a strict release tag or a full 40-character commit SHA\"\n      exit 1\n    fi\n    if ! git rev-parse --verify --quiet \"refs/tags/$tag\" > /dev/null; then\n      echo \"::error::tag $tag does not exist\"\n      exit 1\n    fi\n    sha=\"$(git rev-list -n1 \"$tag\")\"\n    if ! git merge-base --is-ancestor \"$sha\" origin/main; then\n      echo \"::error::$sha is not an ancestor of origin/main\"\n      exit 1\n    fi\n    version=\"$(git show \"$tag:package.json\" | jq -r .version)\"\n    if [ \"$version\" != \"${tag#v}\" ]; then\n      echo \"::error::tag $tag does not match package.json version $version\"\n      exit 1\n    fi\n    ref=\"$tag\"\n    publish=\"$INPUT_PUBLISH\"\n  fi\nelse\n  # A tag that points at main HEAD produces two successful Checks\n  # runs for one commit (the branch push and the tag push). Deriving\n  # the tag from the commit makes both runs agree without depending\n  # on head_branch.\n  sha=\"$RUN_SHA\"\n  mapfile -t tags < <(git tag --points-at \"$sha\" | grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$' || true)\n  if [ \"${#tags[@]}\" -eq 0 ]; then\n    out \"publish=false\"\n    echo \"no release tag at $sha\"\n    exit 0\n  fi\n  if [ \"${#tags[@]}\" -ne 1 ]; then\n    echo \"::error::multiple release tags at $sha: ${tags[*]}\"\n    exit 1\n  fi\n  tag=\"${tags[0]}\"\n  if ! git merge-base --is-ancestor \"$sha\" origin/main; then\n    echo \"::error::$sha is not an ancestor of origin/main\"\n    exit 1\n  fi\n  version=\"$(git show \"$tag:package.json\" | jq -r .version)\"\n  if [ \"$version\" != \"${tag#v}\" ]; then\n    echo \"::error::tag $tag does not match package.json version $version\"\n    exit 1\n  fi\n  ref=\"$tag\"\n  publish=true\nfi\n\nout \"publish=$publish\"\nout \"tag=$tag\"\nout \"sha=$sha\"\nout \"version=$version\"\nout \"ref=$ref\"\n"
+    }
+  ]),
+  build: Object.freeze([
+    {
+      "name": "Checkout main",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "ref": "main",
+        "fetch-depth": 0,
+        "fetch-tags": true,
+        "persist-credentials": false
+      }
+    },
+    {
+      "name": "Materialize the resolved commit",
+      "env": {
+        "REF": "${{ needs.resolve.outputs.ref }}"
+      },
+      "run": "set -euo pipefail\nworktree=\"$RUNNER_TEMP/release\"\ngit worktree add --detach \"$worktree\" \"$REF\"\nprintf 'RELEASE_TREE=%s\\n' \"$worktree\" >> \"$GITHUB_ENV\"\n"
+    },
+    {
+      "name": "Prove the worktree is the resolved commit",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "test \"$(git rev-parse HEAD)\" = \"$SHA\""
+    },
+    {
+      "name": "Use the pinned Node",
+      "uses": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+      "with": {
+        "node-version-file": "${{ env.RELEASE_TREE }}/.node-version"
+      }
+    },
+    {
+      "name": "Install the one dev-only dependency",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "npm ci"
+    },
+    {
+      "name": "Locate a Chromium binary",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "node scripts/find-chrome.mjs"
+    },
+    {
+      "name": "Gate the resolved tree",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "env": {
+        "CI": "true"
+      },
+      "run": "npm run verify:all"
+    },
+    {
+      "name": "Release notes from the changelog",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "mkdir -p dist"
+    },
+    {
+      "name": "Generate the notes",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "node scripts/release-notes.mjs --tag \"$TAG\" --commit \"$SHA\" --out dist/notes.md"
+    },
+    {
+      "name": "Use JDK 21",
+      "uses": "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
+    },
+    {
+      "name": "Install the pinned SDK packages",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "bash scripts/android-sdk.sh"
+    },
+    {
+      "name": "Create a throwaway signing key",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "node scripts/ci-keystore.mjs"
+    },
+    {
+      "name": "Build the unsigned APK with a throwaway key",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "npm run build:android"
+    },
+    {
+      "name": "Package the unsigned artifact",
+      "id": "package",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "set -euo pipefail\napk=\"android/build/drypoint-${VERSION}.apk\"\ntest -f \"$apk\"\ncp \"$apk\" \"dist/drypoint-${VERSION}-unsigned.apk\"\n(\n  cd dist\n  sha256sum \"drypoint-${VERSION}-unsigned.apk\" > \"drypoint-${VERSION}-unsigned.apk.sha256\"\n  cat \"drypoint-${VERSION}-unsigned.apk.sha256\"\n)\n# The job output is the digest of the exact bytes this step wrote.\n# The sign job compares its download against this value, so a\n# checksum shipped inside the same artifact cannot vouch for it.\nprintf 'unsigned_sha256=%s\\n' \"$(sha256sum \"dist/drypoint-${VERSION}-unsigned.apk\" | awk '{print $1}')\" >> \"$GITHUB_OUTPUT\"\n# Data for the sign job's independent package and certificate checks.\n# It is read with jq there, never executed. The version code and the\n# signing-scheme answer come from the one owner of each rule, not a\n# second copy in the sign job.\nnode scripts/build-android.mjs --version-code > dist/version-code.txt\nnode scripts/build-android.mjs --signing-scheme > dist/signing.json\ncp brand.json dist/brand.json\n"
+    },
+    {
+      "name": "Write the provenance predicate",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "node scripts/release-provenance.mjs --sha \"$SHA\" --tag \"$TAG\" --version \"$VERSION\" --out dist/provenance.json"
+    },
+    {
+      "name": "The build changed no tracked file",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "git diff --exit-code"
+    },
+    {
+      "name": "The build left no untracked file",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "test -z \"$(git status --porcelain)\""
+    },
+    {
+      "name": "The built APK matches its manifest and policy",
+      "working-directory": "${{ env.RELEASE_TREE }}",
+      "run": "set -euo pipefail\nnode scripts/check-apk.mjs \\\n  --apk \"dist/drypoint-${VERSION}-unsigned.apk\" \\\n  --aapt2 \"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2\" \\\n  --apksigner \"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner\"\n"
+    },
+    {
+      "name": "Upload the unsigned artifact",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "with": {
+        "name": "drypoint-unsigned",
+        "path": "${{ env.RELEASE_TREE }}/dist/*",
+        "if-no-files-found": "error",
+        "retention-days": 7
+      }
+    }
+  ]),
   sign: Object.freeze([
-  {
-    "name": "Download the unsigned artifact",
-    "uses": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
-    "with": {
-      "name": "drypoint-unsigned",
-      "path": "dist"
-    }
-  },
-  {
-    "name": "Use the gate-proved JDK",
-    "uses": "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880",
-    "with": {
-      "distribution": "temurin",
-      "java-version": "21"
-    }
-  },
-  {
-    "name": "Install the pinned build tools",
-    "run": "set -euo pipefail\nsdkmanager=\"$(command -v sdkmanager)\"\n\"$sdkmanager\" \"platforms;${ANDROID_PLATFORM}\" \"build-tools;${ANDROID_BUILD_TOOLS}\"\n"
-  },
-  {
-    "name": "Sign, verify and describe the APK",
-    "env": {
-      "ANDROID_KEYSTORE_BASE64": "${{ secrets.ANDROID_KEYSTORE_BASE64 }}",
-      "ANDROID_KEYSTORE_PASSWORD": "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}",
-      "ANDROID_KEYSTORE_KEY_PASSWORD": "${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}",
-      "ANDROID_KEY_ALIAS": "${{ vars.ANDROID_KEY_ALIAS }}"
+    {
+      "name": "Download the unsigned artifact",
+      "uses": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+      "with": {
+        "name": "drypoint-unsigned",
+        "path": "dist"
+      }
     },
-    "run": "set -euo pipefail\ntools=\"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS\"\nunsigned=\"dist/drypoint-${VERSION}-unsigned.apk\"\nsigned=\"dist/drypoint-${VERSION}.apk\"\nnotes=\"dist/notes.md\"\nbrand=\"dist/brand.json\"\ntrap 'rm -f \"$RUNNER_TEMP/release.jks\" \"$RUNNER_TEMP/ks-pass\" \"$RUNNER_TEMP/key-pass\" \"$RUNNER_TEMP/signed.apk\"' EXIT\n\n( cd dist && sha256sum -c \"drypoint-${VERSION}-unsigned.apk.sha256\" )\ntest -f \"$notes\"\ntest -f \"$brand\"\n# The build wrote both answers from their one owners: the versionCode\n# arithmetic in build-android.mjs and the manifest's minSdk. The sign\n# job reads them with jq/cat, never re-derives them.\ntest -f dist/version-code.txt\ntest -f dist/signing.json\nexpected_version_code=\"$(cat dist/version-code.txt)\"\nmin_sdk=\"$(jq -r .minSdkVersion dist/signing.json)\"\nv1_signing=\"$(jq -r .v1SigningEnabled dist/signing.json)\"\nif ! [[ \"$expected_version_code\" =~ ^[0-9]+$ ]] || ! [[ \"$min_sdk\" =~ ^[0-9]+$ ]] || ! [[ \"$v1_signing\" =~ ^(true|false)$ ]]; then\n  echo \"::error::the build did not publish a valid versionCode/signing scheme\"\n  exit 1\nfi\nif [ -z \"${EXPECTED_CERT:-}\" ]; then\n  echo \"::error::RELEASE_CERT_SHA256 is not pinned in the release environment\"\n  exit 1\nfi\nif [ -z \"${ANDROID_KEYSTORE_BASE64:-}\" ]; then\n  echo \"::error::ANDROID_KEYSTORE_BASE64 is not set; a release must be signed by the project key\"\n  exit 1\nfi\nprintf '%s' \"$ANDROID_KEYSTORE_BASE64\" | base64 --decode > \"$RUNNER_TEMP/release.jks\"\nprintf '%s' \"$ANDROID_KEYSTORE_PASSWORD\" > \"$RUNNER_TEMP/ks-pass\"\nprintf '%s' \"$ANDROID_KEYSTORE_KEY_PASSWORD\" > \"$RUNNER_TEMP/key-pass\"\nchmod 600 \"$RUNNER_TEMP/release.jks\" \"$RUNNER_TEMP/ks-pass\" \"$RUNNER_TEMP/key-pass\"\n\n\"$tools/apksigner\" sign \\\n  --ks \"$RUNNER_TEMP/release.jks\" \\\n  --ks-key-alias \"$ANDROID_KEY_ALIAS\" \\\n  --ks-pass \"file:$RUNNER_TEMP/ks-pass\" \\\n  --key-pass \"file:$RUNNER_TEMP/key-pass\" \\\n  --min-sdk-version \"$min_sdk\" \\\n  --v1-signing-enabled \"$v1_signing\" \\\n  --v2-signing-enabled true \\\n  --v3-signing-enabled true \\\n  --out \"$signed\" \\\n  \"$unsigned\"\n\nverify=\"$(\"$tools/apksigner\" verify --verbose --print-certs \"$signed\")\"\nprintf '%s\\n' \"$verify\"\nprintf '%s\\n' \"$verify\" | grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true'\nprintf '%s\\n' \"$verify\" | grep -F 'Verified using v3 scheme (APK Signature Scheme v3): true'\n\nsigner=\"$(printf '%s\\n' \"$verify\" | grep -oE 'Signer #1 certificate SHA-256 digest: [0-9a-f]{64}' | awk '{print $NF}')\"\nif [ \"$signer\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::the APK signer $signer is not the pinned $EXPECTED_CERT\"\n  exit 1\nfi\n# brand.json is repository data, read with jq and never executed. A\n# silent fingerprint drift must fail even when the key itself is\n# right, because the downloader reads this file.\nbrand_cert=\"$(jq -r .androidSigningCertificateSha256 \"$brand\")\"\nif [ \"$brand_cert\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::brand.json records $brand_cert, not the environment pin $EXPECTED_CERT\"\n  exit 1\nfi\nnotes_cert=\"$(grep -F 'Signing certificate SHA-256' \"$notes\" | grep -oE '[0-9a-f]{64}' | tail -1)\"\nif [ \"$notes_cert\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::the release notes name $notes_cert, not the environment pin $EXPECTED_CERT\"\n  exit 1\nfi\n\n\"$tools/zipalign\" -c -v 4 \"$signed\" > /dev/null\nbadging=\"$(\"$tools/aapt2\" dump badging \"$signed\")\"\npackage_id=\"$(jq -r .appId \"$brand\")\"\n# The exact package, versionCode and versionName — the same values\n# check-apk asserts against the unsigned artifact. A hard-coded\n# versionCode fails here even when it is positive.\nexpected_package=\"package: name='${package_id}' versionCode='${expected_version_code}' versionName='${VERSION}'\"\nif ! printf '%s\\n' \"$badging\" | grep -qF \"$expected_package\"; then\n  echo \"::error::the APK does not carry ${expected_package}\"\n  exit 1\nfi\nif printf '%s\\n' \"$badging\" | grep -q 'android.permission.INTERNET'; then\n  echo \"::error::the APK requests android.permission.INTERNET\"\n  exit 1\nfi\nlaunchers=\"$(printf '%s\\n' \"$badging\" | grep -c \"^launchable-activity: name='\")\"\nif [ \"$launchers\" -ne 1 ]; then\n  echo \"::error::the APK must have exactly one MAIN/LAUNCHER activity, found $launchers\"\n  exit 1\nfi\n\nxmltree=\"$(\"$tools/aapt2\" dump xmltree --file AndroidManifest.xml \"$signed\")\"\nprintf '%s\\n' \"$xmltree\" | grep -qE 'android:allowBackup\\([^)]*\\)=(false|\\(type 0x12\\)0x0)'\nif printf '%s\\n' \"$xmltree\" | grep -q 'android:debuggable'; then\n  echo \"::error::the APK is debuggable\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -q 'android:usesCleartextTraffic'; then\n  echo \"::error::the APK allows cleartext traffic\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -q 'android.permission.INTERNET'; then\n  echo \"::error::the manifest grants android.permission.INTERNET\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -qE 'E: (provider|service|receiver)( |$)'; then\n  echo \"::error::the APK declares a provider, service or receiver\"\n  exit 1\nfi\nactivities=\"$(printf '%s\\n' \"$xmltree\" | grep -cE 'E: activity( |$)')\"\nexported=\"$(printf '%s\\n' \"$xmltree\" | grep -cE 'android:exported\\([^)]*\\)=true')\"\nif [ \"$activities\" -ne 1 ] || [ \"$exported\" -ne 1 ]; then\n  echo \"::error::the APK must have one activity and one exported component (activities=$activities exported=$exported)\"\n  exit 1\nfi\nif ! printf '%s\\n' \"$xmltree\" | grep -q 'android.intent.action.MAIN'; then\n  echo \"::error::the launcher activity has no MAIN action\"\n  exit 1\nfi\nif ! printf '%s\\n' \"$xmltree\" | grep -q 'android.intent.category.LAUNCHER'; then\n  echo \"::error::the launcher activity has no LAUNCHER category\"\n  exit 1\nfi\n\n(\n  cd dist\n  sha256sum \"drypoint-${VERSION}.apk\" > \"drypoint-${VERSION}.apk.sha256\"\n  cat \"drypoint-${VERSION}.apk.sha256\"\n)\n"
-  },
-  {
-    "name": "Attest the signed APK",
-    "uses": "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
-    "with": {
-      "subject-path": "dist/drypoint-${{ needs.resolve.outputs.version }}.apk",
-      "predicate-type": "https://slsa.dev/provenance/v1",
-      "predicate-path": "dist/provenance.json"
-    }
-  },
-  {
-    "name": "Download the provenance bundle",
-    "env": {
-      "GH_TOKEN": "${{ github.token }}"
+    {
+      "name": "Use the gate-proved JDK",
+      "uses": "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
     },
-    "run": "set -euo pipefail\n# A dedicated empty directory: a file already in dist/ cannot be\n# selected instead of the bundle this run downloads.\nrm -rf dist/attest\nmkdir -p dist/attest\n(\n  cd dist/attest\n  gh attestation download \"drypoint-${VERSION}.apk\" -R \"$GITHUB_REPOSITORY\"\n)\nshopt -s nullglob\nfiles=(dist/attest/*.jsonl)\nif [ \"${#files[@]}\" -ne 1 ]; then\n  echo \"::error::gh attestation download wrote ${#files[@]} bundles; exactly one is required\"\n  exit 1\nfi\nmv \"${files[0]}\" \"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\ntest -f \"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\n"
-  },
-  {
-    "name": "Prove the provenance binds the tag commit",
-    "env": {
-      "GH_TOKEN": "${{ github.token }}"
+    {
+      "name": "Install the pinned build tools",
+      "run": "set -euo pipefail\nsdkmanager=\"$(command -v sdkmanager)\"\n\"$sdkmanager\" \"platforms;${ANDROID_PLATFORM}\" \"build-tools;${ANDROID_BUILD_TOOLS}\"\n"
     },
-    "run": "set -euo pipefail\nbundle=\"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\napk=\"dist/drypoint-${VERSION}.apk\"\napk_sha=\"$(sha256sum \"dist/drypoint-${VERSION}.apk\" | awk '{print $1}')\"\n# Verify the Sigstore bundle and the signer workflow before parsing\n# it. A forged unsigned JSON file planted in dist/ fails here.\ngh attestation verify \"$apk\" \\\n  --bundle \"$bundle\" \\\n  -R \"$GITHUB_REPOSITORY\" \\\n  --signer-workflow \"LLM-4-People/drypoint/.github/workflows/release.yml\" \\\n  --predicate-type \"https://slsa.dev/provenance/v1\"\n# The DSSE payload is the in-toto statement. At least one statement\n# for this exact APK digest must carry exactly one resolved\n# dependency and it must be the resolved commit. A prior dry run or\n# GitHub's automatic release attestation may add statements; they\n# cannot satisfy the binding unless they name this commit.\nif ! jq -es --arg sha \"$SHA\" --arg apk \"$apk_sha\" '\n  [ .[]\n    | (.dsseEnvelope.payload // .bundle.dsseEnvelope.payload // empty)\n    | select(. != null)\n    | @base64d | fromjson\n    | select(.subject[0].digest.sha256 == $apk)\n  ] as $statements\n  | ($statements | length) >= 1\n    and any($statements[];\n      (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies\n      | ($dependencies | length) == 1\n        and $dependencies[0].digest.gitCommit == $sha)\n' \"$bundle\" > /dev/null; then\n  echo \"::error::the provenance does not bind the signed APK to the resolved commit $SHA\"\n  exit 1\nfi\necho \"provenance binds $apk_sha to $SHA\"\n"
-  },
-  {
-    "name": "Upload the release files",
-    "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
-    "with": {
-      "name": "drypoint-release",
-      "path": "dist/drypoint-${{ needs.resolve.outputs.version }}.apk\ndist/drypoint-${{ needs.resolve.outputs.version }}.apk.sha256\ndist/drypoint-${{ needs.resolve.outputs.version }}.apk.intoto.jsonl\ndist/notes.md\n",
-      "if-no-files-found": "error",
-      "retention-days": 7
+    {
+      "name": "Sign, verify and describe the APK",
+      "env": {
+        "ANDROID_KEYSTORE_BASE64": "${{ secrets.ANDROID_KEYSTORE_BASE64 }}",
+        "ANDROID_KEYSTORE_PASSWORD": "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}",
+        "ANDROID_KEYSTORE_KEY_PASSWORD": "${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}",
+        "ANDROID_KEY_ALIAS": "${{ vars.ANDROID_KEY_ALIAS }}"
+      },
+      "run": "set -euo pipefail\ntools=\"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS\"\nunsigned=\"dist/drypoint-${VERSION}-unsigned.apk\"\nsigned=\"dist/drypoint-${VERSION}.apk\"\nnotes=\"dist/notes.md\"\nbrand=\"dist/brand.json\"\ntrap 'rm -f \"$RUNNER_TEMP/release.jks\" \"$RUNNER_TEMP/ks-pass\" \"$RUNNER_TEMP/key-pass\" \"$RUNNER_TEMP/signed.apk\"' EXIT\n\n# The build-exposed digest is the independent reference. The checksum\n# file in this artifact was written by the job that wrote the APK, so\n# it cannot detect a substituted APK; this value can.\nif [ -z \"${UNSIGNED_SHA256:-}\" ]; then\n  echo \"::error::the build did not expose the unsigned APK digest\"\n  exit 1\nfi\nunsigned_sha=\"$(sha256sum \"$unsigned\" | awk '{print $1}')\"\nif [ \"$unsigned_sha\" != \"$UNSIGNED_SHA256\" ]; then\n  echo \"::error::the downloaded APK $unsigned_sha is not the build's $UNSIGNED_SHA256\"\n  exit 1\nfi\ntest -f \"$notes\"\ntest -f \"$brand\"\n# The build wrote both answers from their one owners: the versionCode\n# arithmetic in build-android.mjs and the manifest's minSdk. The sign\n# job reads them with jq/cat, never re-derives them.\ntest -f dist/version-code.txt\ntest -f dist/signing.json\nexpected_version_code=\"$(cat dist/version-code.txt)\"\nmin_sdk=\"$(jq -r .minSdkVersion dist/signing.json)\"\nv1_signing=\"$(jq -r .v1SigningEnabled dist/signing.json)\"\nif ! [[ \"$expected_version_code\" =~ ^[0-9]+$ ]] || ! [[ \"$min_sdk\" =~ ^[0-9]+$ ]] || ! [[ \"$v1_signing\" =~ ^(true|false)$ ]]; then\n  echo \"::error::the build did not publish a valid versionCode/signing scheme\"\n  exit 1\nfi\nif [ -z \"${EXPECTED_CERT:-}\" ]; then\n  echo \"::error::RELEASE_CERT_SHA256 is not pinned in the release environment\"\n  exit 1\nfi\nif [ -z \"${ANDROID_KEYSTORE_BASE64:-}\" ]; then\n  echo \"::error::ANDROID_KEYSTORE_BASE64 is not set; a release must be signed by the project key\"\n  exit 1\nfi\nprintf '%s' \"$ANDROID_KEYSTORE_BASE64\" | base64 --decode > \"$RUNNER_TEMP/release.jks\"\nprintf '%s' \"$ANDROID_KEYSTORE_PASSWORD\" > \"$RUNNER_TEMP/ks-pass\"\nprintf '%s' \"$ANDROID_KEYSTORE_KEY_PASSWORD\" > \"$RUNNER_TEMP/key-pass\"\nchmod 600 \"$RUNNER_TEMP/release.jks\" \"$RUNNER_TEMP/ks-pass\" \"$RUNNER_TEMP/key-pass\"\n\n\"$tools/apksigner\" sign \\\n  --ks \"$RUNNER_TEMP/release.jks\" \\\n  --ks-key-alias \"$ANDROID_KEY_ALIAS\" \\\n  --ks-pass \"file:$RUNNER_TEMP/ks-pass\" \\\n  --key-pass \"file:$RUNNER_TEMP/key-pass\" \\\n  --min-sdk-version \"$min_sdk\" \\\n  --v1-signing-enabled \"$v1_signing\" \\\n  --v2-signing-enabled true \\\n  --v3-signing-enabled true \\\n  --out \"$signed\" \\\n  \"$unsigned\"\n\nverify=\"$(\"$tools/apksigner\" verify --verbose --print-certs \"$signed\")\"\nprintf '%s\\n' \"$verify\"\nprintf '%s\\n' \"$verify\" | grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true'\nprintf '%s\\n' \"$verify\" | grep -F 'Verified using v3 scheme (APK Signature Scheme v3): true'\n\nsigner=\"$(printf '%s\\n' \"$verify\" | grep -oE 'Signer #1 certificate SHA-256 digest: [0-9a-f]{64}' | awk '{print $NF}')\"\nif [ \"$signer\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::the APK signer $signer is not the pinned $EXPECTED_CERT\"\n  exit 1\nfi\n# brand.json is repository data, read with jq and never executed. A\n# silent fingerprint drift must fail even when the key itself is\n# right, because the downloader reads this file.\nbrand_cert=\"$(jq -r .androidSigningCertificateSha256 \"$brand\")\"\nif [ \"$brand_cert\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::brand.json records $brand_cert, not the environment pin $EXPECTED_CERT\"\n  exit 1\nfi\nnotes_cert=\"$(grep -F 'Signing certificate SHA-256' \"$notes\" | grep -oE '[0-9a-f]{64}' | tail -1)\"\nif [ \"$notes_cert\" != \"$EXPECTED_CERT\" ]; then\n  echo \"::error::the release notes name $notes_cert, not the environment pin $EXPECTED_CERT\"\n  exit 1\nfi\n\n\"$tools/zipalign\" -c -v 4 \"$signed\" > /dev/null\nbadging=\"$(\"$tools/aapt2\" dump badging \"$signed\")\"\npackage_id=\"$(jq -r .appId \"$brand\")\"\n# The exact package, versionCode and versionName — the same values\n# check-apk asserts against the unsigned artifact. A hard-coded\n# versionCode fails here even when it is positive.\nexpected_package=\"package: name='${package_id}' versionCode='${expected_version_code}' versionName='${VERSION}'\"\nif ! printf '%s\\n' \"$badging\" | grep -qF \"$expected_package\"; then\n  echo \"::error::the APK does not carry ${expected_package}\"\n  exit 1\nfi\nif printf '%s\\n' \"$badging\" | grep -q 'android.permission.INTERNET'; then\n  echo \"::error::the APK requests android.permission.INTERNET\"\n  exit 1\nfi\nlaunchers=\"$(printf '%s\\n' \"$badging\" | grep -c \"^launchable-activity: name='\")\"\nif [ \"$launchers\" -ne 1 ]; then\n  echo \"::error::the APK must have exactly one MAIN/LAUNCHER activity, found $launchers\"\n  exit 1\nfi\n\nxmltree=\"$(\"$tools/aapt2\" dump xmltree --file AndroidManifest.xml \"$signed\")\"\nprintf '%s\\n' \"$xmltree\" | grep -qE 'android:allowBackup\\([^)]*\\)=(false|\\(type 0x12\\)0x0)'\nif printf '%s\\n' \"$xmltree\" | grep -q 'android:debuggable'; then\n  echo \"::error::the APK is debuggable\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -q 'android:usesCleartextTraffic'; then\n  echo \"::error::the APK allows cleartext traffic\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -q 'android.permission.INTERNET'; then\n  echo \"::error::the manifest grants android.permission.INTERNET\"\n  exit 1\nfi\nif printf '%s\\n' \"$xmltree\" | grep -qE 'E: (provider|service|receiver)( |$)'; then\n  echo \"::error::the APK declares a provider, service or receiver\"\n  exit 1\nfi\nactivities=\"$(printf '%s\\n' \"$xmltree\" | grep -cE 'E: activity( |$)')\"\nexported=\"$(printf '%s\\n' \"$xmltree\" | grep -cE 'android:exported\\([^)]*\\)=true')\"\nif [ \"$activities\" -ne 1 ] || [ \"$exported\" -ne 1 ]; then\n  echo \"::error::the APK must have one activity and one exported component (activities=$activities exported=$exported)\"\n  exit 1\nfi\nif ! printf '%s\\n' \"$xmltree\" | grep -q 'android.intent.action.MAIN'; then\n  echo \"::error::the launcher activity has no MAIN action\"\n  exit 1\nfi\nif ! printf '%s\\n' \"$xmltree\" | grep -q 'android.intent.category.LAUNCHER'; then\n  echo \"::error::the launcher activity has no LAUNCHER category\"\n  exit 1\nfi\n\n(\n  cd dist\n  sha256sum \"drypoint-${VERSION}.apk\" > \"drypoint-${VERSION}.apk.sha256\"\n  cat \"drypoint-${VERSION}.apk.sha256\"\n)\n"
+    },
+    {
+      "name": "Attest the signed APK",
+      "uses": "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
+      "with": {
+        "subject-path": "dist/drypoint-${{ needs.resolve.outputs.version }}.apk",
+        "predicate-type": "https://slsa.dev/provenance/v1",
+        "predicate-path": "dist/provenance.json"
+      }
+    },
+    {
+      "name": "Download the provenance bundle",
+      "env": {
+        "GH_TOKEN": "${{ github.token }}"
+      },
+      "run": "set -euo pipefail\n# A dedicated empty directory: a file already in dist/ cannot be\n# selected instead of the bundle this run downloads.\nrm -rf dist/attest\nmkdir -p dist/attest\n(\n  cd dist/attest\n  gh attestation download \"drypoint-${VERSION}.apk\" -R \"$GITHUB_REPOSITORY\"\n)\nshopt -s nullglob\nfiles=(dist/attest/*.jsonl)\nif [ \"${#files[@]}\" -ne 1 ]; then\n  echo \"::error::gh attestation download wrote ${#files[@]} bundles; exactly one is required\"\n  exit 1\nfi\nmv \"${files[0]}\" \"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\ntest -f \"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\n"
+    },
+    {
+      "name": "Prove the provenance binds the tag commit",
+      "env": {
+        "GH_TOKEN": "${{ github.token }}"
+      },
+      "run": "set -euo pipefail\nbundle=\"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\napk=\"dist/drypoint-${VERSION}.apk\"\napk_sha=\"$(sha256sum \"dist/drypoint-${VERSION}.apk\" | awk '{print $1}')\"\n# Verify the Sigstore bundle and the signer workflow before parsing\n# it. `--format json` returns only the attestations that passed that\n# verification, so a forged line appended to the bundle is never\n# considered by the assertion below.\ngh attestation verify \"$apk\" \\\n  --bundle \"$bundle\" \\\n  -R \"$GITHUB_REPOSITORY\" \\\n  --signer-workflow \"LLM-4-People/drypoint/.github/workflows/release.yml\" \\\n  --predicate-type \"https://slsa.dev/provenance/v1\" \\\n  --format json > \"$RUNNER_TEMP/verified.json\"\n# The DSSE payload is the in-toto statement. At least one verified\n# statement for this exact APK digest must carry exactly one\n# dependency and it must be the resolved commit. A prior dry run or\n# GitHub's automatic release attestation may add statements; they\n# cannot satisfy the binding unless they name this commit.\nif ! jq -e --arg sha \"$SHA\" --arg apk \"$apk_sha\" '\n  [ .[]\n    | .attestation.bundle.dsseEnvelope.payload\n    | @base64d | fromjson\n    | select(.subject[0].digest.sha256 == $apk)\n  ] as $statements\n  | ($statements | length) >= 1\n    and any($statements[];\n      (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies\n      | ($dependencies | length) == 1\n        and $dependencies[0].digest.gitCommit == $sha)\n' \"$RUNNER_TEMP/verified.json\" > /dev/null; then\n  echo \"::error::the provenance does not bind the signed APK to the resolved commit $SHA\"\n  exit 1\nfi\necho \"provenance binds $apk_sha to $SHA\"\n"
+    },
+    {
+      "name": "Upload the release files",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "with": {
+        "name": "drypoint-release",
+        "path": "dist/drypoint-${{ needs.resolve.outputs.version }}.apk\ndist/drypoint-${{ needs.resolve.outputs.version }}.apk.sha256\ndist/drypoint-${{ needs.resolve.outputs.version }}.apk.intoto.jsonl\ndist/notes.md\n",
+        "if-no-files-found": "error",
+        "retention-days": 7
+      }
     }
-  }
-]),
+  ]),
   publish: Object.freeze([
-  {
-    "name": "Download the release files",
-    "uses": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
-    "with": {
-      "name": "drypoint-release",
-      "path": "dist"
+    {
+      "name": "Download the release files",
+      "uses": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+      "with": {
+        "name": "drypoint-release",
+        "path": "dist"
+      }
+    },
+    {
+      "name": "Publish the release, or prove it already is",
+      "run": "set -euo pipefail\napk=\"dist/drypoint-${VERSION}.apk\"\nchecksum=\"${apk}.sha256\"\nbundle=\"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\nnotes=\"dist/notes.md\"\nfor file in \"$apk\" \"$checksum\" \"$bundle\" \"$notes\"; do test -f \"$file\"; done\n\n# A re-run of this workflow for the same tag must not fail, and must\n# not silently accept a release that carries different bytes. It\n# exits 0 only when the existing release's assets match the ones this\n# run built and verified.\nif gh release view \"$TAG\" > /dev/null 2>&1; then\n  gh release download \"$TAG\" --dir \"$RUNNER_TEMP/existing\" --clobber\n  # The APK and its checksum are reproducible: compare those bytes.\n  for asset in \\\n    \"drypoint-${VERSION}.apk\" \\\n    \"drypoint-${VERSION}.apk.sha256\"; do\n    if ! cmp -s \"dist/${asset}\" \"$RUNNER_TEMP/existing/${asset}\"; then\n      echo \"::error::the existing release asset ${asset} differs from this build\"\n      exit 1\n    fi\n  done\n  # The attestation bundle is not reproducible: every signing makes a\n  # fresh certificate and signature, and GitHub adds its own release\n  # attestation. Verify the published APK against the repository and\n  # the signer workflow, then require a statement for its exact\n  # digest that binds this commit, instead of comparing bundle bytes.\n  existing_apk=\"$RUNNER_TEMP/existing/drypoint-${VERSION}.apk\"\n  existing_bundle=\"$RUNNER_TEMP/existing/drypoint-${VERSION}.apk.intoto.jsonl\"\n  existing_sha=\"$(sha256sum \"$existing_apk\" | awk '{print $1}')\"\n  # Only the attestations gh verified are parsed; a forged line in the\n  # downloaded bundle is not in this output.\n  gh attestation verify \"$existing_apk\" \\\n    --bundle \"$existing_bundle\" \\\n    -R \"$GITHUB_REPOSITORY\" \\\n    --signer-workflow \"LLM-4-People/drypoint/.github/workflows/release.yml\" \\\n    --predicate-type \"https://slsa.dev/provenance/v1\" \\\n    --format json > \"$RUNNER_TEMP/verified.json\"\n  if ! jq -e --arg sha \"$SHA\" --arg apk \"$existing_sha\" '\n    [ .[]\n      | .attestation.bundle.dsseEnvelope.payload\n      | @base64d | fromjson\n      | select(.subject[0].digest.sha256 == $apk)\n    ] as $statements\n    | ($statements | length) >= 1\n      and any($statements[];\n        (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies\n        | ($dependencies | length) == 1\n          and $dependencies[0].digest.gitCommit == $sha)\n  ' \"$RUNNER_TEMP/verified.json\" > /dev/null; then\n    echo \"::error::the existing release attestation does not bind the published APK to the resolved commit $SHA\"\n    exit 1\n  fi\n  # The assets are immutable, the body is not. A re-run with a changed\n  # changelog must not exit 0 while the published notes still lie.\n  gh release edit \"$TAG\" --notes-file \"$notes\"\n  echo \"::notice::release $TAG already exists with these exact assets; notes refreshed\"\n  exit 0\nfi\n\n# Tags are strict vMAJOR.MINOR.PATCH and the resolve step verified the\n# tag's own tree, so this command only ever creates the release the\n# build job proved.\ngh release create \"$TAG\" \\\n  \"$apk\" \\\n  \"$checksum\" \\\n  \"$bundle\" \\\n  --verify-tag \\\n  --title \"v${VERSION}\" \\\n  --notes-file \"$notes\" \\\n  --latest\n"
     }
-  },
-  {
-    "name": "Publish the release, or prove it already is",
-    "run": "set -euo pipefail\napk=\"dist/drypoint-${VERSION}.apk\"\nchecksum=\"${apk}.sha256\"\nbundle=\"dist/drypoint-${VERSION}.apk.intoto.jsonl\"\nnotes=\"dist/notes.md\"\nfor file in \"$apk\" \"$checksum\" \"$bundle\" \"$notes\"; do test -f \"$file\"; done\n\n# A re-run of this workflow for the same tag must not fail, and must\n# not silently accept a release that carries different bytes. It\n# exits 0 only when the existing release's assets match the ones this\n# run built and verified.\nif gh release view \"$TAG\" > /dev/null 2>&1; then\n  gh release download \"$TAG\" --dir \"$RUNNER_TEMP/existing\" --clobber\n  # The APK and its checksum are reproducible: compare those bytes.\n  for asset in \\\n    \"drypoint-${VERSION}.apk\" \\\n    \"drypoint-${VERSION}.apk.sha256\"; do\n    if ! cmp -s \"dist/${asset}\" \"$RUNNER_TEMP/existing/${asset}\"; then\n      echo \"::error::the existing release asset ${asset} differs from this build\"\n      exit 1\n    fi\n  done\n  # The attestation bundle is not reproducible: every signing makes a\n  # fresh certificate and signature, and GitHub adds its own release\n  # attestation. Verify the published APK against the repository and\n  # the signer workflow, then require a statement for its exact\n  # digest that binds this commit, instead of comparing bundle bytes.\n  existing_apk=\"$RUNNER_TEMP/existing/drypoint-${VERSION}.apk\"\n  existing_bundle=\"$RUNNER_TEMP/existing/drypoint-${VERSION}.apk.intoto.jsonl\"\n  existing_sha=\"$(sha256sum \"$existing_apk\" | awk '{print $1}')\"\n  gh attestation verify \"$existing_apk\" \\\n    --bundle \"$existing_bundle\" \\\n    -R \"$GITHUB_REPOSITORY\" \\\n    --signer-workflow \"LLM-4-People/drypoint/.github/workflows/release.yml\" \\\n    --predicate-type \"https://slsa.dev/provenance/v1\"\n  if ! jq -es --arg sha \"$SHA\" --arg apk \"$existing_sha\" '\n    [ .[]\n      | (.dsseEnvelope.payload // .bundle.dsseEnvelope.payload // empty)\n      | select(. != null)\n      | @base64d | fromjson\n      | select(.subject[0].digest.sha256 == $apk)\n    ] as $statements\n    | ($statements | length) >= 1\n      and any($statements[];\n        (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies\n        | ($dependencies | length) == 1\n          and $dependencies[0].digest.gitCommit == $sha)\n  ' \"$existing_bundle\" > /dev/null; then\n    echo \"::error::the existing release attestation does not bind the published APK to the resolved commit $SHA\"\n    exit 1\n  fi\n  # The assets are immutable, the body is not. A re-run with a changed\n  # changelog must not exit 0 while the published notes still lie.\n  gh release edit \"$TAG\" --notes-file \"$notes\"\n  echo \"::notice::release $TAG already exists with these exact assets; notes refreshed\"\n  exit 0\nfi\n\n# Tags are strict vMAJOR.MINOR.PATCH and the resolve step verified the\n# tag's own tree, so this command only ever creates the release the\n# build job proved.\ngh release create \"$TAG\" \\\n  \"$apk\" \\\n  \"$checksum\" \\\n  \"$bundle\" \\\n  --verify-tag \\\n  --title \"v${VERSION}\" \\\n  --notes-file \"$notes\" \\\n  --latest\n"
-  }
-]),
+  ]),
+});
+
+export const PAGES_JOBS_STEPS = Object.freeze({
+  build: Object.freeze([
+    {
+      "name": "Checkout main for the Checks run",
+      "if": "github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main'",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "ref": "main",
+        "persist-credentials": false
+      }
+    },
+    {
+      "name": "The checked-out commit is the one Checks validated",
+      "if": "github.event_name == 'workflow_run'",
+      "run": "set -euo pipefail\nexpected=\"${{ github.event.workflow_run.head_sha }}\"\nactual=\"$(git rev-parse HEAD)\"\nif [ \"$actual\" != \"$expected\" ]; then\n  echo \"::error::main moved: checked out $actual, but Checks validated $expected; the newer Checks run will deploy it\"\n  exit 1\nfi\necho \"checked out $actual, the commit Checks validated\"\n"
+    },
+    {
+      "name": "Checkout main for a manual deploy",
+      "if": "github.event_name == 'workflow_dispatch'",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "ref": "refs/heads/main",
+        "persist-credentials": false
+      }
+    },
+    {
+      "name": "Use the pinned Node",
+      "uses": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+      "with": {
+        "node-version-file": ".node-version"
+      }
+    },
+    {
+      "name": "Stage the site from the runtime file list",
+      "run": "set -euo pipefail\nnpm run build:brand -- --check\nnpm run pages:build\nnode scripts/build-pages.mjs --check\n"
+    },
+    {
+      "name": "Configure Pages",
+      "uses": "actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d"
+    },
+    {
+      "name": "Upload the Pages artifact",
+      "uses": "actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9",
+      "with": {
+        "path": "_site"
+      }
+    }
+  ]),
+  deploy: Object.freeze([
+    {
+      "name": "Deploy to GitHub Pages",
+      "id": "deployment",
+      "uses": "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346"
+    }
+  ]),
+  smoke: Object.freeze([
+    {
+      "name": "Checkout main for the Checks run",
+      "if": "github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main'",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "ref": "main",
+        "persist-credentials": false
+      }
+    },
+    {
+      "name": "The checked-out commit is the one Checks validated",
+      "if": "github.event_name == 'workflow_run'",
+      "run": "set -euo pipefail\nexpected=\"${{ github.event.workflow_run.head_sha }}\"\nactual=\"$(git rev-parse HEAD)\"\nif [ \"$actual\" != \"$expected\" ]; then\n  echo \"::error::main moved: checked out $actual, but Checks validated $expected; the newer Checks run will deploy it\"\n  exit 1\nfi\necho \"checked out $actual, the commit Checks validated\"\n"
+    },
+    {
+      "name": "Checkout main for a manual deploy",
+      "if": "github.event_name == 'workflow_dispatch'",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "ref": "refs/heads/main",
+        "persist-credentials": false
+      }
+    },
+    {
+      "name": "Use the pinned Node",
+      "uses": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+      "with": {
+        "node-version-file": ".node-version"
+      }
+    },
+    {
+      "name": "Smoke-test every precached file",
+      "env": {
+        "RUN_ID": "${{ github.run_id }}",
+        "BASE_URL": "${{ needs.deploy.outputs.page_url }}"
+      },
+      "run": "set -euo pipefail\nif [ -z \"$BASE_URL\" ]; then\n  echo \"::error::the deployment page_url is empty\"\n  exit 1\nfi\n# The URL list is the worker's own manifest, not a hand-picked few:\n# a deployment that forgets one file fails here instead of on a\n# phone. Each URL is retried a bounded number of times and the\n# manifest's content type is checked too.\nnode scripts/smoke-pages.mjs --base \"$BASE_URL\" --cache-bust \"$RUN_ID\"\n"
+    }
+  ]),
+});
+
+export const GUARDED_JOBS_STEPS = Object.freeze({
+  'codeql.yml': Object.freeze({
+    analyze: Object.freeze([
+      {
+        "name": "Checkout",
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+          "persist-credentials": false
+        }
+      },
+      {
+        "name": "Initialize CodeQL",
+        "uses": "github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066",
+        "with": {
+          "languages": "${{ matrix.language }}",
+          "build-mode": "${{ matrix.build-mode }}"
+        }
+      },
+      {
+        "name": "Analyze",
+        "uses": "github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066"
+      }
+    ]),
+  }),
+  'scorecard.yml': Object.freeze({
+    analysis: Object.freeze([
+      {
+        "name": "Checkout",
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+          "persist-credentials": false
+        }
+      },
+      {
+        "name": "Run the OpenSSF Scorecard analysis",
+        "uses": "ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e",
+        "with": {
+          "results_file": "results.sarif",
+          "results_format": "sarif",
+          "publish_results": true
+        }
+      },
+      {
+        "name": "Keep the SARIF result as an artifact",
+        "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+        "with": {
+          "name": "scorecard-results",
+          "path": "results.sarif",
+          "if-no-files-found": "error",
+          "retention-days": 5
+        }
+      },
+      {
+        "name": "Upload the result to code scanning",
+        "uses": "github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066",
+        "with": {
+          "sarif_file": "results.sarif"
+        }
+      }
+    ]),
+  }),
+  'stale.yml': Object.freeze({
+    stale: Object.freeze([
+      {
+        "name": "Mark quiet issues and pull requests",
+        "uses": "actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93",
+        "with": {
+          "days-before-stale": 60,
+          "days-before-close": -1,
+          "stale-issue-label": "stale",
+          "stale-pr-label": "stale",
+          "exempt-issue-labels": "security, pinned, good first issue",
+          "exempt-pr-labels": "security, pinned, good first issue",
+          "stale-issue-message": "This issue has had no activity for 60 days. It is labelled stale so the open queue stays useful; add a comment if it is still relevant.\n",
+          "stale-pr-message": "This pull request has had no activity for 60 days. It is labelled stale; rebase it on the current main branch if you want it reviewed.\n",
+          "operations-per-run": 60
+        }
+      }
+    ]),
+  }),
 });
 /**
- * The exact step names of the four release jobs. The names are the step list's
- * identity: an added, removed or reordered step changes the list even when the
- * body would be harmless. The security-critical bodies are checked separately.
+ * The exact job set of every owned workflow. A job that is not named here is a
+ * new place to run code with the workflow's token, so the set is closed.
  */
-export const RELEASE_STEP_NAMES = Object.freeze({
-  resolve: Object.freeze(['Checkout main with tags', 'Resolve the tag']),
-  build: Object.freeze([
-    'Checkout main',
-    'Materialize the resolved commit',
-    'Prove the worktree is the resolved commit',
-    'Use the pinned Node',
-    'Install the one dev-only dependency',
-    'Locate a Chromium binary',
-    'Gate the resolved tree',
-    'Release notes from the changelog',
-    'Generate the notes',
-    'Use JDK 21',
-    'Install the pinned SDK packages',
-    'Create a throwaway signing key',
-    'Build the unsigned APK with a throwaway key',
-    'Package the unsigned artifact',
-    'The built APK matches its manifest and policy',
-    'Write the provenance predicate',
-    'The build changed no tracked file',
-    'The build left no untracked file',
-    'Upload the unsigned artifact',
-  ]),
-  sign: Object.freeze([
-    'Download the unsigned artifact',
-    'Use the gate-proved JDK',
-    'Install the pinned build tools',
-    'Sign, verify and describe the APK',
-    'Attest the signed APK',
-    'Download the provenance bundle',
-    'Prove the provenance binds the tag commit',
-    'Upload the release files',
-  ]),
-  publish: Object.freeze(['Download the release files', 'Publish the release, or prove it already is']),
+export const EXPECTED_JOBS = Object.freeze({
+  'actionlint.yml': Object.freeze(['actionlint']),
+  'checks.yml': Object.freeze(['web', 'browser', 'android', 'policy', 'required']),
+  'codeql.yml': Object.freeze(['analyze']),
+  'dependency-review.yml': Object.freeze(['review']),
+  'pages.yml': Object.freeze(['build', 'deploy', 'smoke']),
+  'release.yml': Object.freeze(['resolve', 'build', 'sign', 'publish']),
+  'scorecard.yml': Object.freeze(['analysis']),
+  'stale.yml': Object.freeze(['stale']),
+});
+
+/** The exact ordered `needs:` list of every job whose order is authority. */
+export const EXPECTED_NEEDS = Object.freeze({
+  'pages.yml': Object.freeze({
+    deploy: Object.freeze(['build']),
+    smoke: Object.freeze(['build', 'deploy']),
+  }),
+  'release.yml': Object.freeze({
+    build: Object.freeze(['resolve']),
+    sign: Object.freeze(['resolve', 'build']),
+    publish: Object.freeze(['resolve', 'sign']),
+  }),
+});
+
+/**
+ * The exact job-level env of every release job. A key that is not listed is a
+ * grant: GH_HOST with GH_ENTERPRISE_TOKEN redirects gh and sends the job token
+ * to another host, so neither an added GH_* key nor any other key is allowed.
+ */
+export const RELEASE_JOB_ENV = Object.freeze({
+  resolve: Object.freeze({}),
+  build: Object.freeze({
+    TAG: '${{ needs.resolve.outputs.tag }}',
+    SHA: '${{ needs.resolve.outputs.sha }}',
+    VERSION: '${{ needs.resolve.outputs.version }}',
+    ANDROID_PLATFORM: 'android-36',
+    ANDROID_BUILD_TOOLS: '36.0.0',
+  }),
+  sign: Object.freeze({
+    TAG: '${{ needs.resolve.outputs.tag }}',
+    VERSION: '${{ needs.resolve.outputs.version }}',
+    SHA: '${{ needs.resolve.outputs.sha }}',
+    UNSIGNED_SHA256: '${{ needs.build.outputs.unsigned_sha256 }}',
+    EXPECTED_CERT: '${{ vars.RELEASE_CERT_SHA256 }}',
+    ANDROID_PLATFORM: 'android-36',
+    ANDROID_BUILD_TOOLS: '36.0.0',
+  }),
+  publish: Object.freeze({
+    GH_TOKEN: '${{ github.token }}',
+    GH_REPO: '${{ github.repository }}',
+    TAG: '${{ needs.resolve.outputs.tag }}',
+    VERSION: '${{ needs.resolve.outputs.version }}',
+    SHA: '${{ needs.resolve.outputs.sha }}',
+  }),
+});
+
+/** The exact matrix of checks.yml's web leg; a shorter list is less coverage. */
+export const EXPECTED_MATRIX = Object.freeze({
+  'checks.yml': Object.freeze({
+    web: Object.freeze({
+      'fail-fast': false,
+      matrix: Object.freeze({ node: Object.freeze(['22', '24', '26']) }),
+    }),
+  }),
 });
 
 /**
@@ -536,47 +862,13 @@ export const PINNED_ACTIONS = Object.freeze({
  * split, comments removed), so `npm run test:unit || true` is two commands and
  * the extra `true` is caught.
  */
-export const GATE_COMMANDS = Object.freeze({
-  'checks.yml': Object.freeze({
-    web: Object.freeze([
-      'npm ci',
-      'npm run build:brand -- --check',
-      'npm run check:precache',
-      'npm run privacy:check',
-      'npm run test:unit',
-      'node scripts/build-docs.mjs --check',
-      'npm run docs:check',
-      'npm run workflows:check',
-      'git diff --exit-code',
-      'test -z "$(git status --porcelain)"',
-    ]),
-    browser: Object.freeze(['npm ci', 'node scripts/find-chrome.mjs', 'npm run test:browser']),
-    android: Object.freeze([
-      'npm ci',
-      'bash scripts/android-sdk.sh',
-      'node scripts/ci-keystore.mjs',
-      'npm run build:android',
-      'node scripts/check-apk.mjs --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
-      'git diff --exit-code',
-      'test -z "$(git status --porcelain)"',
-    ]),
-    policy: Object.freeze([
-      'npm ci',
-      'node scripts/check-workflows.mjs --workflows "$PR_TREE/.github/workflows"',
-      'node scripts/check-privacy.mjs --root "$PR_TREE" --tracked',
-      'bash scripts/actionlint.sh "$PR_TREE/.github/workflows"',
-    ]),
-    required: Object.freeze(['node scripts/check-required.mjs']),
-  }),
-});
-
 /** Commands that are a no-op or that discard the command they follow. */
 const MASK_COMMANDS = new Set(['true', ':', 'exit 0']);
 const SHA = /^[0-9a-f]{40}$/;
 /** A masked gate step is rejected in both workflows that hold authority. */
 const MASKABLE_WORKFLOWS = new Set(['checks.yml', RELEASE_FILE]);
 /** A secret reference in any job that is not the one signing job. */
-const SECRET_REFERENCE = /secrets(?:\.|\[)/;
+const SECRET_REFERENCE = /secrets\s*(?:\.|\[)/i;
 /** The exact opt-in a gated step may put before its registered command. */
 const GATE_PREAMBLE = 'set -euo pipefail';
 /** The one owner of the CI throwaway key; both unprivileged jobs call it. */
@@ -973,7 +1265,7 @@ function expectedStepFindings(job, file, jobName, expected, { allowJobEnv = fals
   if (steps.length !== expected.length) {
     findings.push(`${file}: job "${jobName}" must have exactly ${expected.length} steps; found ${steps.length}`);
   }
-  const allowed = ['name', 'if', 'uses', 'with', 'run', 'env', 'id'];
+  const allowed = ['name', 'if', 'uses', 'with', 'run', 'env', 'id', 'working-directory'];
   for (let index = 0; index < Math.min(steps.length, expected.length); index++) {
     const step = steps[index];
     const wanted = expected[index];
@@ -997,6 +1289,13 @@ function expectedStepFindings(job, file, jobName, expected, { allowJobEnv = fals
     if (!sameMap(step.env, wanted.env)) {
       findings.push(`${file}: ${where} env: must be exactly ${JSON.stringify(wanted.env ?? null)}`);
     }
+    if ((step['working-directory'] ?? '') !== (wanted['working-directory'] ?? '')) {
+      findings.push(
+        wanted['working-directory'] == null
+          ? `${file}: ${where} must not set working-directory`
+          : `${file}: ${where} working-directory must be ${JSON.stringify(wanted['working-directory'])}`
+      );
+    }
     if ((step.id ?? '') !== (wanted.id ?? '')) {
       findings.push(`${file}: ${where} id must be ${JSON.stringify(wanted.id ?? null)}`);
     }
@@ -1011,20 +1310,176 @@ function trustedStepFindings(job, file, jobName) {
   return expectedStepFindings(job, file, jobName, TRUSTED_STEPS[jobName], { allowJobEnv: false });
 }
 
-/** The exact step names of one release job. */
-function releaseStepNamesFindings(job, file, jobName) {
-  const expected = RELEASE_STEP_NAMES[jobName];
+/**
+ * The exact job set of one workflow. An added job is another place to run code
+ * under the workflow's token even when it declares no permissions of its own.
+ */
+function expectedJobFindings(workflow, file) {
+  const expected = EXPECTED_JOBS[file];
   if (!expected) return [];
-  if (!isMap(job)) return [`${file}: job "${jobName}" is missing`];
+  const actual = jobNames(workflow);
   const findings = [];
-  for (const key of ['defaults', 'container', 'services']) {
-    if (job[key] != null) findings.push(`${file}: job "${jobName}" must not declare ${key}`);
+  for (const name of actual) {
+    if (!expected.includes(name)) findings.push(`${file}: job "${name}" is not part of ${file}`);
   }
-  const names = stepsOf(job).map((step) => step.name);
-  if (JSON.stringify(names) !== JSON.stringify(expected)) {
-    findings.push(
-      `${file}: job "${jobName}" must have exactly these steps: ${expected.join(' | ')}; found ${names.join(' | ') || 'none'}`
-    );
+  for (const name of expected) {
+    if (!actual.includes(name)) findings.push(`${file}: job "${name}" is missing`);
+  }
+  return findings;
+}
+
+/** The exact ordered `needs:` list of every job in the table. */
+function expectedNeedsFindings(workflow, file) {
+  const table = EXPECTED_NEEDS[file];
+  if (!table) return [];
+  const findings = [];
+  for (const [name, expected] of Object.entries(table)) {
+    const job = workflow?.jobs?.[name];
+    if (!isMap(job)) continue;
+    const actual = needsOf(job);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      findings.push(
+        `${file}: job "${name}" needs must be exactly [${expected.join(', ')}], not [${actual.join(', ')}]`
+      );
+    }
+  }
+  return findings;
+}
+
+/**
+ * The exact job-level env map. A missing or changed key is a grant the policy
+ * did not approve; an extra key is how GH_HOST and GH_ENTERPRISE_TOKEN would
+ * redirect gh and carry the job token to another host.
+ */
+function jobEnvExactFindings(job, file, jobName, expected) {
+  const findings = [];
+  if (job?.env != null && !isMap(job.env)) {
+    findings.push(`${file}: job "${jobName}" env must be a map`);
+    return findings;
+  }
+  const actual = job?.env ?? {};
+  for (const [name, value] of Object.entries(expected)) {
+    if (actual[name] !== value) findings.push(`${file}: job "${jobName}" env ${name} must be exactly ${value}`);
+  }
+  for (const name of Object.keys(actual)) {
+    if (!Object.hasOwn(expected, name)) findings.push(`${file}: job "${jobName}" must not set env ${name}`);
+  }
+  return findings;
+}
+
+/** Canonical JSON so an exact map comparison ignores key order. */
+function canonicalValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (!isMap(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalValue(value[key])])
+  );
+}
+
+function sameValue(actual, expected) {
+  return JSON.stringify(canonicalValue(actual)) === JSON.stringify(canonicalValue(expected));
+}
+
+/** The exact strategy and matrix of the jobs that publish a coverage answer. */
+function matrixFindings(workflow, file) {
+  const table = EXPECTED_MATRIX[file];
+  if (!table) return [];
+  const findings = [];
+  for (const [name, expected] of Object.entries(table)) {
+    const job = workflow?.jobs?.[name];
+    if (!isMap(job)) continue;
+    if (!sameValue(job.strategy, expected)) {
+      findings.push(
+        `${file}: job "${name}" strategy must be exactly ${JSON.stringify(expected)}, not ${JSON.stringify(job.strategy ?? null)}`
+      );
+    }
+  }
+  return findings;
+}
+
+/** The exact steps of every privileged job outside release.yml and checks.yml. */
+function guardedStepFindings(workflow, file) {
+  const table = file === 'pages.yml' ? PAGES_JOBS_STEPS : GUARDED_JOBS_STEPS[file];
+  if (!table) return [];
+  const findings = [];
+  for (const [name, expected] of Object.entries(table)) {
+    const job = workflow?.jobs?.[name];
+    if (!isMap(job)) continue;
+    findings.push(...expectedStepFindings(job, file, name, expected, { allowJobEnv: false }));
+  }
+  return findings;
+}
+
+/** The Pages deploy job is exactly one pinned action: no shell, no second step. */
+function pagesDeployFindings(workflow, file) {
+  if (file !== 'pages.yml') return [];
+  const job = workflow?.jobs?.deploy;
+  if (!isMap(job)) return [];
+  const steps = stepsOf(job);
+  const findings = [];
+  if (steps.length !== 1) findings.push(`${file}: job "deploy" must have exactly 1 step; found ${steps.length}`);
+  if (steps.some((step) => step.run != null)) findings.push(`${file}: job "deploy" must not run a shell`);
+  return findings;
+}
+
+/**
+ * check-apk is the last step that reads the APK before the unsigned upload.
+ * Anything after it can change the bytes it approved.
+ */
+function buildGateOrderFindings(job, file, jobName) {
+  const steps = stepsOf(job);
+  const gate = steps.findIndex((step) =>
+    stepCommands(step).some((command) => command.startsWith('node scripts/check-apk.mjs'))
+  );
+  if (gate < 0) return [];
+  const findings = [];
+  const commands = stepCommands(steps[gate]);
+  const position = commands.findIndex((command) => command.startsWith('node scripts/check-apk.mjs'));
+  if (position !== commands.length - 1) {
+    findings.push(`${file}: job "${jobName}" must run nothing after node scripts/check-apk.mjs in its step`);
+  }
+  for (let index = gate + 1; index < steps.length; index += 1) {
+    const step = steps[index];
+    if (!String(step.uses ?? '').startsWith('actions/upload-artifact@')) {
+      findings.push(
+        `${file}: job "${jobName}" must run nothing after node scripts/check-apk.mjs; found "${step.name}"`
+      );
+    }
+  }
+  if (steps.length !== gate + 2) {
+    findings.push(`${file}: job "${jobName}" must upload the unsigned artifact immediately after node scripts/check-apk.mjs`);
+  }
+  return findings;
+}
+
+/** overwrite deletes a same-name artifact and re-creates it under the same name. */
+function releaseUploadFindings(workflow, file) {
+  const findings = [];
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    for (const step of stepsOf(job)) {
+      if (!String(step.uses ?? '').startsWith('actions/upload-artifact@')) continue;
+      if (step.with?.overwrite != null) {
+        findings.push(`${file}: job "${name}" must not set overwrite on upload-artifact`);
+      }
+    }
+  }
+  return findings;
+}
+
+/** The build exposes the unsigned digest the sign job compares against. */
+function buildOutputFindings(job, file) {
+  const expected = {
+    unsigned_sha256: '${{ steps.package.outputs.unsigned_sha256 }}',
+  };
+  const actual = isMap(job?.outputs) ? job.outputs : {};
+  const findings = [];
+  for (const [name, value] of Object.entries(expected)) {
+    if (actual[name] !== value) findings.push(`${file}: job "build" output ${name} must be exactly ${value}`);
+  }
+  for (const name of Object.keys(actual)) {
+    if (!Object.hasOwn(expected, name)) findings.push(`${file}: job "build" must not expose the unused output ${name}`);
   }
   return findings;
 }
@@ -1045,20 +1500,6 @@ function sourceFindings(job, file, jobName) {
     const tokens = shellTokens(command);
     if (tokens[0] === 'source' || tokens[0] === '.') {
       findings.push(`${file}: job "${jobName}" must not source a file: "${command}"`);
-    }
-  }
-  return findings;
-}
-
-/** Sign and publish steps are plain: no condition, shell, directory or mask. */
-function plainStepFindings(job, file, jobName) {
-  const findings = [];
-  for (const step of stepsOf(job)) {
-    for (const key of ['if', 'shell', 'working-directory']) {
-      if (step[key] != null) findings.push(`${file}: job "${jobName}" step must not set ${key}`);
-    }
-    if (step['continue-on-error'] != null && step['continue-on-error'] !== false) {
-      findings.push(`${file}: job "${jobName}" step must not set continue-on-error`);
     }
   }
   return findings;
@@ -1268,6 +1709,17 @@ export function parsedWorkflowFindings(workflow, file) {
   findings.push(...withScriptFindings(workflow, file));
   findings.push(...environmentFindings(workflow, file));
   findings.push(...secretFindings(workflow, file));
+  findings.push(...expectedJobFindings(workflow, file));
+  findings.push(...expectedNeedsFindings(workflow, file));
+  findings.push(...matrixFindings(workflow, file));
+  findings.push(...guardedStepFindings(workflow, file));
+  findings.push(...pagesDeployFindings(workflow, file));
+  if (file === RELEASE_FILE) {
+    for (const [name, expected] of Object.entries(RELEASE_JOB_ENV)) {
+      const job = jobs[name];
+      if (isMap(job)) findings.push(...jobEnvExactFindings(job, file, name, expected));
+    }
+  }
   if (file === 'checks.yml') {
     const on = isMap(workflow.on) ? workflow.on : {};
     if (!list(on.push?.tags).includes('v*')) findings.push(`${file}: Checks must run on v* tag pushes so the release can resolve them`);
@@ -1284,11 +1736,11 @@ export function parsedWorkflowFindings(workflow, file) {
     for (const name of ['web', 'browser', 'android']) {
       findings.push(...expectedStepFindings(jobs[name], file, name, CHECKS_STEPS[name], { allowJobEnv: true }));
     }
+    findings.push(...keystoreOrderFindings(jobs.android, file, 'android'));
   }
   if (file === 'checks.yml' && !jobs[AGGREGATE_JOB]) {
     findings.push(`${file}: job "${AGGREGATE_JOB}" is missing`);
   }
-  findings.push(...gateFindings(workflow, jobs, file));
   return findings;
 }
 
@@ -1357,26 +1809,6 @@ function keystoreOrderFindings(job, file, jobName) {
   return [];
 }
 
-/**
- * Every required merge-gate command must appear in the registered order, in
- * gate steps that cannot be skipped or masked.
- */
-function gateFindings(workflow, jobs, file) {
-  const gates = GATE_COMMANDS[file];
-  if (!gates) return [];
-  const findings = [];
-  for (const [jobName, required] of Object.entries(gates)) {
-    const job = jobs[jobName];
-    if (!job) {
-      findings.push(`${file}: job "${jobName}" is missing`);
-      continue;
-    }
-    findings.push(...gateStepFindings(job, file, jobName, required));
-    findings.push(...keystoreOrderFindings(job, file, jobName));
-  }
-  return findings;
-}
-
 /** The one non-release environment the repository owns: Pages deployment. */
 const PAGES_ENVIRONMENT = Object.freeze({
   name: 'github-pages',
@@ -1417,10 +1849,16 @@ function secretFindings(workflow, file) {
   }
   for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
     if (!isMap(job)) continue;
+    // An output is forwarded to another job. No job needs to forward a secret,
+    // and the sign job is the one place a secret may be named at all.
+    if (SECRET_REFERENCE.test(JSON.stringify(job.outputs ?? {}))) {
+      findings.push(`${file}: job "${name}" outputs must not read secrets; only ${RELEASE_FILE}'s "sign" job may read one`);
+    }
     if (file === RELEASE_FILE && name === 'sign') continue;
     const text = JSON.stringify([
       job.env ?? {},
       job.if ?? '',
+      job.outputs ?? {},
       stepsOf(job).map((step) => ({ env: step.env ?? {}, with: step.with ?? {}, run: step.run ?? '', if: step.if ?? '' })),
     ]);
     if (SECRET_REFERENCE.test(text)) {
@@ -1530,13 +1968,19 @@ function resolveFindings(workflow, file) {
   const outputs = isMap(job.outputs) ? job.outputs : {};
   const expectedOutputs = ['publish', 'ref', 'sha', 'tag', 'version'];
   for (const name of expectedOutputs) {
-    if (!(name in outputs)) findings.push(`${file}: job "resolve" must output ${name}`);
+    const expected = `\${{ steps.tag.outputs.${name} }}`;
+    if (outputs[name] !== expected) {
+      findings.push(`${file}: job "resolve" output ${name} must be exactly ${expected}, not ${JSON.stringify(outputs[name] ?? null)}`);
+    }
   }
   for (const name of Object.keys(outputs)) {
     if (!expectedOutputs.includes(name)) findings.push(`${file}: job "resolve" must not expose the unused output ${name}`);
   }
 
   const steps = stepsOf(job);
+  if (!steps.some((step) => step.id === 'tag')) {
+    findings.push(`${file}: job "resolve" must give the resolving step id: tag`);
+  }
   const checkout = steps.find((step) => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
   if (!checkout) {
     findings.push(`${file}: job "resolve" must check out main`);
@@ -1596,10 +2040,10 @@ function buildFindings(workflow, file) {
     'node scripts/release-notes.mjs --tag "$TAG" --commit "$SHA" --out dist/notes.md',
     CI_KEYSTORE_COMMAND,
     'npm run build:android',
-    'node scripts/check-apk.mjs --apk "dist/drypoint-${VERSION}-unsigned.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
     'node scripts/release-provenance.mjs --sha "$SHA" --tag "$TAG" --version "$VERSION" --out dist/provenance.json',
     'git diff --exit-code',
     'test -z "$(git status --porcelain)"',
+    'node scripts/check-apk.mjs --apk "dist/drypoint-${VERSION}-unsigned.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
   ];
   const findings = jobGateFindings(workflow, file, 'build', required);
   const job = workflow?.jobs?.build;
@@ -1614,14 +2058,9 @@ function buildFindings(workflow, file) {
       'job "build" if:'
     )
   );
-  findings.push(...releaseStepNamesFindings(job, file, 'build'));
-  for (const [name, value] of [
-    ['TAG', '${{ needs.resolve.outputs.tag }}'],
-    ['SHA', '${{ needs.resolve.outputs.sha }}'],
-    ['VERSION', '${{ needs.resolve.outputs.version }}'],
-  ]) {
-    if (job.env?.[name] !== value) findings.push(`${file}: job "build" env ${name} must be exactly ${value}`);
-  }
+  findings.push(...expectedStepFindings(job, file, 'build', RELEASE_JOBS_STEPS.build, { allowJobEnv: true }));
+  findings.push(...buildOutputFindings(job, file));
+  findings.push(...buildGateOrderFindings(job, file, 'build'));
   const steps = stepsOf(job);
   const checkout = steps.find((step) => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
   if (!checkout) findings.push(`${file}: job "build" must check out main`);
@@ -1683,8 +2122,6 @@ function signFindings(workflow, file) {
   const job = workflow?.jobs?.sign;
   if (!isMap(job)) return [`${file}: job "sign" is missing`];
   if (job.environment !== 'release') findings.push(`${file}: job "sign" must use the release environment`);
-  const needs = needsOf(job);
-  for (const name of ['resolve', 'build']) if (!needs.includes(name)) findings.push(`${file}: job "sign" must need ${name}`);
   findings.push(
     ...exactConditionFindings(
       job.if,
@@ -1695,13 +2132,6 @@ function signFindings(workflow, file) {
   );
   findings.push(...expectedStepFindings(job, file, 'sign', RELEASE_JOBS_STEPS.sign, { allowJobEnv: true }));
   findings.push(...sourceFindings(job, file, 'sign'));
-  for (const [name, value] of [
-    ['TAG', '${{ needs.resolve.outputs.tag }}'],
-    ['SHA', '${{ needs.resolve.outputs.sha }}'],
-    ['VERSION', '${{ needs.resolve.outputs.version }}'],
-  ]) {
-    if (job.env?.[name] !== value) findings.push(`${file}: job "sign" env ${name} must be exactly ${value}`);
-  }
   if (job.permissions?.contents !== 'read') findings.push(`${file}: job "sign" permissions must include contents: read`);
   if (job.permissions?.['id-token'] !== 'write') findings.push(`${file}: job "sign" must request id-token: write`);
   if (job.permissions?.attestations !== 'write') findings.push(`${file}: job "sign" must request attestations: write`);
@@ -1722,6 +2152,9 @@ function signFindings(workflow, file) {
   ]) {
     if (signText.includes(needle)) findings.push(`${file}: job "sign" ${message}`);
   }
+  // The exact step table above owns every byte of the sign script. These
+  // checks remain structural invariants: the signing job must never check out
+  // or execute repository code, whatever the table says.
   for (const step of stepsOf(job)) {
     if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {
       findings.push(`${file}: job "sign" must not check out repository code`);
@@ -1735,85 +2168,6 @@ function signFindings(workflow, file) {
         findings.push(`${file}: job "sign" must not execute repository scripts: "${command}"`);
       }
     }
-  }
-  const commands = stepsOf(job).flatMap(stepCommands);
-  const joined = commands.join('\n');
-  for (const [pattern, message] of [
-    [/apksigner"?\s+sign/, 'sign with apksigner'],
-    [/--min-sdk-version"?\s+"\$min_sdk"/, 'take the minimum SDK from the build manifest'],
-    [/--v1-signing-enabled"?\s+"\$v1_signing"/, 'take the v1 scheme from the manifest-derived answer'],
-    [/--v2-signing-enabled"?\s+true/, 'enable the v2 signature'],
-    [/--v3-signing-enabled"?\s+true/, 'enable the v3 signature'],
-    [/apksigner"?\s+verify/, 'verify the signature'],
-    [/zipalign"?\s+-c\s+-v\s+4/, 'assert four-byte alignment'],
-    [/aapt2"?\s+dump\s+badging/, 'assert package and version'],
-    [/aapt2"?\s+dump\s+xmltree/, 'assert the binary manifest'],
-    [/gh attestation download/, 'download the provenance bundle'],
-    [/expected_package="package: name='\$\{package_id\}' versionCode='\$\{expected_version_code\}' versionName='\$\{VERSION\}'"/, 'assert the exact package, versionCode and versionName'],
-    [/resolvedDependencies/, 'attest with a custom predicate'],
-    [/predicate\.buildDefinition\.resolvedDependencies/, 'prove the provenance resolves the tag commit'],
-    [/digest\.gitCommit == \$sha/, 'require the resolved commit exactly'],
-  ]) {
-    if (!pattern.test(joined)) findings.push(`${file}: job "sign" must ${message}`);
-  }
-  // The scheme has one owner: the manifest. A second hard-coded answer is
-  // exactly the latent divergence this policy removes.
-  if (/--min-sdk-version"?\s+26\b/.test(joined) || /--v1-signing-enabled"?\s+false/.test(joined)) {
-    findings.push(`${file}: job "sign" must not hard-code the minSdk/signing scheme; read dist/signing.json`);
-  }
-  if (!stepsOf(job).some((step) => step.uses === 'actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880' && step.with?.['java-version'] === '21')) {
-    findings.push(`${file}: job "sign" must use the pinned Temurin 21 action`);
-  }
-  const attest = stepsOf(job).find((step) => step.uses === 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8');
-  if (!attest) {
-    findings.push(`${file}: job "sign" must use the pinned attest action`);
-  } else {
-    // The default predicate comes from github.context, where workflow_run sees
-    // the default-branch HEAD. A step-level GITHUB_SHA is overwritten by GitHub
-    // and does not change the action's context; the binding must be a custom
-    // predicate file produced from needs.resolve.outputs.sha.
-    if (attest.env?.GITHUB_SHA != null) {
-      findings.push(`${file}: job "sign" must not override GITHUB_SHA on the attest action; pass predicate-path`);
-    }
-    if (attest.with?.['predicate-type'] !== 'https://slsa.dev/provenance/v1') {
-      findings.push(`${file}: job "sign" attest step must set predicate-type: https://slsa.dev/provenance/v1`);
-    }
-    if (attest.with?.['predicate-path'] !== 'dist/provenance.json') {
-      findings.push(`${file}: job "sign" attest step must pass predicate-path: dist/provenance.json`);
-    }
-    if (attest.with?.predicate != null) {
-      findings.push(`${file}: job "sign" attest step must use predicate-path, not an inline predicate`);
-    }
-    if (attest.with?.['subject-path'] !== 'dist/drypoint-${{ needs.resolve.outputs.version }}.apk') {
-      findings.push(
-        `${file}: job "sign" attest step must attest dist/drypoint-\${{ needs.resolve.outputs.version }}.apk, not ${JSON.stringify(attest.with?.['subject-path'] ?? null)}`
-      );
-    }
-  }
-  // The bundle is verified as a signed artifact and parsed from an empty
-  // dedicated directory. A glob over dist/ selects a planted file.
-  for (const [needle, message] of [
-    ['gh attestation verify "$apk"', 'verify the bundle signature before parsing it'],
-    ['--signer-workflow "LLM-4-People/drypoint/.github/workflows/release.yml"', 'pin the signer workflow on gh attestation verify'],
-    ['--predicate-type "https://slsa.dev/provenance/v1"', 'pin the SLSA v1 predicate type on gh attestation verify'],
-    ['dist/attest/*.jsonl', 'download the bundle into the dedicated dist/attest directory'],
-    ['${#files[@]}', 'require exactly one downloaded bundle'],
-    ['-ne 1', 'fail on zero or multiple downloaded bundles'],
-    ['apk_sha="$(sha256sum "dist/drypoint-${VERSION}.apk" | awk \'{print $1}\')"', 'hash the signed APK itself'],
-  ]) {
-    if (!joined.includes(needle)) findings.push(`${file}: job "sign" must ${message}`);
-  }
-  if (/find\b[^\n]*-print\s+-quit/.test(joined)) {
-    findings.push(`${file}: job "sign" must not select the bundle with find -print -quit`);
-  }
-  if (joined.includes('sha256*.jsonl')) {
-    findings.push(`${file}: job "sign" must not select the bundle with a glob`);
-  }
-  if (!/any\(\$statements\[\];/.test(joined)) {
-    findings.push(`${file}: job "sign" must accept any verified statement whose dependency binds the resolved commit`);
-  }
-  if (/all\(\$statements\[\];/.test(joined)) {
-    findings.push(`${file}: job "sign" must not require every statement to bind one commit`);
   }
   return findings;
 }
@@ -1832,24 +2186,9 @@ function publishFindings(workflow, file) {
       `${file}: job "publish" must set GH_REPO to \${{ github.repository }}; it has no checkout for gh to discover one`
     );
   }
-  if (!needsOf(job).includes('resolve') || !needsOf(job).includes('sign')) {
-    findings.push(`${file}: job "publish" must need resolve and sign`);
-  }
   findings.push(...exactConditionFindings(job.if, "needs.resolve.outputs.publish == 'true'", file, 'job "publish" if:'));
   findings.push(...expectedStepFindings(job, file, 'publish', RELEASE_JOBS_STEPS.publish, { allowJobEnv: true }));
   findings.push(...sourceFindings(job, file, 'publish'));
-  // The tag is the resolved tag, never the ref name, the workflow_run branch or
-  // a literal. Equality is the contract; a substring check let every alternate
-  // source through.
-  if (job.env?.TAG !== '${{ needs.resolve.outputs.tag }}') {
-    findings.push(`${file}: job "publish" env TAG must be exactly \${{ needs.resolve.outputs.tag }}`);
-  }
-  if (job.env?.VERSION !== '${{ needs.resolve.outputs.version }}') {
-    findings.push(`${file}: job "publish" env VERSION must be exactly \${{ needs.resolve.outputs.version }}`);
-  }
-  if (job.env?.SHA !== '${{ needs.resolve.outputs.sha }}') {
-    findings.push(`${file}: job "publish" env SHA must be exactly \${{ needs.resolve.outputs.sha }}`);
-  }
   for (const step of stepsOf(job)) {
     if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {
       findings.push(`${file}: job "publish" must not check out repository code`);
@@ -1880,7 +2219,7 @@ function publishFindings(workflow, file) {
           findings.push(`${file}: job "publish" may only run gh attestation verify`);
           break;
         }
-        for (const flag of ['--bundle', '-R', '--signer-workflow', '--predicate-type']) {
+        for (const flag of ['--bundle', '-R', '--signer-workflow', '--predicate-type', '--format']) {
           if (!tokens.includes(flag)) findings.push(`${file}: job "publish" gh attestation verify must pass ${flag}`);
         }
         const bundle = tokens[tokens.indexOf('--bundle') + 1];
@@ -1932,6 +2271,7 @@ function existingReleaseFindings(workflow, file) {
     [/cmp -s/, 'compare the existing APK and checksum byte-for-byte'],
     [/differs from this build/, 'fail when an existing asset differs'],
     [/gh attestation verify "\$existing_apk"/, 'verify the existing bundle signature and signer'],
+    [/--format json > "\$RUNNER_TEMP\/verified\.json"/, 'parse only the existing attestations gh verified'],
     [/existing_bundle="\$RUNNER_TEMP\/existing\//, 'verify the bundle the release downloaded'],
     [/does not bind the published APK/, 'fail when the existing attestation binds another commit'],
     [/any\(\$statements\[\];/, 'accept a verified statement that binds the resolved commit'],
@@ -1963,6 +2303,7 @@ export function checkReleaseWorkflow(text, { file = RELEASE_FILE } = {}) {
   findings.push(...signFindings(workflow, file));
   findings.push(...publishFindings(workflow, file));
   findings.push(...existingReleaseFindings(workflow, file));
+  findings.push(...releaseUploadFindings(workflow, file));
 
   const publishes = publishCommands(text);
   const quoted = shellCommands(text).filter((command) => /^\s*(['"])gh\1\s+release\s+create\b/.test(command));

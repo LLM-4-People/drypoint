@@ -160,6 +160,10 @@ jobs:
     # A workflow_run with no tag stops after resolve. A manual dispatch always
     # builds, so a SHA dry run knows the tree passes before a tag exists.
     if: needs.resolve.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
+    # The digest is the sign job's independent reference. It comes from the
+    # step that wrote the APK, not from the checksum file in the artifact.
+    outputs:
+      unsigned_sha256: ${{ steps.package.outputs.unsigned_sha256 }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -235,6 +239,7 @@ jobs:
         working-directory: ${{ env.RELEASE_TREE }}
         run: npm run build:android
       - name: Package the unsigned artifact
+        id: package
         working-directory: ${{ env.RELEASE_TREE }}
         run: |
           set -euo pipefail
@@ -246,6 +251,10 @@ jobs:
             sha256sum "drypoint-${VERSION}-unsigned.apk" > "drypoint-${VERSION}-unsigned.apk.sha256"
             cat "drypoint-${VERSION}-unsigned.apk.sha256"
           )
+          # The job output is the digest of the exact bytes this step wrote.
+          # The sign job compares its download against this value, so a
+          # checksum shipped inside the same artifact cannot vouch for it.
+          printf 'unsigned_sha256=%s\n' "$(sha256sum "dist/drypoint-${VERSION}-unsigned.apk" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           # Data for the sign job's independent package and certificate checks.
           # It is read with jq there, never executed. The version code and the
           # signing-scheme answer come from the one owner of each rule, not a
@@ -253,14 +262,6 @@ jobs:
           node scripts/build-android.mjs --version-code > dist/version-code.txt
           node scripts/build-android.mjs --signing-scheme > dist/signing.json
           cp brand.json dist/brand.json
-      - name: The built APK matches its manifest and policy
-        working-directory: ${{ env.RELEASE_TREE }}
-        run: |
-          set -euo pipefail
-          node scripts/check-apk.mjs \
-            --apk "dist/drypoint-${VERSION}-unsigned.apk" \
-            --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" \
-            --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
       - name: Write the provenance predicate
         # The attest action's default predicate comes from github.context, where
         # a workflow_run sees the default-branch HEAD. This predicate names the
@@ -273,6 +274,14 @@ jobs:
       - name: The build left no untracked file
         working-directory: ${{ env.RELEASE_TREE }}
         run: test -z "$(git status --porcelain)"
+      - name: The built APK matches its manifest and policy
+        working-directory: ${{ env.RELEASE_TREE }}
+        run: |
+          set -euo pipefail
+          node scripts/check-apk.mjs \
+            --apk "dist/drypoint-${VERSION}-unsigned.apk" \
+            --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" \
+            --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
       - name: Upload the unsigned artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -298,6 +307,10 @@ jobs:
       TAG: ${{ needs.resolve.outputs.tag }}
       VERSION: ${{ needs.resolve.outputs.version }}
       SHA: ${{ needs.resolve.outputs.sha }}
+      # The build's own digest of the unsigned APK. The checksum file inside the
+      # artifact is written by the same job as the APK, so this separate value
+      # is what proves the downloaded bytes are the built bytes.
+      UNSIGNED_SHA256: ${{ needs.build.outputs.unsigned_sha256 }}
       EXPECTED_CERT: ${{ vars.RELEASE_CERT_SHA256 }}
       ANDROID_PLATFORM: android-36
       ANDROID_BUILD_TOOLS: '36.0.0'
@@ -336,7 +349,18 @@ jobs:
           brand="dist/brand.json"
           trap 'rm -f "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/ks-pass" "$RUNNER_TEMP/key-pass" "$RUNNER_TEMP/signed.apk"' EXIT
 
-          ( cd dist && sha256sum -c "drypoint-${VERSION}-unsigned.apk.sha256" )
+          # The build-exposed digest is the independent reference. The checksum
+          # file in this artifact was written by the job that wrote the APK, so
+          # it cannot detect a substituted APK; this value can.
+          if [ -z "${UNSIGNED_SHA256:-}" ]; then
+            echo "::error::the build did not expose the unsigned APK digest"
+            exit 1
+          fi
+          unsigned_sha="$(sha256sum "$unsigned" | awk '{print $1}')"
+          if [ "$unsigned_sha" != "$UNSIGNED_SHA256" ]; then
+            echo "::error::the downloaded APK $unsigned_sha is not the build's $UNSIGNED_SHA256"
+            exit 1
+          fi
           test -f "$notes"
           test -f "$brand"
           # The build wrote both answers from their one owners: the versionCode
@@ -498,21 +522,23 @@ jobs:
           apk="dist/drypoint-${VERSION}.apk"
           apk_sha="$(sha256sum "dist/drypoint-${VERSION}.apk" | awk '{print $1}')"
           # Verify the Sigstore bundle and the signer workflow before parsing
-          # it. A forged unsigned JSON file planted in dist/ fails here.
+          # it. `--format json` returns only the attestations that passed that
+          # verification, so a forged line appended to the bundle is never
+          # considered by the assertion below.
           gh attestation verify "$apk" \
             --bundle "$bundle" \
             -R "$GITHUB_REPOSITORY" \
             --signer-workflow "LLM-4-People/drypoint/.github/workflows/release.yml" \
-            --predicate-type "https://slsa.dev/provenance/v1"
-          # The DSSE payload is the in-toto statement. At least one statement
-          # for this exact APK digest must carry exactly one resolved
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --format json > "$RUNNER_TEMP/verified.json"
+          # The DSSE payload is the in-toto statement. At least one verified
+          # statement for this exact APK digest must carry exactly one
           # dependency and it must be the resolved commit. A prior dry run or
           # GitHub's automatic release attestation may add statements; they
           # cannot satisfy the binding unless they name this commit.
-          if ! jq -es --arg sha "$SHA" --arg apk "$apk_sha" '
+          if ! jq -e --arg sha "$SHA" --arg apk "$apk_sha" '
             [ .[]
-              | (.dsseEnvelope.payload // .bundle.dsseEnvelope.payload // empty)
-              | select(. != null)
+              | .attestation.bundle.dsseEnvelope.payload
               | @base64d | fromjson
               | select(.subject[0].digest.sha256 == $apk)
             ] as $statements
@@ -521,7 +547,7 @@ jobs:
                 (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies
                 | ($dependencies | length) == 1
                   and $dependencies[0].digest.gitCommit == $sha)
-          ' "$bundle" > /dev/null; then
+          ' "$RUNNER_TEMP/verified.json" > /dev/null; then
             echo "::error::the provenance does not bind the signed APK to the resolved commit $SHA"
             exit 1
           fi
@@ -594,15 +620,17 @@ jobs:
             existing_apk="$RUNNER_TEMP/existing/drypoint-${VERSION}.apk"
             existing_bundle="$RUNNER_TEMP/existing/drypoint-${VERSION}.apk.intoto.jsonl"
             existing_sha="$(sha256sum "$existing_apk" | awk '{print $1}')"
+            # Only the attestations gh verified are parsed; a forged line in the
+            # downloaded bundle is not in this output.
             gh attestation verify "$existing_apk" \
               --bundle "$existing_bundle" \
               -R "$GITHUB_REPOSITORY" \
               --signer-workflow "LLM-4-People/drypoint/.github/workflows/release.yml" \
-              --predicate-type "https://slsa.dev/provenance/v1"
-            if ! jq -es --arg sha "$SHA" --arg apk "$existing_sha" '
+              --predicate-type "https://slsa.dev/provenance/v1" \
+              --format json > "$RUNNER_TEMP/verified.json"
+            if ! jq -e --arg sha "$SHA" --arg apk "$existing_sha" '
               [ .[]
-                | (.dsseEnvelope.payload // .bundle.dsseEnvelope.payload // empty)
-                | select(. != null)
+                | .attestation.bundle.dsseEnvelope.payload
                 | @base64d | fromjson
                 | select(.subject[0].digest.sha256 == $apk)
               ] as $statements
@@ -611,7 +639,7 @@ jobs:
                   (.predicate.buildDefinition.resolvedDependencies // []) as $dependencies
                   | ($dependencies | length) == 1
                     and $dependencies[0].digest.gitCommit == $sha)
-            ' "$existing_bundle" > /dev/null; then
+            ' "$RUNNER_TEMP/verified.json" > /dev/null; then
               echo "::error::the existing release attestation does not bind the published APK to the resolved commit $SHA"
               exit 1
             fi

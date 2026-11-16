@@ -73,11 +73,31 @@ async function harness(t, { statements = null, gitCommit = SHA, apkSha = null, p
   await mkdir(join(root, 'dist'));
   await mkdir(bin);
   const log = join(root, 'gh.log');
-  // The signature check is `gh`'s job, not this test's: the shim proves the
-  // step runs it with the pinned flags and fails closed when it says no.
+  const verifiedJson = join(root, 'verified-input.json');
+  // The signature check is `gh`'s job, not this test's. The shim proves the
+  // step runs it with the pinned flags, fails closed when it says no, and
+  // emits the verified entries that `--format json` would return. An entry
+  // marked `verified: false` is written to the bundle but never appears in
+  // that output, exactly as gh omits an unsigned line.
   await writeFile(
     join(bin, 'gh'),
-    ['#!/bin/sh', 'printf "%s\\n" "$*" >> "$GH_LOG"', 'exit "${GH_VERIFY_STATUS:-0}"', ''].join('\n'),
+    [
+      '#!/bin/sh',
+      'printf "%s\\n" "$*" >> "$GH_LOG"',
+      'bundle=""',
+      'previous=""',
+      'for argument in "$@"; do',
+      '  if [ "$previous" = "--bundle" ]; then bundle="$argument"; fi',
+      '  previous="$argument"',
+      'done',
+      'if [ -n "$bundle" ] && [ ! -f "$bundle" ]; then',
+      '  echo "error: bundle not found: $bundle" >&2',
+      '  exit 1',
+      'fi',
+      'if [ "${GH_VERIFY_STATUS:-0}" -ne 0 ]; then exit "$GH_VERIFY_STATUS"; fi',
+      'cat "$GH_VERIFIED_JSON"',
+      '',
+    ].join('\n'),
     { mode: 0o755 }
   );
   const apk = join(root, 'dist', 'drypoint-1.0.3.apk');
@@ -85,17 +105,31 @@ async function harness(t, { statements = null, gitCommit = SHA, apkSha = null, p
   const digest = createHash('sha256').update(await readFile(apk)).digest('hex');
   const bundle = join(root, 'dist', 'drypoint-1.0.3.apk.intoto.jsonl');
   const entries = statements ?? [{ gitCommit, apkSha, predicate }];
-  const lines = entries.map((entry) => {
-    const payload = Buffer.from(
+  const payloads = entries.map((entry) =>
+    Buffer.from(
       JSON.stringify(statement({ gitCommit: entry.gitCommit, apkSha: entry.apkSha ?? digest, predicate: entry.predicate ?? null }))
-    ).toString('base64');
-    return JSON.stringify({
+    ).toString('base64')
+  );
+  const lines = payloads.map((payload) =>
+    JSON.stringify({
       mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
       dsseEnvelope: { payloadType: 'application/vnd.in-toto+json', payload, signatures: [] },
-    });
-  });
+    })
+  );
   await writeFile(bundle, `${lines.join('\n')}\n`);
-  return { root, digest, bin, log };
+  const verified = payloads
+    .filter((_, index) => entries[index].verified !== false)
+    .map((payload) => ({
+      attestation: {
+        bundle: {
+          mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
+          dsseEnvelope: { payloadType: 'application/vnd.in-toto+json', payload, signatures: [] },
+        },
+      },
+      verificationResult: { statement: JSON.parse(Buffer.from(payload, 'base64').toString('utf8')) },
+    }));
+  await writeFile(verifiedJson, JSON.stringify(verified));
+  return { root, digest, bin, log, verifiedJson };
 }
 
 function runStep(paths, sha = SHA, environment = {}) {
@@ -105,6 +139,8 @@ function runStep(paths, sha = SHA, environment = {}) {
       ...process.env,
       PATH: `${paths.bin}:${process.env.PATH}`,
       GH_LOG: paths.log,
+      GH_VERIFIED_JSON: paths.verifiedJson,
+      RUNNER_TEMP: paths.root,
       VERSION,
       SHA: sha,
       GITHUB_REPOSITORY: 'LLM-4-People/drypoint',
@@ -194,11 +230,12 @@ test('the generated predicate passes the workflow assertion', async (t) => {
   const calls = (await readFile(paths.log, 'utf8')).trim().split('\n');
   const verify = calls.find((call) => call.startsWith('attestation verify'));
   assert.ok(verify, 'the step verifies the bundle signature before parsing it');
-  for (const flag of ['--bundle', '-R', '--signer-workflow', '--predicate-type']) {
+  for (const flag of ['--bundle', '-R', '--signer-workflow', '--predicate-type', '--format']) {
     assert.ok(verify.includes(flag), `the verification passes ${flag}`);
   }
   assert.ok(verify.includes('LLM-4-People/drypoint/.github/workflows/release.yml'), 'the signer workflow is pinned');
   assert.ok(verify.includes('https://slsa.dev/provenance/v1'), 'the predicate type is pinned');
+  assert.ok(verify.includes('--format json'), 'the verified entries are requested as JSON');
 });
 
 test('a signature check that rejects the bundle fails before parsing it', async (t) => {
@@ -212,10 +249,24 @@ test('a signature check that rejects the bundle fails before parsing it', async 
 
 test('an older attestation for another commit does not block this release', async (t) => {
   // A dry run or GitHub's automatic release attestation can add a statement.
-  // At least one statement for this APK must bind the resolved commit.
+  // At least one verified statement for this APK must bind the resolved commit.
   const paths = await harness(t, { statements: [{ gitCommit: MAIN_HEAD }, { gitCommit: SHA }] });
   const output = runStep(paths);
   assert.match(output, new RegExp(`provenance binds ${paths.digest} to ${SHA}`));
+});
+
+test('a forged line in a multi-statement bundle does not satisfy the binding', async (t) => {
+  // The real line binds another commit; the appended line naming the resolved
+  // commit is not signed, so gh omits it from the verified JSON. Parsing the
+  // raw bundle would accept it.
+  const paths = await harness(t, {
+    statements: [{ gitCommit: MAIN_HEAD }, { gitCommit: SHA, verified: false }],
+  });
+  assert.throws(
+    () => runStep(paths),
+    (error) => error.status !== 0 && /does not bind the signed APK to the resolved commit/.test(`${error.stdout}${error.stderr}`),
+    'an unverified line is never considered'
+  );
 });
 
 test('no statement binding the resolved commit still fails', async (t) => {
