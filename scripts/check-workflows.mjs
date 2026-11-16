@@ -43,6 +43,25 @@ export const WORKFLOW_DIR = '.github/workflows';
 export const RELEASE_FILE = 'release.yml';
 /** The one aggregate job whose whole purpose is to read its legs' results. */
 export const AGGREGATE_JOB = 'required';
+/** The one environment that holds the release signing key. */
+export const RELEASE_ENVIRONMENT = 'release';
+
+/**
+ * Every workflow this repository owns. A candidate can add `.github/workflows/
+ * release.yaml`, which GitHub runs exactly like `release.yml` but which the
+ * release-specific policy would never inspect. The set is therefore closed:
+ * an added, renamed or removed workflow is a finding.
+ */
+export const OWNED_WORKFLOWS = Object.freeze([
+  'actionlint.yml',
+  'checks.yml',
+  'codeql.yml',
+  'dependency-review.yml',
+  'pages.yml',
+  'release.yml',
+  'scorecard.yml',
+  'stale.yml',
+]);
 
 /**
  * The only actions this repository may use, each pinned to one commit. A
@@ -93,7 +112,7 @@ export const GATE_COMMANDS = Object.freeze({
       'npm ci',
       'bash scripts/android-sdk.sh',
       'npm run build:android',
-      'node scripts/check-apk.mjs --apk "android/build/drypoint-${version}.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
+      'node scripts/check-apk.mjs --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
       'git diff --exit-code',
       'test -z "$(git status --porcelain)"',
     ]),
@@ -111,6 +130,10 @@ const MASK_COMMANDS = new Set(['true', ':', 'exit 0']);
 const SHA = /^[0-9a-f]{40}$/;
 /** A masked gate step is rejected in both workflows that hold authority. */
 const MASKABLE_WORKFLOWS = new Set(['checks.yml', RELEASE_FILE]);
+/** A secret reference in any job that is not the one signing job. */
+const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/;
+/** The exact opt-in a gated step may put before its registered command. */
+const GATE_PREAMBLE = 'set -euo pipefail';
 
 /** YAML may hold a scalar or a list in either form; callers want a list. */
 function list(value) {
@@ -446,7 +469,13 @@ function usesFindings(step, file, jobName) {
     return findings;
   }
   const value = step.uses;
-  if (value.startsWith('./')) return findings;
+  if (value.startsWith('./')) {
+    // A local action is candidate or repository code, not a pinned action. In
+    // the trusted `policy` job the candidate checkout is present, so a local
+    // action there would run candidate code before the gate.
+    findings.push(`${file}: job "${jobName}" must not run a local action: ${value}`);
+    return findings;
+  }
   const at = value.lastIndexOf('@');
   const action = at < 0 ? value : value.slice(0, at);
   const ref = at < 0 ? '' : value.slice(at + 1);
@@ -529,12 +558,10 @@ function aggregateFindings(workflow, jobs, file) {
   const scriptStep = steps.find((step) => stepCommands(step).includes('node scripts/check-required.mjs'));
   if (!scriptStep) {
     findings.push(`${file}: job "${AGGREGATE_JOB}" must call node scripts/check-required.mjs`);
-  } else {
-    if (String(scriptStep.env?.NEEDS ?? '').trim() !== '${{ toJSON(needs) }}') {
-      findings.push(`${file}: job "${AGGREGATE_JOB}" must pass NEEDS: \${{ toJSON(needs) }} to the script`);
-    }
-    findings.push(...maskedStepFindings(scriptStep, file, AGGREGATE_JOB, stepCommands(scriptStep)));
+  } else if (String(scriptStep.env?.NEEDS ?? '').trim() !== '${{ toJSON(needs) }}') {
+    findings.push(`${file}: job "${AGGREGATE_JOB}" must pass NEEDS: \${{ toJSON(needs) }} to the script`);
   }
+  findings.push(...gateStepFindings(aggregate, file, AGGREGATE_JOB, ['node scripts/check-required.mjs']));
 
   const logic = steps
     .flatMap((step) => [...stepCommands(step), JSON.stringify(step.env ?? {}), typeof step.with?.script === 'string' ? step.with.script : ''])
@@ -584,6 +611,8 @@ export function parsedWorkflowFindings(workflow, file) {
 
   findings.push(...aggregateFindings(workflow, jobs, file));
   findings.push(...withScriptFindings(workflow, file));
+  findings.push(...environmentFindings(workflow, file));
+  findings.push(...secretFindings(workflow, file));
   if (file === 'checks.yml') {
     const on = isMap(workflow.on) ? workflow.on : {};
     if (!list(on.push?.tags).includes('v*')) findings.push(`${file}: Checks must run on v* tag pushes so the release can resolve them`);
@@ -599,8 +628,54 @@ export function parsedWorkflowFindings(workflow, file) {
 }
 
 /**
- * Every required merge-gate command must appear exactly once, in a step that
- * cannot be skipped or masked.
+ * The one gate-step grammar.
+ *
+ * A gate step's shell body must be exactly a contiguous slice of the job's
+ * registered command list, optionally prefixed by `set -euo pipefail`. The
+ * slices, in step order, must concatenate to the whole list exactly.
+ *
+ * Matching text is not enough: `if false; then <gate>; fi`, a here-doc, a
+ * pipeline (`| cat`), `|| /bin/true`, a subshell, a brace group or a `sh -c`
+ * wrapper all put commands around the registered one that a substring scan
+ * never sees. Those forms add tokens, so the body is no longer the registered
+ * sequence and the step is rejected. `set -euo pipefail` is the only accepted
+ * preamble; every other command in a gate step is a finding.
+ */
+function gateStepFindings(job, file, jobName, required) {
+  const findings = [];
+  const observed = [];
+  for (const step of stepsOf(job)) {
+    const commands = stepCommands(step);
+    if (!commands.length) continue;
+    const body = commands[0] === GATE_PREAMBLE ? commands.slice(1) : commands;
+    if (!body.some((command) => required.includes(command))) continue;
+
+    findings.push(...maskedStepFindings(step, file, jobName, commands));
+    const start = body.length ? required.indexOf(body[0]) : -1;
+    const expected = start < 0 ? [] : required.slice(start, start + body.length);
+    const exact =
+      start >= 0 && body.length === expected.length && body.every((command, index) => command === expected[index]);
+    if (!exact) {
+      findings.push(
+        `${file}: job "${jobName}" gate step must run only the registered commands; found ${JSON.stringify(body)}`
+      );
+      continue;
+    }
+    observed.push(...body);
+  }
+  if (observed.join('\n') !== required.join('\n')) {
+    findings.push(
+      `${file}: job "${jobName}" must run exactly these commands in order: ${required.join(' | ')}; found ${
+        observed.join(' | ') || 'none'
+      }`
+    );
+  }
+  return findings;
+}
+
+/**
+ * Every required merge-gate command must appear in the registered order, in
+ * gate steps that cannot be skipped or masked.
  */
 function gateFindings(workflow, jobs, file) {
   const gates = GATE_COMMANDS[file];
@@ -612,16 +687,58 @@ function gateFindings(workflow, jobs, file) {
       findings.push(`${file}: job "${jobName}" is missing`);
       continue;
     }
-    for (const command of required) {
-      const holders = stepsOf(job).filter((step) => stepCommands(step).includes(command));
-      if (holders.length !== 1) {
-        findings.push(
-          `${file}: job "${jobName}" must run exactly one ${holders.length ? 'step with' : 'step containing'} "${command}"`
-        );
-        continue;
-      }
-      const [step] = holders;
-      findings.push(...maskedStepFindings(step, file, jobName, stepCommands(step)));
+    findings.push(...gateStepFindings(job, file, jobName, required));
+  }
+  return findings;
+}
+
+/**
+ * The environment names one `environment:` value declares. GitHub accepts a
+ * bare name or a map with `name`; both are the same environment grant.
+ */
+function environmentNames(value) {
+  if (typeof value === 'string') return [value];
+  if (isMap(value) && typeof value.name === 'string') return [value.name];
+  return [];
+}
+
+/**
+ * Only `release.yml`'s `sign` job may enter the release environment. Every
+ * other job in every workflow is rejected, including a map-form spelling of the
+ * same name. The environment holds the signing key; `environment:` is a grant
+ * exactly like a permission.
+ */
+function environmentFindings(workflow, file) {
+  const findings = [];
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    if (!isMap(job) || job.environment == null) continue;
+    if (!environmentNames(job.environment).includes(RELEASE_ENVIRONMENT)) continue;
+    const owner = file === RELEASE_FILE && name === 'sign' && job.environment === RELEASE_ENVIRONMENT;
+    if (!owner) {
+      findings.push(
+        `${file}: job "${name}" must not use the ${RELEASE_ENVIRONMENT} environment; only ${RELEASE_FILE}'s "sign" job may`
+      );
+    }
+  }
+  return findings;
+}
+
+/**
+ * A secret reference anywhere in a job (env, step env, `with:`, or the `run:`
+ * body itself) is a grant of the secret to that job. Only the signing job may
+ * read one.
+ */
+function secretFindings(workflow, file) {
+  const findings = [];
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    if (!isMap(job)) continue;
+    if (file === RELEASE_FILE && name === 'sign') continue;
+    const text = JSON.stringify([
+      job.env ?? {},
+      stepsOf(job).map((step) => ({ env: step.env ?? {}, with: step.with ?? {}, run: step.run ?? '' })),
+    ]);
+    if (SECRET_REFERENCE.test(text)) {
+      findings.push(`${file}: job "${name}" must not read secrets; only ${RELEASE_FILE}'s "sign" job may`);
     }
   }
   return findings;
@@ -754,16 +871,15 @@ function resolveFindings(workflow, file) {
 }
 
 function jobGateFindings(workflow, file, name, required) {
-  const findings = [];
   const job = workflow?.jobs?.[name];
   if (!isMap(job)) return [`${file}: job "${name}" is missing`];
+  const findings = gateStepFindings(job, file, name, required);
+  const steps = stepsOf(job);
   for (const command of required) {
-    const holders = stepsOf(job).filter((step) => stepCommands(step).includes(command));
-    if (holders.length !== 1) {
-      findings.push(`${file}: job "${name}" must run exactly one step containing "${command}"`);
-      continue;
+    const holder = steps.find((step) => stepCommands(step).includes(command));
+    if (holder && holder['working-directory'] !== '${{ env.RELEASE_TREE }}') {
+      findings.push(`${file}: job "${name}" must run "${command}" in the resolved worktree`);
     }
-    findings.push(...maskedStepFindings(holders[0], file, name, stepCommands(holders[0])));
   }
   return findings;
 }
@@ -811,12 +927,6 @@ function buildFindings(workflow, file) {
     }
     if (!run.includes('RELEASE_TREE') || !run.includes('GITHUB_ENV')) {
       findings.push(`${file}: job "build" must export RELEASE_TREE to later steps`);
-    }
-  }
-  for (const command of required) {
-    const holder = steps.find((step) => stepCommands(step).includes(command));
-    if (holder && holder['working-directory'] !== '${{ env.RELEASE_TREE }}') {
-      findings.push(`${file}: job "build" must run "${command}" in the resolved worktree`);
     }
   }
   if (!steps.some((step) => stepCommands(step).some((command) => command.startsWith('node scripts/check-apk.mjs')))) {
@@ -1000,7 +1110,19 @@ export async function checkWorkflows({ root = ROOT, workflows } = {}) {
     .sort();
   const findings = [];
   for (const name of names) {
+    if (!OWNED_WORKFLOWS.includes(name)) {
+      findings.push(
+        `${name}: workflow is not owned; GitHub runs every .yml/.yaml file, so the owned set is exactly ${OWNED_WORKFLOWS.join(', ')}`
+      );
+    }
+  }
+  for (const name of OWNED_WORKFLOWS) {
+    if (!names.includes(name)) findings.push(`${name}: owned workflow is missing`);
+  }
+  for (const name of names) {
     const text = await readFile(join(directory, name), 'utf8');
+    // The general policy (environment, secrets, permissions, pins, masks) is
+    // applied to every file, not only the release workflow.
     findings.push(...checkWorkflow(text, { file: name }));
     if (basename(name) === RELEASE_FILE) findings.push(...checkReleaseWorkflow(text, { file: name }));
   }

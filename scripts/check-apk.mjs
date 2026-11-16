@@ -16,7 +16,12 @@
  * an APK.
  *
  * Usage:
- *   node scripts/check-apk.mjs --apk android/build/drypoint.apk --aapt2 <path> [--apksigner <path>]
+ *   node scripts/check-apk.mjs --aapt2 <path> [--apksigner <path>] [--apk <path>]
+ *
+ * `--apk` defaults to `android/build/drypoint-<package.json version>.apk`, the
+ * name `build-android.mjs` publishes. The workflow gate therefore passes the
+ * tool paths only, so the gated command is one exact command with no shell
+ * arithmetic around it.
  */
 
 import { createHash } from 'node:crypto';
@@ -30,6 +35,16 @@ import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
 export const ROOT = resolve(import.meta.dirname, '..');
 const WWW = 'assets/www/';
 const INTERNET = /uses-permission(?:-sdk-23)?:\s*name='android\.permission\.INTERNET'/;
+
+/** The version in package.json: one owner of the default artifact name. */
+export function packageVersion(root = ROOT) {
+  return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+}
+
+/** The APK `build-android.mjs` publishes for the current package version. */
+export function defaultApkPath(root = ROOT) {
+  return join(root, 'android', 'build', `drypoint-${packageVersion(root)}.apk`);
+}
 
 /** The generated precache manifest, read without importing the app. */
 export function readPrecache(root = ROOT) {
@@ -178,7 +193,7 @@ function parseArguments(argv) {
     else if (argument === '--apksigner') options.apksigner = argv[++index] ?? '';
     else throw new Error(`unknown option ${argument}`);
   }
-  if (!options.apk) throw new Error('--apk is required');
+  if (!options.apk) options.apk = defaultApkPath();
   if (!options.aapt2) throw new Error('--aapt2 is required');
   return options;
 }

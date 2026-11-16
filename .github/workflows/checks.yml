@@ -35,25 +35,22 @@ jobs:
       - name: Install the one dev-only dependency
         run: npm ci
       - name: Generated files are current
-        run: |
-          set -euo pipefail
-          npm run build:brand -- --check
-          npm run check:precache
+        run: npm run build:brand -- --check
+      - name: The precache manifest is current
+        run: npm run check:precache
       - name: Privacy gate
         run: npm run privacy:check
       - name: Unit test suite (the browser suites have their own job)
         run: npm run test:unit
-      - name: Documentation, generated docs and workflow policy
-        # All four are gates, so all four run in the merge gate on every web
-        # leg. There is no separate path-filtered Docs workflow: a docs-only
-        # pull request gets the same checks here. The trusted copy of the
-        # workflow policy runs in the `policy` job; this leg gives a pull
-        # request the same answer without waiting for it.
-        run: |
-          set -euo pipefail
-          node scripts/build-docs.mjs --check
-          npm run docs:check
-          npm run workflows:check
+      - name: Generated documentation is current
+        # Every gate command is one exact step. The trusted policy job runs the
+        # same gates from main; this leg gives a pull request the answer without
+        # waiting for it.
+        run: node scripts/build-docs.mjs --check
+      - name: Documentation links and generated docs
+        run: npm run docs:check
+      - name: Workflow policy
+        run: npm run workflows:check
       - name: No tracked file changed
         run: git diff --exit-code
       - name: No untracked file was left behind
@@ -155,10 +152,9 @@ jobs:
           printf '%s\n' "$badging" | grep -F "package: name='${package_id}' versionCode='${version_code}' versionName='${version}'"
           sha256sum "$apk"
       - name: The built APK matches its manifest and policy
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          node scripts/check-apk.mjs --apk "android/build/drypoint-${version}.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
+        # The artifact name defaults to package.json's version inside the check,
+        # so this gate step is one exact command with no shell arithmetic.
+        run: node scripts/check-apk.mjs --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
       - name: No tracked file changed
         # The build regenerates resources and the precache stamp. A tracked
         # file that moved means the committed generated files are stale.
