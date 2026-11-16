@@ -561,8 +561,8 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
    * prerequisites too, configuration commands only need a supported model with
    * real geometry.
    */
-  function assertSupported({ requiresPaper = false } = {}) {
-    const gate = supportGate(state.capabilities, { requiresPaper });
+  function assertSupported({ requiresPaper = false, action = 'print' } = {}) {
+    const gate = supportGate(state.capabilities, { requiresPaper, action });
     if (!gate.allowed) throw new PrinterError(gate.reason);
     return gate;
   }
@@ -682,7 +682,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function calibrate() {
     assertConnected();
     assertIdle();
-    assertSupported({ requiresPaper: true });
+    assertSupported({ requiresPaper: true, action: 'feed' });
     const data = await client.request('calibrate', { value: 0x01 });
     const accepted = data?.[0] === 0x01;
     log.info('calibrate', { accepted });

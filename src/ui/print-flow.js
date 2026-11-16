@@ -55,25 +55,34 @@ export function printButtonState({ printing = false, finishing = false, empty = 
       supportBlocked: '',
     };
   }
+  // Offline is the app's normal start state, not a model refusal: the operator
+  // has to connect first, so that is the one answer the buttons quote.
+  if (offline) {
+    return {
+      disabled: true,
+      title: 'Connect the printer to print',
+      testDisabled: true,
+      testTitle: 'Connect the printer first',
+      supportBlocked: '',
+    };
+  }
   // A sensor refusal is a paper prerequisite, not a model/geometry refusal:
   // the buttons stay enabled so the press can show the sensor reason.
   const blocked = gate && !gate.allowed && gate.kind !== 'sensor' ? String(gate.reason ?? '') : '';
   const title = blocked
     ? blocked
-    : offline
-      ? 'Connect the printer to print'
-      : empty
-        ? 'Show at least one element before printing'
-        : reading
-          ? 'Wait for the device info read to finish'
-          : oversized
-            ? 'The label is larger than the printer; it will be shortened to fit'
-            : '';
+    : empty
+      ? 'Show at least one element before printing'
+      : reading
+        ? 'Wait for the device info read to finish'
+        : oversized
+          ? 'The label is larger than the printer; it will be shortened to fit'
+          : '';
   return {
-    disabled: Boolean(blocked) || offline || empty || reading,
+    disabled: Boolean(blocked) || empty || reading,
     title,
-    testDisabled: Boolean(blocked) || offline || reading,
-    testTitle: blocked || (offline ? 'Connect the printer first' : reading ? 'Wait for the device info read to finish' : ''),
+    testDisabled: Boolean(blocked) || reading,
+    testTitle: blocked || (reading ? 'Wait for the device info read to finish' : ''),
     supportBlocked: blocked,
   };
 }
@@ -203,11 +212,12 @@ export function createPrintFlow({
     try {
       // A missing decode must fail the job instead of printing a blank hole.
       await hydrate(target);
-      const { canvas, warnings } = render(target, options);
+      const { canvas, warnings, hidden = 0 } = render(target, options);
+      const warningReport = { warnings, hidden };
       // Keep the warnings in the stage hint, even when the user cancels here —
       // but only for the label on screen: a test print must not overwrite the
       // current label's warning with the test document's.
-      if (current) onWarnings(warnings);
+      if (current) onWarnings(warningReport);
       // An experimental model is allowed, but never silently. The one
       // pre-print confirmation names the support state; with no warnings it is
       // still shown, so the operator is told before paper moves.
@@ -219,7 +229,7 @@ export function createPrintFlow({
       if (warnings.length) {
         const proceed = await confirm(
           'Print with warnings?',
-          [experimentalText, summariseWarnings(warnings, { limit: 20 })].filter(Boolean).join('\n\n'),
+          [experimentalText, summariseWarnings(warningReport, { limit: 20 })].filter(Boolean).join('\n\n'),
           {
             confirmLabel: 'Print anyway',
             tone: 'primary',
@@ -271,6 +281,13 @@ export function createPrintFlow({
       // state channel, so the same text is never announced twice. A failed job
       // is an error, exactly like a failed connect.
       log.error('print failed', { message: error.message });
+      if (!device.connected) {
+        // The connection owner reports a lost link (and owns #status): a second
+        // toast here used to repeat the same event as a generic failure. Other
+        // print failures still take the toast below.
+        log.debug('print failure belongs to the disconnected link');
+        return;
+      }
       setStatus('');
       notify(error.message, { tone: 'error' });
     } finally {
@@ -294,6 +311,14 @@ export function createPrintFlow({
     },
     get busy() {
       return busy;
+    },
+    /**
+     * The job phase a disconnect has to describe: nothing is on the wire while
+     * preparing, only the finished-job refresh while finishing, and paper may
+     * have moved as soon as the job started.
+     */
+    get phase() {
+      return printing ? 'printing' : busy ? 'preparing' : 'idle';
     },
   };
 }

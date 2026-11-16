@@ -303,13 +303,29 @@ test('a request or a navigation outside the app origin is refused, never release
   assert.match(predicate, /HOST\.equals\(url\.getHost\(\)\)/, 'a foreign host is not the app');
   assert.match(predicate, /url != null/, 'a null URL is not the app');
 
+  // Only the three locally resolved schemes are released to the WebView: an
+  // imported image is a data URL and a canvas paint is a blob URL.
+  const embedded = methodBody(activity, 'private static boolean isEmbeddedScheme(Uri url)');
+  for (const scheme of ['data', 'blob', 'about']) {
+    assert.match(embedded, new RegExp(`"${scheme}"\\.equalsIgnoreCase\\(scheme\\)`), `${scheme}: is a local scheme`);
+  }
+  for (const scheme of ['http', 'https', 'file', 'content', 'ftp', 'javascript']) {
+    assert.doesNotMatch(embedded, new RegExp(`"${scheme}"\\.equalsIgnoreCase\\(scheme\\)`), `${scheme}: is never local`);
+  }
+
   const intercept = methodBody(activity, 'public WebResourceResponse shouldInterceptRequest(');
+  assert.match(intercept, /if \(isEmbeddedScheme\(url\)\) return null;/, 'a local resource is released');
   assert.match(intercept, /if \(!isAppUrl\(url\)\) return textResponse\(403, "Forbidden"\)/, 'a foreign request is answered 403');
-  assert.doesNotMatch(intercept, /return null/, 'returning null released the request to the network');
+  assert.equal((intercept.match(/return null/g) ?? []).length, 1, 'the only released request is the local scheme');
+  assert.ok(
+    intercept.indexOf('isEmbeddedScheme(url)') < intercept.indexOf('isAppUrl(url)'),
+    'the local scheme check runs before the app/network refusal'
+  );
   assert.match(methodBody(activity, 'private static String reasonOf(int status)'), /case 403:\s*\n\s*return "Forbidden"/);
 
   const override = methodBody(activity, 'public boolean shouldOverrideUrlLoading(');
   assert.match(override, /return !isAppUrl\(request\.getUrl\(\)\)/, 'a foreign navigation stays in the app instead of leaving it');
+  assert.doesNotMatch(override, /isEmbeddedScheme/, 'a data: navigation is conservatively refused too');
 });
 
 test('saveFile publishes the download row only after the bytes are complete', () => {
@@ -380,6 +396,23 @@ test('the versionCode arithmetic refuses a component that would collide', () => 
   const shipped = JSON.parse(read('package.json')).version;
   const [major, minor, patch] = shipped.split('.').map(Number);
   assert.equal(versionCodeOf(shipped), major * 10000 + minor * 100 + patch, 'the shipped version fits');
+});
+
+test('the versionCode is monotonic for an upgrade sequence', () => {
+  const ordered = ['1.0.0', '1.0.1', '1.0.2', '1.1.0', '2.0.0'];
+  const codes = ordered.map((version) => versionCodeOf(version));
+  for (let index = 1; index < codes.length; index++) {
+    assert.ok(codes[index] > codes[index - 1], `${ordered[index]} (${codes[index]}) must install over ${ordered[index - 1]} (${codes[index - 1]})`);
+  }
+  // And every patch/minor step inside a line stays ordered, so a formula
+  // change that compressed or reordered the digits fails here.
+  for (let minor = 0; minor < 3; minor++) {
+    for (let patch = 0; patch < 3; patch++) {
+      const version = `1.${minor}.${patch}`;
+      assert.ok(versionCodeOf(version) < versionCodeOf(`1.${minor}.${patch + 1}`), `${version} < next patch`);
+      assert.ok(versionCodeOf(version) < versionCodeOf(`1.${minor + 1}.0`), `${version} < next minor`);
+    }
+  }
 });
 
 test('the signing schemes follow the manifest minimum', () => {

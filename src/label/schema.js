@@ -27,7 +27,7 @@ export const IMAGE_DITHERS = Object.freeze(['auto', ...DITHER_MODES]);
 const SYMBOLOGY_IDS = Object.freeze(Object.keys(SYMBOLOGIES));
 
 const { minLengthMm, defaultLengthMm, paddingPx } = CONFIG.geometry;
-const { maxElements, maxTextChars, maxValueChars, maxNameChars, maxSrcChars, maxNotices, maxNoticeChars } = CONFIG.bounds;
+const { maxElements, maxTextChars, maxValueChars, maxNameChars, maxSrcChars, maxSourceChars, maxNotices, maxNoticeChars } = CONFIG.bounds;
 
 function defaultsFor(type) {
   const widthPx = geometry().widthPx;
@@ -229,6 +229,36 @@ export function droppedSourceNotice() {
 }
 
 /**
+ * One wording for the per-document image budget. An element may be within the
+ * per-source cap and still push the label past what one transfer file can
+ * carry, because every element repeats its own source in the serialised
+ * document.
+ */
+export function sourceBudgetNotice(count = 1) {
+  const subject = count === 1 ? '1 image source was' : `${count} image sources were`;
+  return `${subject} dropped because the label's image data exceeds ${maxSourceChars} characters. Remove or reuse an image.`;
+}
+
+/**
+ * The refusal the editor shows when one more source would pass the document
+ * budget. Same owner and limit as `sourceBudgetNotice`, different action.
+ */
+export function sourceBudgetRefusalNotice() {
+  return `Adding this image would give the label more than ${maxSourceChars} characters of image data. Remove or reuse an image first.`;
+}
+
+/**
+ * One wording for text shortened by the input bounds, shared by the storage
+ * validation and the editor's add/update paths so an edit-path truncation is
+ * never silent.
+ */
+export function truncatedNotice(count = 1) {
+  return count === 1
+    ? '1 element had text shortened to fit the label limits.'
+    : `${count} elements had text shortened to fit the label limits.`;
+}
+
+/**
  * The one input-bound policy for element strings. The stored label, an import
  * and the inspector all pass through here, so one owner decides how much text a
  * field may carry. An image source longer than the cap is dropped whole:
@@ -340,6 +370,8 @@ export function validateDocument(input) {
   let droppedSources = 0;
   let droppedUnknown = 0;
   let truncatedElements = 0;
+  let droppedBudget = 0;
+  let sourceChars = 0;
   for (const raw of Array.isArray(source.elements) ? source.elements : []) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Object.values(ELEMENT_TYPES).includes(raw.type)) {
       droppedUnknown++;
@@ -352,7 +384,20 @@ export function validateDocument(input) {
       continue;
     }
     if (raw.type === ELEMENT_TYPES.IMAGE && typeof raw.src === 'string' && raw.src.length > maxSrcChars) droppedSources++;
-    const { element, truncated } = normaliseElement(raw, defaultsFor(raw.type));
+    // A source that survives the per-element cap still shares one document
+    // budget: the serialised label repeats a source once per element, so a
+    // reused image grows the file too. Drop the source here, at the same owner
+    // that bounds every stored and imported document.
+    let candidate = raw;
+    if (raw.type === ELEMENT_TYPES.IMAGE && typeof raw.src === 'string' && raw.src.length && raw.src.length <= maxSrcChars) {
+      if (sourceChars + raw.src.length > maxSourceChars) {
+        droppedBudget++;
+        candidate = { ...raw, src: '' };
+      } else {
+        sourceChars += raw.src.length;
+      }
+    }
+    const { element, truncated } = normaliseElement(candidate, defaultsFor(candidate.type));
     if (truncated) truncatedElements++;
     if (seen.has(element.id)) element.id = createId(raw.type);
     seen.add(element.id);
@@ -373,11 +418,10 @@ export function validateDocument(input) {
     );
   }
   if (truncatedElements) {
-    notices.push(
-      truncatedElements === 1
-        ? '1 element had text shortened to fit the label limits.'
-        : `${truncatedElements} elements had text shortened to fit the label limits.`
-    );
+    notices.push(truncatedNotice(truncatedElements));
+  }
+  if (droppedBudget) {
+    notices.push(sourceBudgetNotice(droppedBudget));
   }
   if (droppedSources) {
     notices.push(droppedSourceNotice());

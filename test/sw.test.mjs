@@ -8,6 +8,7 @@ import vm from 'node:vm';
 
 import { bootOfflineShell, registerPrecacheErrors, watchPrecacheErrors } from '../src/core/precache-status.js';
 import { CONFIG } from '../src/core/config.js';
+import { BRAND } from '../src/core/brand.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const swSource = readFileSync(resolve(root, 'sw.js'), 'utf8');
@@ -84,6 +85,8 @@ function responseFor({ status = 200, url = '', redirected = false, contentType =
 function createWorker({
   online = true,
   failUrl = null,
+  flakyUrl = null,
+  networkFailUrl = null,
   plan = () => ({}),
   clients = [],
   scope = BASE,
@@ -114,7 +117,19 @@ function createWorker({
     throw new Error(`${throwOn} denied by the storage layer`);
   };
 
-  const state = { online, failUrl, claimed: 0, skipped: 0, errors: [], messages: [], aborted: false };
+  const state = {
+    online,
+    failUrl,
+    flakyUrl,
+    networkFailUrl,
+    claimed: 0,
+    skipped: 0,
+    errors: [],
+    messages: [],
+    aborted: false,
+    attempts: new Map(),
+    flaked: new Set(),
+  };
   const handlers = {};
   // A page is only reached when it is inside the worker's scope, so the default
   // fixture carries the URL a real client always has.
@@ -161,8 +176,14 @@ function createWorker({
       warn: () => {},
     },
     async fetch(url, init = {}) {
-      if (!state.online) throw new Error('offline');
       const href = typeof url === 'string' ? url : url.url;
+      state.attempts.set(href, (state.attempts.get(href) ?? 0) + 1);
+      if (state.networkFailUrl && href.endsWith(state.networkFailUrl)) throw new Error('Failed to fetch');
+      if (state.flakyUrl && href.endsWith(state.flakyUrl) && !state.flaked.has(href)) {
+        state.flaked.add(href);
+        throw new Error('Failed to fetch');
+      }
+      if (!state.online) throw new Error('offline');
       const override = plan(href) ?? {};
       const has = (key) => Object.prototype.hasOwnProperty.call(override, key);
       if (override.hang) {
@@ -224,10 +245,12 @@ function manifest() {
     files: Array.from(sandbox.self.__PRECACHE.files),
     required: Array.from(sandbox.self.__PRECACHE.required),
     navigationTimeoutMs: sandbox.self.__PRECACHE.navigationTimeoutMs,
+    installRetries: sandbox.self.__PRECACHE.installRetries,
+    installRetryDelayMs: sandbox.self.__PRECACHE.installRetryDelayMs,
   };
 }
 
-const liveCache = (worker) => worker.stores.get(`drypoint-${manifest().version}`);
+const liveCache = (worker) => worker.stores.get(`${BRAND.cachePrefix}${manifest().version}`);
 
 test('install caches every generated entry and skips waiting', async () => {
   const worker = createWorker();
@@ -242,7 +265,7 @@ test('install caches every generated entry and skips waiting', async () => {
   for (const file of expected.files) {
     assert.ok(cache.entries.has(`${BASE}${file}`), `${file} is cached`);
   }
-  assert.deepEqual([...worker.stores.keys()], [`drypoint-${expected.version}`], 'the staging cache is removed');
+  assert.deepEqual([...worker.stores.keys()], [`${BRAND.cachePrefix}${expected.version}`], 'the staging cache is removed');
 });
 
 test('a precached module is served from cache when the network is down', async () => {
@@ -328,6 +351,49 @@ test('a missing file fails the install loudly and leaves no half cache', async (
   assert.ok(worker.state.messages.at(-1).problems.some((problem) => problem.includes('src/main.js')));
   assert.equal(worker.stores.size, 0, 'the incomplete cache is deleted');
   assert.equal(worker.state.skipped, 0);
+});
+
+/* ---------------- transient install failures (F2) ---------------- */
+
+const fastRetryManifest = manifestSource.replace(/installRetryDelayMs: \d+/, 'installRetryDelayMs: 1');
+
+test('a transient network failure is retried and the install still completes', async () => {
+  const worker = createWorker({ flakyUrl: 'src/main.js', manifestSource: fastRetryManifest });
+  await worker.dispatch('install', {});
+
+  const expected = manifest();
+  assert.equal(worker.state.skipped, 1, 'the install reached the activate step');
+  assert.equal(liveCache(worker).entries.size, expected.files.length, 'every file is cached, including the retried one');
+  assert.equal(
+    worker.state.attempts.get(`${BASE}src/main.js`),
+    2,
+    'one transient failure costs one retry, then the file succeeds'
+  );
+  assert.equal(worker.stores.size, 1, 'the staging cache is removed');
+});
+
+test('a persistent network failure still fails the install closed', async () => {
+  const worker = createWorker({ networkFailUrl: 'src/main.js', manifestSource: fastRetryManifest });
+  await assert.rejects(worker.dispatch('install', {}), /Precache failed/);
+  assert.equal(worker.state.skipped, 0, 'a failed install never activates');
+  assert.equal(worker.stores.size, 0, 'no partial cache is left behind');
+  assert.ok(
+    worker.state.messages.at(-1).problems.some((problem) => problem.includes('src/main.js') && problem.includes('Failed to fetch')),
+    'the failure names the file and the network reason'
+  );
+  assert.equal(
+    worker.state.attempts.get(`${BASE}src/main.js`),
+    CONFIG.offline.installRetries + 1,
+    'the retry budget is bounded'
+  );
+});
+
+test('an HTTP 404 is never retried', async () => {
+  const worker = createWorker({ failUrl: 'src/main.js', manifestSource: fastRetryManifest });
+  await assert.rejects(worker.dispatch('install', {}), /Precache failed/);
+  assert.equal(worker.state.attempts.get(`${BASE}src/main.js`), 1, 'a host answer is not a transient network failure');
+  assert.ok(worker.state.messages.at(-1).problems.some((problem) => problem.includes('src/main.js: HTTP 404')));
+  assert.equal(worker.stores.size, 0);
 });
 
 test('a same-build failed reinstall keeps the live cache intact', async () => {
@@ -430,11 +496,11 @@ test('activate deletes older drypoint caches and keeps the current one', async (
   assert.equal(worker.state.claimed, 1);
 
   const other = createWorker();
-  other.stores.set('drypoint-old', new FakeCache());
+  other.stores.set(`${BRAND.cachePrefix}old`, new FakeCache());
   other.stores.set('another-app', new FakeCache());
   await other.dispatch('install', {});
   await other.dispatch('activate', {});
-  assert.ok(!other.stores.has('drypoint-old'));
+  assert.ok(!other.stores.has(`${BRAND.cachePrefix}old`));
   assert.ok(other.stores.has('another-app'), 'unrelated caches are untouched');
 });
 
@@ -467,9 +533,12 @@ test('the page-side consumer reports a precache failure and ignores other messag
 
 /* ---------------- bounded navigation and cache-storage failures (R5E-3/R5E-4) ---------------- */
 
-test('the generated manifest carries the one navigation timeout', () => {
+test('the generated manifest carries the one navigation timeout and retry budget', () => {
   assert.equal(manifest().navigationTimeoutMs, CONFIG.offline.navigationTimeoutMs);
   assert.equal(CONFIG.offline.navigationTimeoutMs, 3000);
+  assert.equal(manifest().installRetries, CONFIG.offline.installRetries);
+  assert.equal(manifest().installRetryDelayMs, CONFIG.offline.installRetryDelayMs);
+  assert.equal(CONFIG.offline.installRetries, 2, 'two retries per file');
 });
 
 test('a navigation that never answers returns the cached shell instead of hanging', async () => {

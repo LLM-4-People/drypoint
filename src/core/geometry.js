@@ -13,9 +13,14 @@ const MM_PER_INCH = 25.4;
  * Dot pitch. A reported resolution is the authority: a 300-dpi class is
  * 300/25.4 = 11.81 dots/mm, not the 12 dots/mm its 144-dot head over the tape
  * would suggest. Without a usable dpi the configured 8 dots/mm is the fallback.
+ *
+ * The configured maximum is enforced here, at the one conversion every geometry
+ * path uses, not only in the capability merge: a direct setGeometry({dpi:
+ * 65535}) would otherwise become 2580 dots/mm and a 516k-row raster.
  */
 export function pitchFor({ dpi } = {}) {
-  return Number.isFinite(dpi) && dpi > 0 ? dpi / MM_PER_INCH : CONFIG.geometry.dotsPerMm;
+  const usable = Number.isFinite(dpi) && dpi > 0 && dpi <= CONFIG.geometry.maxDpi;
+  return usable ? dpi / MM_PER_INCH : CONFIG.geometry.dotsPerMm;
 }
 
 function defaults() {

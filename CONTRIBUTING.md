@@ -31,10 +31,12 @@ Chromium is discovered from `D110_CHROME`, then `CHROME_PATH`, then
 browser cache.
 
 <!-- generated:suites -->
-The browser leg runs **6 tests in 5 files**:
+The browser leg runs **8 tests in 7 files**:
 
 - `actionbar-clearance.test.mjs` (1 test)
 - `content-security.test.mjs` (2 tests)
+- `document-transfer.test.mjs` (1 test)
+- `image-hydration.test.mjs` (1 test)
 - `layout-edges.test.mjs` (1 test)
 - `stage-hint.test.mjs` (1 test)
 - `toast-overlay.test.mjs` (1 test)
@@ -50,6 +52,7 @@ npm run test:unit         # the unit suite only
 npm run test:browser      # only the measured browser suites listed above
 npm run check:precache    # fail when the generated offline files are stale
 npm run build:brand -- --check   # fail when a generated brand file drifted
+npm run build:icons -- --check   # fail when a generated icon drifted
 npm run docs:generate     # regenerate the marker blocks in README/CONTRIBUTING
 npm run docs:check        # Markdown and issue-template links and anchors
 npm run privacy:check     # private hosts, paths, serials, foreign e-mails

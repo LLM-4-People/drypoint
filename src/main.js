@@ -23,6 +23,7 @@ import { createInspector } from './ui/inspector.js';
 import { clampZoom, fitZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
 import { createPrintPanel } from './ui/print-panel.js';
 import { createPrintFlow, printButtonState } from './ui/print-flow.js';
+import { reportDisconnect } from './ui/disconnect-report.js';
 import { openSettingsSheet } from './ui/settings-sheet.js';
 import { applyTheme as applyThemeSetting } from './ui/theme.js';
 import { createSaveFailureNotice } from './ui/save-failure.js';
@@ -35,6 +36,7 @@ import { summariseWarnings } from './label/render.js';
 import { TEMPLATES, testDocument } from './label/templates.js';
 import { barcodeFitMessage, barcodeFrame } from './label/barcode.js';
 import { createVisibleImageHydrator, hydrateImages } from './label/images.js';
+import { documentFilename, parseDocument, serializeDocument, transferTooLargeMessage, TRANSFER_MAX_BYTES } from './label/transfer.js';
 
 const log = createLogger('main');
 
@@ -51,6 +53,9 @@ const ui = {
   layerList: $('#layerList'),
   layerCount: $('#layerCount'),
   templateList: $('#templateList'),
+  exportDocument: $('#exportDocumentButton'),
+  importDocument: $('#importDocumentButton'),
+  importDocumentInput: $('#importDocumentInput'),
   labelSize: $('#labelSize'),
   labelPx: $('#labelPx'),
   zoomControls: $('#zoomControls'),
@@ -357,7 +362,9 @@ function rerender() {
   if (document.activeElement !== ui.docName && ui.docName.value !== name) ui.docName.value = name;
   updatePrintButton();
   refitForDocument();
-  hydrateVisibleImages();
+  // The hydrator needs the document: `imageSources(undefined)` is empty, so a
+  // reveal after boot would never start the decode and stay "still loading".
+  hydrateVisibleImages(controller.document);
 }
 
 /**
@@ -375,10 +382,10 @@ const hydrateVisibleImages = createVisibleImageHydrator({
 });
 
 /** One owner for the stage footer text, shared by the canvas and print flow. */
-function setStageWarnings(warnings) {
+function setStageWarnings(report) {
   // The shared setText owner skips identical text, so a rerender with the same
   // warnings produces no DOM mutation for the status role to announce.
-  setText(ui.stageHint, summariseWarnings(warnings));
+  setText(ui.stageHint, summariseWarnings(report));
 }
 
 /**
@@ -456,7 +463,10 @@ async function addElement(type) {
     }
     if (!image) return;
     const frame = newElementFrame(type, controller.document);
-    controller.addElement(type, { src: image.src, ...frame, x: pad, y: Math.round(height / 2 - frame.h / 2) });
+    const added = controller.addElement(type, { src: image.src, ...frame, x: pad, y: Math.round(height / 2 - frame.h / 2) });
+    // A refused add (the element or image-source cap) already reported its
+    // reason; claiming "Image added" would contradict it.
+    if (!added) return;
     toast('Image added', { tone: 'ok' });
     await hydrateAndRepaint();
     return;
@@ -512,6 +522,81 @@ function applyTemplate(template) {
   void hydrateAndRepaint();
 }
 
+/* ---------------- document transfer ---------------- */
+
+/**
+ * Export the label through the one download owner. The file name carries a
+ * timestamp because the Android bridge refuses a display name Downloads
+ * already holds.
+ */
+function exportDocument() {
+  try {
+    const saved = downloadJson(documentFilename(controller.document.name), serializeDocument(controller.document));
+    if (saved === false) {
+      log.warn('label export was refused by the save bridge');
+      toast('Could not save the label file', { tone: 'error' });
+      return;
+    }
+    toast('Label exported', { tone: 'ok' });
+  } catch (error) {
+    log.error('label export failed', { message: error?.message ?? String(error) });
+    toast(`Could not export the label: ${error?.message ?? String(error)}`, { tone: 'error' });
+  }
+}
+
+/**
+ * Read one picked file, refusing an over-size file before reading it. Parsing,
+ * validation and notices belong to `label/transfer.js`; applying the result
+ * goes through `replaceDocument`, which is one undoable step.
+ */
+async function importDocumentFile(file) {
+  const size = Number(file?.size);
+  if (!Number.isFinite(size) || size < 0) {
+    log.warn('label import could not read the file size');
+    toast('That label file could not be read.', { tone: 'error' });
+    return;
+  }
+  if (size > TRANSFER_MAX_BYTES) {
+    log.warn('label import refused an over-size file', { bytes: size, limit: TRANSFER_MAX_BYTES });
+    toast(transferTooLargeMessage(size), { tone: 'error' });
+    return;
+  }
+  let text;
+  try {
+    text = await file.text();
+  } catch (error) {
+    log.warn('label import could not read the file', { message: error?.message ?? String(error) });
+    toast('That label file could not be read.', { tone: 'error' });
+    return;
+  }
+  try {
+    const { document, notices } = parseDocument(text);
+    controller.replaceDocument(document);
+    if (notices.length) {
+      log.warn('label imported with notices', { notices: notices.length });
+      // The same summary owner as the stage footer, so a notice is never
+      // rendered as an unbounded toast. The import succeeded; its info tone is
+      // deliberate even though it names content that had to be shortened.
+      toast(`Label imported. ${summariseWarnings({ warnings: notices, hidden: 0 })}`);
+    } else {
+      toast('Label imported', { tone: 'ok' });
+    }
+    await hydrateAndRepaint();
+  } catch (error) {
+    log.warn('label import failed', { message: error?.message ?? String(error) });
+    toast(error?.message ?? 'That label file could not be imported.', { tone: 'error' });
+  }
+}
+
+ui.exportDocument.addEventListener('click', exportDocument);
+ui.importDocument.addEventListener('click', () => ui.importDocumentInput.click());
+ui.importDocumentInput.addEventListener('change', () => {
+  const file = ui.importDocumentInput.files?.[0];
+  // Clearing lets the same file be chosen again after a failed import.
+  ui.importDocumentInput.value = '';
+  if (file) void importDocumentFile(file);
+});
+
 /* ---------------- zoom ---------------- */
 
 function setZoom(delta) {
@@ -535,13 +620,7 @@ function applyZoom(value, { persist = false } = {}) {
 }
 
 function applyFitZoom() {
-  const document = controller.document;
-  const scale = fitZoom({
-    docWidth: documentWidthPx(document),
-    docHeight: documentHeightPx(document),
-    ...stageViewport(),
-    compact: compactQuery.matches,
-  });
+  const scale = stageFitZoom();
   // fitZoom owns the floor and the clamp; setZoom's manual floor would clip
   // the label again.
   if (scale !== null) {
@@ -675,14 +754,10 @@ device.events.on('printer-error', (error) => {
 
 device.events.on('disconnected', () => {
   setDeviceState();
-  // A link that drops mid-job leaves the raster and the printer state unknown:
-  // say so instead of reporting an ordinary disconnect.
-  if (printFlow.busy) {
-    setStatus('Disconnected during print');
-    toast('Disconnected during print: the label may be incomplete', { tone: 'error' });
-    return;
-  }
-  setStatus('Disconnected');
+  // The same owner reports every lost link: an idle disconnect is status only,
+  // while a job phase makes it one specific toast. The print flow stays silent
+  // for a lost link, so the operator never hears two versions of one event.
+  reportDisconnect({ phase: printFlow.phase, setStatus });
 });
 
 /**
@@ -751,8 +826,12 @@ function updatePrintButton() {
   ui.printButton.title = state.title;
   ui.testButton.disabled = state.testDisabled;
   ui.testButton.title = state.testTitle;
-  // The same reason is the accessible description, not only a tooltip.
+  // The same reason is the accessible description, not only a tooltip, and a
+  // visible banner above the action bar so a sighted user does not have to open
+  // the Print tab to learn why the buttons are disabled. It is absolutely
+  // positioned: showing it never reflows the bar.
   ui.printGateReason.textContent = state.supportBlocked;
+  ui.printGateReason.hidden = !state.supportBlocked;
   for (const button of [ui.printButton, ui.testButton]) {
     if (state.supportBlocked) button.setAttribute('aria-describedby', 'printGateReason');
     else button.removeAttribute('aria-describedby');

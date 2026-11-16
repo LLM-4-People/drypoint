@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createPrintFlow, printButtonState } from '../src/ui/print-flow.js';
+import { reportDisconnect } from '../src/ui/disconnect-report.js';
 import { PrinterError } from '../src/protocol/errors.js';
 import { resetGeometry, setGeometry } from '../src/core/geometry.js';
 import { createEmitter } from '../src/core/events.js';
@@ -325,7 +326,7 @@ test('a test print never overwrites the current label’s stage warning', async 
   await flow.run({ elements: [{ id: 'test_1', type: 'text', visible: true }], copies: 1, lengthMm: 40 });
   assert.deepEqual(calls.warnings, [], 'the shared hint keeps the current label');
   await flow.run();
-  assert.deepEqual(calls.warnings, [['Test document warning']], 'the current label still updates it');
+  assert.deepEqual(calls.warnings, [{ warnings: ['Test document warning'], hidden: 0 }], 'the current label still updates it');
 });
 
 test('“Print anyway” dismisses the notices; a cancelled dialog keeps them', async () => {
@@ -500,6 +501,133 @@ test('the support gate disables both buttons only for model and geometry refusal
   assert.deepEqual(sensor, { disabled: false, title: '', testDisabled: false, testTitle: '', supportBlocked: '' });
   // An allowed gate never adds a support claim.
   assert.equal(printButtonState({ ...base, gate: { allowed: true, reason: null, kind: null } }).supportBlocked, '');
+});
+
+test('offline outranks a model gate the app has not connected to yet', () => {
+  const base = { printing: false, finishing: false, empty: false, offline: true, reading: false };
+  const unknown = { allowed: false, reason: 'Unknown model: no frame was sent.', kind: 'model' };
+  assert.deepEqual(printButtonState({ ...base, gate: unknown }), {
+    disabled: true,
+    title: 'Connect the printer to print',
+    testDisabled: true,
+    testTitle: 'Connect the printer first',
+    supportBlocked: '',
+  });
+  assert.equal(printButtonState({ ...base, offline: false, gate: unknown }).supportBlocked, unknown.reason, 'once connected the gate is quoted');
+});
+
+/* ---------------- job phase and one disconnect report (A4/B2) ---------------- */
+
+test('the flow exposes preparing until the first job frame, then printing', async () => {
+  let releaseHydration;
+  const hydration = new Promise((resolve) => {
+    releaseHydration = resolve;
+  });
+  const preparing = harness({ hydrate: () => hydration });
+  const first = preparing.flow.run();
+  await tick();
+  assert.equal(preparing.flow.phase, 'preparing', 'hydration has not sent a frame');
+  releaseHydration();
+  await first;
+  assert.equal(preparing.flow.phase, 'idle', 'the flow settled');
+
+  let releasePrint;
+  const printingGate = new Promise((resolve) => {
+    releasePrint = resolve;
+  });
+  const printing = harness({ print: () => printingGate.then(() => ({ copies: 1 })) });
+  const second = printing.flow.run();
+  await tick();
+  assert.equal(printing.flow.phase, 'printing', 'the job frame is on the wire');
+  releasePrint();
+  await second;
+  assert.equal(printing.flow.phase, 'idle');
+});
+
+test('a mid-job disconnect produces one toast and keeps the connection status', async () => {
+  const toasts = [];
+  const statuses = [];
+  let flow;
+  const device = {
+    connected: true,
+    state: { capabilities: null },
+    events: { on() {} },
+    async print(raster, options = {}) {
+      options.onStart?.();
+      // The link is lost while the job owns it: the manager publishes idle and
+      // the connection owner reports it before the print promise rejects.
+      device.connected = false;
+      reportDisconnect({ phase: flow.phase, setStatus: (text) => statuses.push(text), notify: (message, options) => toasts.push({ message, options }) });
+      throw new Error('Disconnected');
+    },
+    async cancel() {},
+  };
+  flow = createPrintFlow({
+    device,
+    getDocument: () => ({ elements: [{ id: 't1', type: 'text', visible: true }], copies: 1, lengthMm: 40 }),
+    getSettings: () => ({}),
+    notify: (message, options) => toasts.push({ message, options }),
+    confirm: async () => true,
+    hydrate: async () => {},
+    render: () => ({ canvas: {}, warnings: [] }),
+    rasterize: () => ({ width: 96, height: 320, rows: [] }),
+    setStatus: (text) => statuses.push(text),
+    setProgress: () => {},
+    onPrintingChange: () => {},
+  });
+
+  await flow.run();
+  assert.equal(toasts.length, 1, 'exactly one toast for one lost link');
+  assert.match(toasts[0].message, /label may be incomplete/);
+  assert.equal(statuses.at(-1), 'Disconnected during print', '#status keeps the specific state');
+  assert.ok(!statuses.includes(''), 'the flow did not clear the connection status');
+});
+
+test('a preparing disconnect is honest that nothing was printed', async () => {
+  const toasts = [];
+  const statuses = [];
+  let flow;
+  const device = {
+    connected: true,
+    state: { capabilities: null },
+    events: { on() {} },
+    async print() {
+      throw new Error('A print job is running');
+    },
+    async cancel() {},
+  };
+  flow = createPrintFlow({
+    device,
+    getDocument: () => ({ elements: [{ id: 't1', type: 'text', visible: true }], copies: 1, lengthMm: 40 }),
+    getSettings: () => ({}),
+    notify: (message, options) => toasts.push({ message, options }),
+    confirm: async () => true,
+    hydrate: async () => {
+      device.connected = false;
+      reportDisconnect({ phase: flow.phase, setStatus: (text) => statuses.push(text), notify: (message, options) => toasts.push({ message, options }) });
+      throw new Error('Disconnected');
+    },
+    render: () => ({ canvas: {}, warnings: [] }),
+    rasterize: () => ({ width: 96, height: 320, rows: [] }),
+    setStatus: (text) => statuses.push(text),
+    setProgress: () => {},
+  });
+
+  await flow.run();
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0].message, /Disconnected while preparing; nothing was printed\./);
+  assert.equal(statuses.at(-1), 'Disconnected while preparing');
+});
+
+test('a connected print failure still takes the flow toast', async () => {
+  const { flow, calls } = harness({
+    print: () => {
+      throw new Error('Printer jam');
+    },
+  });
+  await flow.run();
+  assert.deepEqual(calls.toasts, ['Printer jam']);
+  assert.equal(calls.statuses.at(-1), '', 'the job status clears for a normal failure');
 });
 
 /* ---------------- a cancelled print (R5G-7) ---------------- */

@@ -12,9 +12,10 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
 ### Changed
 
 - **The release signing identity is new.** v1.0.0 was signed with a key that
-  was retired before any public install; v1.0.1 is signed by the key whose
-  fingerprint is recorded in `brand.json`. Android treats a different key as a
-  different app, so uninstall v1.0.0 before installing this build.
+  was retired before any known install; the 1.0.0 APK had been downloaded.
+  v1.0.1 is signed by the key whose fingerprint is recorded in `brand.json`.
+  Android treats a different key as a different app, so uninstall v1.0.0 before
+  installing this build.
 - Pages deploys only after the `Checks` run for the same commit succeeds, and
   its smoke test now requests every precached file instead of four.
 - The APK is byte-reproducible: generated ZIP entries carry a fixed timestamp,

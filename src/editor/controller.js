@@ -13,6 +13,8 @@ import {
   documentHeightPx,
   documentWidthPx,
   droppedSourceNotice,
+  sourceBudgetRefusalNotice,
+  truncatedNotice,
   validateDocument,
 } from '../label/schema.js';
 import { CONFIG } from '../core/config.js';
@@ -104,21 +106,54 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
     return true;
   }
 
+  /** Publish one refusal as a non-committed notice, without duplicating it. */
+  function publishRefusal(notice) {
+    if (document.notices?.includes(notice)) return;
+    document = { ...document, notices: [...(document.notices ?? []), notice].slice(0, CONFIG.bounds.maxNotices) };
+    emit({ commit: false, keepNotices: true });
+  }
+
   /**
-   * Refuse a new distinct image source before insertion. The decode cache can
-   * hold only IMAGE_SOURCE_LIMIT bitmaps, so a seventeenth source could never
-   * be painted reliably; the print path refuses the same document. Reusing an
-   * existing source is always allowed.
+   * The one source policy for every mutation that can add image text.
+   *
+   * `replacing` is the element an edit overwrites, so its old source is not
+   * counted twice. The distinct-source cap bounds the decode cache; the
+   * character budget bounds the serialised document, which repeats a source
+   * once per element and therefore grows even when the source is reused.
    */
-  function refuseImageSourceCap(element) {
+  function refuseImageSourceCap(element, replacing = null) {
     if (element?.type !== ELEMENT_TYPES.IMAGE || !element.src) return false;
     const sources = imageSources(document);
-    if (sources.includes(element.src) || sources.length < IMAGE_SOURCE_LIMIT) return false;
-    const notice = imageSourceLimitMessage(sources.length + 1, 'adding another image');
-    if (!document.notices?.includes(notice)) {
-      document = { ...document, notices: [...(document.notices ?? []), notice].slice(0, CONFIG.bounds.maxNotices) };
-      emit({ commit: false, keepNotices: true });
+    if (!sources.includes(element.src) && sources.length >= IMAGE_SOURCE_LIMIT) {
+      publishRefusal(imageSourceLimitMessage(sources.length + 1, 'adding another image'));
+      return true;
     }
+    let chars = element.src.length;
+    for (const each of document.elements) {
+      if (each.id === replacing?.id) continue;
+      if (each.type === ELEMENT_TYPES.IMAGE && typeof each.src === 'string') chars += each.src.length;
+    }
+    if (chars > CONFIG.bounds.maxSourceChars) {
+      publishRefusal(sourceBudgetRefusalNotice());
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Report the content an edit had to bound: the same wording the load path
+   * uses, so a truncation or a dropped source is never a silent rewrite.
+   */
+  function reportBoundedContent({ droppedSrc, truncated }) {
+    const notices = [];
+    if (droppedSrc) notices.push(droppedSourceNotice());
+    if (truncated) notices.push(truncatedNotice());
+    if (!notices.length) return false;
+    // An edit answers the notices that described the document as it arrived,
+    // but what this edit had to drop is a fact about the new document.
+    document = { ...document };
+    delete document.notices;
+    for (const notice of notices) addNotice(notice);
     return true;
   }
 
@@ -130,28 +165,26 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
     // at the one place every mutation passes through.
     const allowed = Object.keys(patch).every((key) => key === 'locked' || key === 'visible');
     if (current.locked && !allowed) return null;
-    let droppedSrc = false;
-    const elements = document.elements.map((element) => {
-      if (element.id !== id) return element;
-      // The inspector edits a document that validation already produced, so
-      // it bypasses validateDocument entirely; the same input-bound owner
-      // must still cap what a paste can put into a field.
-      const bounded = boundElementText({ ...element, ...patch });
-      droppedSrc = bounded.droppedSrc;
-      return clampElement(bounded.element, document);
-    });
+    // The inspector edits a document that validation already produced, so it
+    // bypasses validateDocument entirely; the same input-bound owner must still
+    // cap what a paste can put into a field. Bounding runs before the source
+    // cap so an over-long source is dropped with its notice, exactly as
+    // addElement does, instead of being counted as a seventeenth image.
+    const bounded = boundElementText({ ...current, ...patch });
+    // A source edit is another way an image enters the document, so it meets
+    // the same distinct-source cap addElement applies. Reusing a source that is
+    // already on the label never consumes a slot.
+    const changesSource = Object.prototype.hasOwnProperty.call(patch, 'src') && patch.src !== current.src;
+    if (changesSource && refuseImageSourceCap(bounded.element, current)) return null;
+    const elements = document.elements.map((element) =>
+      element.id === id ? clampElement(bounded.element, document) : element
+    );
     document = { ...document, elements };
-    if (droppedSrc) {
-      // An edit answers the notices that described the document as it arrived,
-      // but the dropped source is a fact about this edit and must be said.
-      document = { ...document };
-      delete document.notices;
-      addNotice(droppedSourceNotice());
-    }
+    const reported = reportBoundedContent(bounded);
     // One undo step per gesture, per element: two elements dragged inside the
     // same coalesce window must still be two steps. Callers pass the gesture
     // name only; the owner adds the id.
-    emit({ coalesceKey: coalesceKey ? `${coalesceKey}:${id}` : null, coalesceMs, keepNotices: droppedSrc });
+    emit({ coalesceKey: coalesceKey ? `${coalesceKey}:${id}` : null, coalesceMs, keepNotices: reported });
     return find(id);
   }
 
@@ -163,13 +196,9 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
     if (refuseImageSourceCap(bounded.element)) return null;
     const element = clampElement(bounded.element, document);
     document = { ...document, elements: [...document.elements, element] };
-    if (bounded.droppedSrc) {
-      document = { ...document };
-      delete document.notices;
-      addNotice(droppedSourceNotice());
-    }
+    const reported = reportBoundedContent(bounded);
     selection = element.id;
-    emit({ keepNotices: bounded.droppedSrc });
+    emit({ keepNotices: reported });
     emitSelection();
     return element;
   }
@@ -196,6 +225,9 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
       { ...deepClone(source), id: createId(source.type), x: source.x + 4, y: source.y + 4, locked: false },
       document
     );
+    // A copy reuses the same source but adds another occurrence to the
+    // serialised document; the shared budget still applies.
+    if (refuseImageSourceCap(copy)) return null;
     document = { ...document, elements: [...document.elements, copy] };
     selection = copy.id;
     emit();

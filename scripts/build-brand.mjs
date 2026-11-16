@@ -77,10 +77,18 @@ const ICON_TEMPLATE = `<!-- ${HEADER} -->
 </svg>
 `;
 
-const MANIFEST_ICONS = Object.freeze([
+/**
+ * The one icon set, in manifest order. `build-icons.mjs` derives the PNG
+ * outputs and their transparency policy from this list, so the manifest and the
+ * files cannot disagree.
+ */
+export const MANIFEST_ICONS = Object.freeze([
   { src: 'assets/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
   { src: 'assets/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-  { src: 'assets/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+  { src: 'assets/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+  // The launcher masks this one to a circle or rounded square, so it must be
+  // opaque to every edge. The transparent 512 stays the ordinary icon.
+  { src: 'assets/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
 ]);
 
 /**

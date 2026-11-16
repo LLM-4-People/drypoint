@@ -391,6 +391,32 @@ test('the terminal commit is published before PrintEnd is acknowledged', async (
   assert.deepEqual(order, ['commit', 'printEnd:issued', 'printEnd:ack']);
 });
 
+test('a PrintEnd failure after the terminal commit sends no cancelPrint', async () => {
+  const client = fakeClient();
+  const original = client.request;
+  let committed = false;
+  let printEndAttempts = 0;
+  client.request = async (name, params, options) => {
+    if (name === 'printEnd') {
+      printEndAttempts++;
+      throw new Error('The printer stopped acknowledging writes');
+    }
+    return original(name, params, options);
+  };
+  await assert.rejects(
+    runPrintJob(client, {
+      raster, copies: 1, speed: 1, density: 3, labelType: 1,
+      onTerminalCommit: () => {
+        committed = true;
+      },
+    }),
+    /stopped acknowledging writes/
+  );
+  assert.equal(committed, true, 'the terminal frame was committed before the failed ack');
+  assert.deepEqual(client.calls.filter((call) => call[0] === 'send'), [], 'a sorted outcome never sends a second terminal frame');
+  assert.equal(printEndAttempts, 1, 'PrintEnd is the only terminal frame');
+});
+
 /* ---------------- a refusal sends no frames at all (O6) ---------------- */
 
 test('a gate refusal sends zero PrintStart, CancelPrint, PrintEnd or row frames', async () => {

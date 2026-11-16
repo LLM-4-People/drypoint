@@ -385,3 +385,65 @@ test('updateElement reports a dropped source instead of blanking it silently', (
     'the published document carries the reason'
   );
 });
+
+/* ---------------- the image-source cap on an edit (A2) ---------------- */
+
+test('updateElement refuses a seventeenth distinct image source', () => {
+  const { editor, changes } = editorHarness();
+  const sources = Array.from({ length: CONFIG.image.cacheLimit }, (_, index) => `edit-image-${index}.png`);
+  for (const src of sources) assert.ok(editor.addElement('image', { src }));
+  const target = editor.document.elements.find((element) => element.type === 'image');
+  const committed = changes.length;
+
+  assert.equal(editor.updateElement(target.id, { src: 'edit-image-17.png' }), null, 'the cap refuses the edit');
+  assert.equal(
+    editor.document.elements.find((element) => element.id === target.id).src,
+    sources[0],
+    'the existing source is untouched'
+  );
+  assert.equal(editor.document.elements.length, CONFIG.image.cacheLimit + 1, 'nothing was inserted');
+  assert.ok(changes.at(-1).notices?.some((notice) => /at most 16 different images/.test(notice)), 'the reason is published');
+  assert.equal(editor.canUndo(), true, 'the refused edit is not a content step');
+  assert.equal(changes.length, committed + 1, 'only the refusal notification was emitted');
+
+  assert.equal(
+    editor.updateElement(target.id, { src: sources[1] }).src,
+    sources[1],
+    'reusing an existing source is still allowed'
+  );
+});
+
+test('the document image budget refuses another copy of a large source', () => {
+  const { editor, changes } = editorHarness();
+  const src = 'a'.repeat(CONFIG.bounds.maxSrcChars);
+  const copies = CONFIG.bounds.maxSourceChars / src.length;
+  for (let index = 0; index < copies; index++) assert.ok(editor.addElement('image', { src }), `copy ${index}`);
+  const committed = changes.length;
+
+  // Reusing the source passes the distinct-source cap, so only the shared
+  // character budget can refuse the next occurrence.
+  assert.equal(editor.addElement('image', { src }), null, 'the budget refuses the next copy');
+  assert.equal(editor.document.elements.filter((element) => element.type === 'image').length, copies);
+  assert.ok(changes.at(-1).notices?.some((notice) => /more than \d+ characters of image data/.test(notice)));
+  assert.equal(changes.length, committed + 1, 'only the refusal notification was emitted');
+
+  // A duplicate is another occurrence in the serialised document.
+  const first = editor.document.elements.find((element) => element.type === 'image');
+  assert.equal(editor.duplicateElement(first.id), null, 'the budget refuses the duplicate');
+  assert.equal(editor.document.elements.filter((element) => element.type === 'image').length, copies);
+});
+
+/* ---------------- edit-path truncation is reported (A6) ---------------- */
+
+test('an edit that shortens text reports the load-path truncation notice', () => {
+  const { editor, changes } = editorHarness();
+  const long = 't'.repeat(CONFIG.bounds.maxTextChars + 1);
+  editor.updateElement(editor.selection, { text: long });
+  assert.equal(editor.selected.text.length, CONFIG.bounds.maxTextChars);
+  const loaded = createDocument({ elements: [{ type: 'text', text: long }] });
+  assert.deepEqual(changes.at(-1).notices, loaded.notices, 'the same owner and wording as validation');
+
+  const added = editor.addElement('text', { text: long });
+  assert.equal(added.text.length, CONFIG.bounds.maxTextChars);
+  assert.ok(changes.at(-1).notices?.includes('1 element had text shortened to fit the label limits.'));
+});
