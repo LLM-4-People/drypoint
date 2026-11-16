@@ -633,7 +633,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
     // Another read owns the link: soundSettings would be refused by the
     // manager, so wait for the next state event rather than manufacture an
     // error from a read that was never allowed to run.
-    if (!device.connected || device.state.printing || device.state.readingInfo || soundControls.length !== 2) return;
+    if (!device.connected || device.state.printing || device.state.readingInfo || device.state.maintaining || soundControls.length !== 2) return;
     soundState = 'reading';
     setSoundHint('Reading…');
     for (const entry of soundControls) {
@@ -812,7 +812,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
     // same idle state — including Disconnect, which would tear the read down
     // mid-exchange. The primary Print button is main's; it never gates on the
     // panel's read state.
-    const busy = Boolean(device.state.printing) || Boolean(device.state.readingInfo) || soundState === 'reading';
+    const busy = Boolean(device.state.printing) || Boolean(device.state.readingInfo) || Boolean(device.state.maintaining) || soundState === 'reading';
     const status = device.state.status;
     // Configuration writes need a supported model with real geometry; a sensor
     // reading only restricts commands that move or print paper.

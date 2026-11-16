@@ -19,6 +19,7 @@ import {
   isProcessAlive,
   pidFileFor,
   readProcessCommand,
+  readProcessCwd,
   resolvePort,
   stopTrackedServer,
   waitForExit,
@@ -51,7 +52,8 @@ async function stopPid(pid) {
     return 0;
   }
   const command = await readProcessCommand(pid);
-  if (!command || !commandLooksLikeServer(command)) {
+  const cwd = command === null ? null : await readProcessCwd(pid);
+  if (!command || !commandLooksLikeServer(command, { root, cwd })) {
     console.error(`${BRAND.cliPrefix}: refusing to stop pid ${pid}: ${command ? `it is ${command}` : 'its command cannot be verified'}.`);
     return 1;
   }

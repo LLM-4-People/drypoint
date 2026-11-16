@@ -96,6 +96,23 @@ test('a scalar envelope payload is a load issue, not a silent reset', async () =
   }
 });
 
+test('a settings envelope from another version is reported and reset', async () => {
+  for (const envelope of [
+    { version: 3, data: { 'editor.snap': false } },
+    { version: 5, data: { 'editor.snap': false } },
+    { data: { 'editor.snap': false } },
+  ]) {
+    const storage = fakeStorage({ [KEY]: JSON.stringify(envelope) });
+    const settings = await freshSettings(storage);
+    const issue = settings.takeSettingsLoadIssue();
+    assert.ok(issue, `${JSON.stringify(envelope)} is a load issue`);
+    assert.match(issue.message, /could not be read and were reset/);
+    assert.equal(settings.getSetting('editor.snap'), true, 'another schema version is not coerced');
+    settings.settingsStore.flush();
+    assertCleanDefaults(settings, storage);
+  }
+});
+
 test('one unreadable key still quarantines that key and keeps the rest', async () => {
   // A range clamps, so the throwing case is a value coercion cannot read: an
   // object whose toString is not callable.

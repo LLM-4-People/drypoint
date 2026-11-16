@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
+  SERVER_SCRIPT_PATH,
   claimTrackedServer,
   commandLooksLikeServer,
   isProcessAlive,
@@ -97,9 +98,15 @@ test('cleanup only removes a file that still describes this process', async (t) 
   assert.equal((await readTrackedServer(file)).state, 'missing');
 });
 
-test('only the dev server command is accepted for signalling', async () => {
-  assert.equal(commandLooksLikeServer('node scripts/serve.mjs'), true);
-  assert.equal(commandLooksLikeServer('node /repo/scripts/serve.mjs --x'), true);
+test('only this checkout’s canonical dev server is accepted for signalling', async () => {
+  const root = dirname(dirname(SERVER_SCRIPT_PATH));
+  assert.equal(commandLooksLikeServer(`node ${SERVER_SCRIPT_PATH}`), true);
+  assert.equal(commandLooksLikeServer(`node ${SERVER_SCRIPT_PATH} --port 8080`, { cwd: root }), true);
+  assert.equal(commandLooksLikeServer('node scripts/serve.mjs', { cwd: root }), true, 'a relative path from this checkout resolves');
+  assert.equal(commandLooksLikeServer('node serve.mjs', { cwd: join(root, 'scripts') }), true, 'the script directory is the real cwd');
+  assert.equal(commandLooksLikeServer('node scripts/serve.mjs'), false, 'a relative path without a verified cwd is unsafe');
+  assert.equal(commandLooksLikeServer('node /tmp/another-project/scripts/serve.mjs'), false, 'another checkout is not this server');
+  assert.equal(commandLooksLikeServer(`vim ${SERVER_SCRIPT_PATH}`), false, 'a command that only mentions the file is not the server');
   assert.equal(commandLooksLikeServer('sleep 30'), false);
   assert.equal(commandLooksLikeServer(null), false);
 
@@ -158,7 +165,7 @@ test('claim refuses a live server for the same port', async () => {
       write: file.write,
       remove: file.remove,
       alive: () => true,
-      commandFor: async () => 'node scripts/serve.mjs',
+      commandFor: async () => `node ${SERVER_SCRIPT_PATH}`,
       warn: () => {},
     },
   });
@@ -193,6 +200,32 @@ test('claim replaces a stale, foreign or unreadable record', async () => {
   }
 });
 
+test('claim replaces another checkout’s serve.mjs but keeps this checkout’s record', async () => {
+  for (const { command, cwd, replaced } of [
+    { command: 'node /tmp/another-project/scripts/serve.mjs', cwd: null, replaced: true },
+    { command: 'node scripts/serve.mjs', cwd: '/tmp/another-project', replaced: true },
+    { command: `node ${SERVER_SCRIPT_PATH}`, cwd: null, replaced: false },
+  ]) {
+    const file = memoryPidFile(JSON.stringify({ pid: 7, port: 8080 }));
+    const result = await claimTrackedServer({
+      file: 'pid',
+      port: 8080,
+      pid: 9,
+      deps: {
+        read: file.read,
+        write: file.write,
+        remove: file.remove,
+        alive: () => true,
+        commandFor: async () => command,
+        cwdFor: async () => cwd,
+        warn: () => {},
+      },
+    });
+    assert.equal(result.ok, replaced, `${command} from ${cwd ?? 'no cwd'}`);
+    assert.equal(JSON.parse(file.raw).pid, replaced ? 9 : 7);
+  }
+});
+
 test('a lost race never deletes the record the winner just wrote', async () => {
   // First read sees a stale record; the next reads see the winner's live one.
   const file = memoryPidFile(JSON.stringify({ pid: 1234, port: 8080 }));
@@ -211,7 +244,7 @@ test('a lost race never deletes the record the winner just wrote', async () => {
       write: file.write,
       remove: file.remove,
       alive: (pid) => pid === 1234,
-      commandFor: async () => 'node scripts/serve.mjs',
+      commandFor: async () => `node ${SERVER_SCRIPT_PATH}`,
       warn: () => {},
     },
   });
@@ -226,7 +259,7 @@ test('two concurrent claims produce exactly one winner', async (t) => {
   const file = join(directory, 'server-8080.pid');
   const deps = {
     alive: () => true,
-    commandFor: async () => 'node scripts/serve.mjs',
+    commandFor: async () => `node ${SERVER_SCRIPT_PATH}`,
     warn: () => {},
   };
   const [a, b] = await Promise.all([
@@ -237,12 +270,13 @@ test('two concurrent claims produce exactly one winner', async (t) => {
   assert.equal((await readTrackedServer(file)).state, 'tracked');
 });
 
-function stopHarness({ tracked, alive = true, command = 'node scripts/serve.mjs', signal, wait = true } = {}) {
+function stopHarness({ tracked, alive = true, command = `node ${SERVER_SCRIPT_PATH}`, cwd = null, signal, wait = true } = {}) {
   const calls = { signals: [], removed: [] };
   const deps = {
     read: async () => tracked,
     alive: () => alive,
     commandFor: async () => command,
+    cwdFor: async () => cwd,
     signal: (pid, name) => {
       calls.signals.push([pid, name]);
       if (signal) signal(pid, name);
@@ -287,6 +321,35 @@ test('stop signals a verified server and removes the record after it exits', asy
   assert.equal(result.code, 0);
   assert.deepEqual(calls.signals, [[7, 'SIGTERM']]);
   assert.deepEqual(calls.removed, [['pid', 7]]);
+});
+
+test('stop refuses another checkout’s serve.mjs and signals this checkout’s path', async () => {
+  const foreign = stopHarness({
+    tracked: { state: 'tracked', record: { pid: 7, port: 8080 } },
+    command: 'node /tmp/another-project/scripts/serve.mjs --port 8080',
+  });
+  const foreignResult = await stopTrackedServer({ file: 'pid', port: 8080, deps: foreign.deps });
+  assert.equal(foreignResult.code, 1);
+  assert.deepEqual(foreign.calls.signals, [], 'a foreign checkout is never signalled');
+  assert.deepEqual(foreign.calls.removed, [], 'its record is kept for inspection');
+
+  const mine = stopHarness({
+    tracked: { state: 'tracked', record: { pid: 7, port: 8080 } },
+    command: `node ${SERVER_SCRIPT_PATH} --port 8080`,
+  });
+  const mineResult = await stopTrackedServer({ file: 'pid', port: 8080, deps: mine.deps });
+  assert.equal(mineResult.code, 0);
+  assert.deepEqual(mine.calls.signals, [[7, 'SIGTERM']], 'the canonical path is this server');
+  assert.deepEqual(mine.calls.removed, [['pid', 7]]);
+
+  const relative = stopHarness({
+    tracked: { state: 'tracked', record: { pid: 7, port: 8080 } },
+    command: 'node scripts/serve.mjs --port 8080',
+    cwd: dirname(dirname(SERVER_SCRIPT_PATH)),
+  });
+  const relativeResult = await stopTrackedServer({ file: 'pid', port: 8080, deps: relative.deps });
+  assert.equal(relativeResult.code, 0);
+  assert.deepEqual(relative.calls.signals, [[7, 'SIGTERM']], 'a relative path verified against the real cwd is this server');
 });
 
 test('stop treats an already-exited process as success and cleans up', async () => {

@@ -56,8 +56,18 @@ function buttonNamed(container, name) {
   return container.querySelector(`button[aria-label="${name}"]`);
 }
 
-for (const type of Object.values(ELEMENT_TYPES)) {
-  test(`the Arrange group keeps Forward, Backward and Delete for ${type}`, () => {
+test('the empty inspector points at the toolbar without a layout claim', () => {
+  const { container, controller, inspector } = harness(ELEMENT_TYPES.TEXT);
+  controller.selection = null;
+  inspector.render();
+  const empty = container.querySelector('.empty');
+  assert.ok(empty, 'the empty state is rendered');
+  assert.match(empty.textContent, /Select an element to edit it/);
+  assert.match(empty.textContent, /Or add one from the toolbar$/);
+  assert.doesNotMatch(empty.textContent, /on the left|above|below/, 'the same copy is true in both layouts');
+});
+
+for (const type of Object.values(ELEMENT_TYPES)) {  test(`the Arrange group keeps Forward, Backward and Delete for ${type}`, () => {
     const { container } = harness(type);
     const group = arrange(container);
     assert.ok(group, 'the Arrange group exists');

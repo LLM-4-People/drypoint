@@ -272,7 +272,7 @@ test('print job fails when the printer never confirms', async () => {
   };
   await assert.rejects(
     runPrintJob(client, { raster, copies: 1, speed: 1, density: 3, labelType: 1, completionTimeoutMs: 80 }),
-    /did not confirm/
+    /no new page for 80 ms \(0\/1 label\)/
   );
 });
 

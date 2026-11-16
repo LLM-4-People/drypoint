@@ -119,16 +119,22 @@ export function slider({ label, min, max, step = 1, value, unit = '', format = n
  * A three-state switch: true, false, or unknown (null).
  *
  * Unknown is not "off". A value the printer never reported must not be
- * announced as checked=false, so the attribute is omitted and the button is
- * described by the hint that explains why (screen readers then say "switch,
- * dimmed" plus the description, not "switch, off").
+ * announced as checked=false, and a `switch` role without `aria-checked` is an
+ * invalid control. So an unknown value renders as a plain disabled button
+ * described by the hint that explains why; only a known value is a switch.
  */
 export function toggle({ label, checked = false, onChange, description = null, hintId = null }) {
-  const button = el('button', { class: 'switch', type: 'button', role: 'switch', 'aria-label': label }, el('i', { 'aria-hidden': 'true' }));
+  const button = el('button', { class: 'switch', type: 'button', 'aria-label': label }, el('i', { 'aria-hidden': 'true' }));
+  let known = false;
   const set = (next) => {
-    const known = next === true || next === false;
-    if (known) button.setAttribute('aria-checked', String(next));
-    else button.removeAttribute('aria-checked');
+    known = next === true || next === false;
+    if (known) {
+      button.setAttribute('role', 'switch');
+      button.setAttribute('aria-checked', String(next));
+    } else {
+      button.removeAttribute('role');
+      button.removeAttribute('aria-checked');
+    }
     if (!known && hintId) button.setAttribute('aria-describedby', hintId);
     else button.removeAttribute('aria-describedby');
   };
@@ -136,7 +142,7 @@ export function toggle({ label, checked = false, onChange, description = null, h
   on(button, 'click', () => {
     // An unknown value has nothing to invert; the control is disabled in that
     // state, so this only guards a synthetic click.
-    if (button.getAttribute('aria-checked') === null) return;
+    if (!known) return;
     const next = button.getAttribute('aria-checked') !== 'true';
     set(next);
     onChange?.(next);

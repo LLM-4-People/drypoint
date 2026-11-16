@@ -875,8 +875,10 @@ function updatePrintButton() {
     finishing: printFlow.finishing,
     empty: !controller.document.elements.some((element) => element.visible !== false),
     offline: !device.connected,
-    // A device-info read owns the link: starting a job would interleave frames.
+    // A device-info read or a maintenance command owns the link: starting a
+    // job would interleave frames.
     reading: Boolean(device.state.readingInfo),
+    maintaining: Boolean(device.state.maintaining),
     // The same print-boundary predicate the flow uses: an undo can restore a
     // label the live printer cannot hold. The flow revalidates it before the
     // raster; the button says so instead of pretending it is print-ready.
@@ -888,9 +890,9 @@ function updatePrintButton() {
   ui.testButton.disabled = state.testDisabled;
   ui.testButton.title = state.testTitle;
   // The same reason is the accessible description, not only a tooltip, and a
-  // visible banner above the action bar so a sighted user does not have to open
-  // the Print tab to learn why the buttons are disabled. It is absolutely
-  // positioned: showing it never reflows the bar.
+  // visible banner above the action row so a sighted user does not have to open
+  // the Print tab to learn why the buttons are disabled. It sits in normal
+  // flow: an overlay used to block the controls underneath it on a phone.
   // The banner is a live region: only a changed reason is written, so a
   // rerender while typing the same label never re-announces the refusal.
   setText(ui.printGateReason, state.supportBlocked);

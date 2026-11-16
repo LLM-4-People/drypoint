@@ -178,6 +178,24 @@ test('a frame whose stroke swallows the box warns instead of vanishing', () => {
   assert.deepEqual(solid.warnings, ['Frame stroke is wider than the box, so it prints as a solid block']);
 });
 
+test('a collapsed frame whose stroke swallows the box paints the whole box', () => {
+  for (const [w, h, strokePx] of [
+    [6, 6, 12],
+    [40, 30, 50],
+    [96, 10, 12],
+  ]) {
+    const { ops, warnings } = renderWithOps(
+      documentWith([createElement(ELEMENT_TYPES.RECT, { x: 0, y: 0, w, h, strokePx })])
+    );
+    assert.deepEqual(warnings, ['Frame stroke is wider than the box, so it prints as a solid block'], `${w}x${h}`);
+    const filled = ops.find(
+      (op) => op.op === 'fillRect' && op.fillStyle === '#000000' && op.x === 0 && op.y === 0 && op.w === w && op.h === h
+    );
+    assert.ok(filled, `${w}x${h} stroke ${strokePx}: the full box is painted`);
+    assert.equal(ops.filter((op) => op.op === 'stroke').length, 0, `${w}x${h}: no degenerate stroke is issued`);
+  }
+});
+
 test('overlapping visible content is reported; a frame around content is not', () => {
   const overlapping = documentWith([
     createElement(ELEMENT_TYPES.TEXT, { name: 'Front', text: 'Hi', x: 4, y: 4, w: 200, h: 60 }),

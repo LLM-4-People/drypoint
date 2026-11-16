@@ -285,6 +285,12 @@ export const CONFIG = deepFreeze({
     maxTextChars: 2000,
     maxValueChars: 2000,
     maxNameChars: 120,
+    /**
+     * Element ids are internal and appear in DOM attributes, so they are capped
+     * with the other strings. An unbounded accepted id used to make an accepted
+     * import export a file the importer refuses.
+     */
+    maxIdChars: 120,
     /** An image data URL longer than this is dropped, never truncated. */
     maxSrcChars: MAX_SRC_CHARS,
     /** Total image-source text one document may carry; see MAX_SOURCE_CHARS. */

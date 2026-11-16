@@ -27,7 +27,7 @@ export const IMAGE_DITHERS = Object.freeze(['auto', ...DITHER_MODES]);
 const SYMBOLOGY_IDS = Object.freeze(Object.keys(SYMBOLOGIES));
 
 const { minLengthMm, defaultLengthMm, paddingPx } = CONFIG.geometry;
-const { maxElements, maxTextChars, maxValueChars, maxNameChars, maxSrcChars, maxNotices, maxNoticeChars } = CONFIG.bounds;
+const { maxElements, maxTextChars, maxValueChars, maxNameChars, maxIdChars, maxSrcChars, maxNotices, maxNoticeChars } = CONFIG.bounds;
 
 /**
  * The one message for a document whose element list is not a list. A stored or
@@ -278,6 +278,13 @@ export function truncatedNotice(count = 1) {
     : `${count} elements had text shortened to fit the label limits.`;
 }
 
+/** One wording for an element id that had to be capped at the input bound. */
+function truncatedIdNotice(count = 1) {
+  return count === 1
+    ? `1 element id was shortened to fit the ${maxIdChars}-character limit.`
+    : `${count} element ids were shortened to fit the ${maxIdChars}-character limit.`;
+}
+
 /** The order geometry fields are named in, so a notice reads the same every time. */
 const GEOMETRY_FIELDS = Object.freeze(['x', 'y', 'w', 'h']);
 
@@ -339,9 +346,18 @@ function normaliseElement(input, defaults, report) {
     if (Object.prototype.hasOwnProperty.call(input, key)) element[key] = input[key];
   }
   // An element id is a non-empty string: numbers, whitespace and empty values
-  // are replaced, and the replacement stays unique in validateDocument.
+  // are replaced, and the replacement stays unique in validateDocument. The id
+  // is also bounded, because it is copied into a DOM attribute and rides into
+  // every export; an unbounded accepted id produced an unimportable file.
+  let truncatedId = false;
   if (typeof element.id !== 'string' || !element.id.trim()) element.id = defaults.id;
-  else element.id = element.id.trim();
+  else {
+    element.id = element.id.trim();
+    if (element.id.length > maxIdChars) {
+      element.id = element.id.slice(0, maxIdChars);
+      truncatedId = true;
+    }
+  }
   element.name = toText(element.name);
 
   const rotation = finite(element.rotation, defaults.rotation);
@@ -393,7 +409,7 @@ function normaliseElement(input, defaults, report) {
     default:
       break;
   }
-  return boundElementText(element);
+  return { ...boundElementText(element), truncatedId };
 }
 
 /**
@@ -440,6 +456,7 @@ export function validateDocument(input) {
   let droppedSources = 0;
   let droppedUnknown = 0;
   let truncatedElements = 0;
+  let truncatedIds = 0;
   /** Coordinates a trust boundary could not use as given; reported once. */
   const report = { unusable: new Set() };
   for (const raw of Array.isArray(source.elements) ? source.elements : []) {
@@ -454,8 +471,9 @@ export function validateDocument(input) {
       continue;
     }
     if (raw.type === ELEMENT_TYPES.IMAGE && typeof raw.src === 'string' && raw.src.length > maxSrcChars) droppedSources++;
-    const { element, truncated } = normaliseElement(raw, defaultsFor(raw.type), report);
+    const { element, truncated, truncatedId } = normaliseElement(raw, defaultsFor(raw.type), report);
     if (truncated) truncatedElements++;
+    if (truncatedId) truncatedIds++;
     if (seen.has(element.id)) element.id = createId(raw.type);
     seen.add(element.id);
     document.elements.push(clampElement(element, document));
@@ -476,6 +494,9 @@ export function validateDocument(input) {
   }
   if (truncatedElements) {
     notices.push(truncatedNotice(truncatedElements));
+  }
+  if (truncatedIds) {
+    notices.push(truncatedIdNotice(truncatedIds));
   }
   if (report.unusable.size) {
     notices.push(adjustedGeometryNotice(report.unusable));
@@ -538,6 +559,12 @@ function documentVersionOf(value) {
  */
 export function hydrateStoredDocument(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
+  // Storage is written by this app and always carries an element list. An
+  // envelope-shaped value (`{version, data}`) or a hand-edited object without
+  // one is not a label: loading it as an empty label would let the next edit
+  // replace the only copy. validateDocument stays permissive for imports, so
+  // this stricter boundary is storage-only.
+  if (!Array.isArray(value.elements)) throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
   return migrateDocument(value);
 }
 
@@ -566,7 +593,10 @@ export function migrateDocument(input) {
   if (version === null || version >= CONFIG.app.documentVersion) {
     return validateDocument(input);
   }
-  const headWidthPx = geometry().widthPx;
+  // The v3 model is portrait and its coordinates were authored against the
+  // fixed 96-dot head. Rotating with the live head width would move every
+  // element whenever a wider printer is connected during the import.
+  const headWidthPx = CONFIG.geometry.widthPx;
   // A v3 label with anything but an element list is corrupt, not empty: the
   // same refusal the current format gives, so storage quarantines it and the
   // import refuses it instead of replacing the only copy with a blank label.
