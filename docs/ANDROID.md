@@ -15,8 +15,8 @@ WebView (https://drypoint.local)
 ## Why a shell is needed
 
 Android WebView does not implement Web Bluetooth, and it exposes no Web Serial
-either. The shell provides the one connectivity API the WebView lacks — a BLE
-GATT client — plus two small host helpers: `saveFile` for the label export, the
+either. The shell provides the one connectivity API the WebView lacks (a BLE
+GATT client) plus two small host helpers: `saveFile` for the label export, the
 diagnostics report and the raw copy of an unreadable stored label, and
 `setSystemBars` for the native theme bars. It leaves every protocol decision
 (ports, frames, rasterisation, retries) in the web code. The transport lives in
@@ -27,7 +27,7 @@ unchanged.
 This shell is **BLE-only**, because a WebView gives the page no Web Serial to
 reach a Bluetooth Classic SPP port. That is the shell's limit, not Android's:
 Chrome for Android 148+ exposes Web Serial, including RFCOMM serial ports, and
-138–147 exposed it partially (MDN browser compatibility data). The web app can
+138-147 exposed it partially (MDN browser compatibility data). The web app can
 therefore use that path on Android in Chrome; the APK cannot.
 
 ## Build
@@ -65,7 +65,7 @@ The script:
 7. verifies the staged APK, stages and verifies both published names, then
    renames the versioned and stable copies into `android/build/` as one
    transaction: a failure restores the previous pair byte-for-byte;
-8. removes the scratch directory in a `finally` — a refusal throws instead of
+8. removes the scratch directory in a `finally`: a refusal throws instead of
    calling `process.exit`, so a failed build leaves no `android/build-*` tree.
 
 Output: `android/build/drypoint-<version>.apk` (and, only after the signature
@@ -95,7 +95,7 @@ The password reaches `keytool` and `apksigner` through a 0600 temporary file
 (`-storepass:file`, `--ks-pass file:`), never as a command-line argument, and
 that file is deleted in a `finally`. `android/keystore/` is created 0700 before
 anything is written, and a generated keystore is created under `umask 077` and
-renamed into place 0600, so the key is never readable by another local user —
+renamed into place 0600, so the key is never readable by another local user,
 not even in the first instant of its existence.
 
 ## The signing certificate is pinned
@@ -112,7 +112,7 @@ declared exceptions, and both say so in the build log:
   with a throwaway key and publishes nothing. The unprivileged CI jobs create
   that key explicitly with `scripts/ci-keystore.mjs`; the script is the one
   owner of the password, alias, distinguished name and `keytool` arguments.
-  `CI=true` with no key is still a hard failure — CI never invents a release
+  `CI=true` with no key is still a hard failure: CI never invents a release
   key. The release `build` job uses the throwaway key only for the unsigned
   artifact; the `sign` job never sets `ANDROID_ALLOW_TEST_KEY` and never runs
   the script.
@@ -131,7 +131,7 @@ two builds of the same tree **with the same key** are byte-identical:
 `sha256sum` of `android/build/drypoint-<version>.apk` is the same after every
 run. A different key changes only the signing block, not the bundled
 `assets/www` or the manifest. What cannot be pinned across tool versions is the
-APK Signing Block itself — the v2/v3 digests and signatures `apksigner` writes
+APK Signing Block itself: the v2/v3 digests and signatures `apksigner` writes
 between the zip entries and the central directory. For one fixed key and one
 `apksigner` build it is deterministic (RSA PKCS#1 v1.5 has no random salt and
 apksigner adds no signing time), but its bytes belong to the signing tool and
@@ -162,7 +162,7 @@ from `scripts/lib/distribution.mjs`, the same list the site uses.
 1. Copy the APK to the phone (USB, cloud drive, or `adb install`).
 2. Allow "install unknown apps" for the file manager when prompted.
 3. Open the app and grant the Bluetooth scan/connect permission (Nearby devices)
-   on Android 12+, or location on Android 8–11, when it scans.
+   on Android 12+, or location on Android 8-11, when it scans.
 4. Print tab → Connect printer (or the header pill) → pick `D110…` from the
    native list.
 
@@ -189,7 +189,7 @@ sides own half of every rule, and neither guesses:
 | Closing | `close()` rejects every pending call and clears its timer | `disconnect()` drops the GATT link |
 | Connect handshake | `open()` awaits the `connect` reply | resolves after the notification descriptor is written **and** the MTU exchange finished, or after a 300 ms fallback |
 | Write pacing | the session serialises requests | each chunk waits for its ack; a 2 s missing ack closes the link with "Printer stopped acknowledging writes" |
-| Chunk size | — | `max(20, min(MTU − 3, 512))`, and the MTU resets to 23 on connect and on close |
+| Chunk size | n/a | `max(20, min(MTU − 3, 512))`, and the MTU resets to 23 on connect and on close |
 | Teardown | a late native event is ignored after close() | `destroy()` clears the main-looper queue, dismisses the picker, stops the scan and never calls a destroyed WebView |
 | Forgetting the printer | `AndroidTransport.forget()` reports `false` on an older bridge | `forgetDevice()` removes `lastDevice`; a browser port permission is not revocable by page script |
 | System bars | `applyTheme` sends the `--bg` token it just applied | `setSystemBars(hex)` colours the status and navigation bars; a malformed value is ignored |
@@ -221,7 +221,7 @@ this order:
   return `null`, which let the WebView resolve that request over the network and
   made the shell's offline guarantee depend on the absent `INTERNET` permission.
 - `shouldOverrideUrlLoading` still returns `true` for any navigation that leaves
-  the origin — including a `data:` navigation. The scheme allowlist is for
+  the origin, including a `data:` navigation. The scheme allowlist is for
   subresources the WebView resolves itself, never for handing the page to
   another document.
 
@@ -245,10 +245,10 @@ CI, so verify it once on a phone:
    `403` entry for a `data:` or `blob:` URL. A foreign host is never reached
    because the shell has no `INTERNET` permission.
 
-`index.html` carries a Content-Security-Policy meta element —
-`default-src 'self'; img-src 'self' data: blob:; style-src 'self'
+`index.html` carries a Content-Security-Policy meta element
+(`default-src 'self'; img-src 'self' data: blob:; style-src 'self'
 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self';
-form-action 'none'` — with no inline script. It applies equally to the Pages
+form-action 'none'`) with no inline script. It applies equally to the Pages
 deployment and to the WebView, because both serve the same document. `data:` and
 `blob:` are allowed for images only: the editor renders canvas and object URLs
 it creates itself.
@@ -258,7 +258,7 @@ it creates itself.
 - **BLE only in the APK.** The shell exposes a BLE GATT bridge and no Web
   Serial, so the APK cannot reach a Bluetooth Classic SPP port. The web app is
   not limited that way: Chrome for Android 148+ exposes Web Serial, including
-  RFCOMM serial ports, and 138–147 exposed it partially (MDN BCD). The D110_M
+  RFCOMM serial ports, and 138-147 exposed it partially (MDN BCD). The D110_M
   exposes the GATT service used here.
 - **Android 12+**: scanning asks for Nearby devices (`BLUETOOTH_SCAN` with
   `neverForLocation`); older versions ask for location, which Android requires
@@ -289,14 +289,14 @@ it creates itself.
   written, and a failed write deletes the pending row again. A display name that
   Downloads already holds is refused before the insert, because MediaStore would
   otherwise silently rename the new file to `name (1).json`.
-- On Android 8–9 the file itself is the duplicate check: an existing name is
+- On Android 8-9 the file itself is the duplicate check: an existing name is
   refused rather than truncated, and a write or close that fails deletes the
   partial file before the bridge reports the failure.
 - Image import uses the system file picker exposed by the shell. The picked file
   becomes a data URL, which the interceptor releases to the WebView (see the
   scheme policy above).
 
-A maximum-size label crosses the bridge as one string — the transfer bound is
+A maximum-size label crosses the bridge as one string: the transfer bound is
 `CONFIG.document.transfer.maxBytes`, about 65 MB of JSON. That is memory-heavy
 on a low-RAM phone and can fail the save or exhaust the WebView. Export a
 smaller label or remove an image first; 1.0.3 has no chunked write.
@@ -308,7 +308,7 @@ the same notices.
 ## Troubleshooting
 
 - **No printer in the list.** Grant the Bluetooth scan/connect permission (Nearby
-  devices) on Android 12+, or location on Android 8–11, turn Bluetooth on, and
+  devices) on Android 12+, or location on Android 8-11, turn Bluetooth on, and
   keep the printer awake; scan again from the Print panel. Another host may
   already hold the single connection.
 - **"does not expose its data service".** Pair the printer once in Android
@@ -346,14 +346,14 @@ The system picker is the one path a static test cannot prove. On a phone, with
 the release APK installed (1.0.3 or newer; the 1.0.2 picker is filtered to
 images):
 
-1. **Image import** — add an image element; the picker lists pictures and the
+1. **Image import**: add an image element; the picker lists pictures and the
    chosen image appears on the label.
-2. **Label import** — export a label, then Document → Import label; the
+2. **Label import**: export a label, then Document → Import label; the
    exported `.json` file is selectable (not greyed out) and the label loads as
    one undoable step.
-3. **Cancel** — open either picker and press Back; the app stays responsive and
+3. **Cancel**: open either picker and press Back; the app stays responsive and
    the page does not wait for a callback.
-4. **Multiple** — on a picker that offers multi-select, a multiple selection
+4. **Multiple**: on a picker that offers multi-select, a multiple selection
    answers every file it returns; the current single-file inputs still read the
    first one.
 

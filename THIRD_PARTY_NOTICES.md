@@ -9,7 +9,7 @@ both keep their attribution next to the code or data they belong to.
 - **Version:** qrcode-generator 1.5.2 (the `qrcode.js` bytes are identical to the 1.4.4 release)
 - **Copyright (c) 2009 Kazuhiko Arase**
 - **URL:** <http://www.d-project.com/>
-- **Licence:** MIT — <http://www.opensource.org/licenses/mit-license.php>
+- **Licence:** MIT (<http://www.opensource.org/licenses/mit-license.php>)
 
 The file is vendored unchanged and loaded as a classic script before the app
 modules. "QR Code" is a registered trademark of DENSO WAVE INCORPORATED.

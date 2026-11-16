@@ -10,12 +10,12 @@ issue-template link into this repository and every heading anchor resolves.
 | I want to… | Read |
 | --- | --- |
 | Use the app | [the README](../README.md) and its quick start |
-| Know whether my printer works | [PRINTERS.md](PRINTERS.md) — the support matrix and the evidence behind it |
-| Understand the wire protocol | [PROTOCOL.md](PROTOCOL.md) — frames, opcodes, reply fields, error codes |
-| Understand the code | [ARCHITECTURE.md](ARCHITECTURE.md) — module map, data flow, document and capability models |
-| Build or install the Android app | [ANDROID.md](ANDROID.md) — build, bridge contract, signing, platform limits |
-| Work on the project | [CONTRIBUTING.md](../CONTRIBUTING.md) — setup, tests, branch model, commit style |
-| Report a security problem | [SECURITY.md](../SECURITY.md) — scope and the private reporting channel |
+| Know whether my printer works | [PRINTERS.md](PRINTERS.md): the support matrix and the evidence behind it |
+| Understand the wire protocol | [PROTOCOL.md](PROTOCOL.md): frames, opcodes, reply fields, error codes |
+| Understand the code | [ARCHITECTURE.md](ARCHITECTURE.md): module map, data flow, document and capability models |
+| Build or install the Android app | [ANDROID.md](ANDROID.md): build, bridge contract, signing, platform limits |
+| Work on the project | [CONTRIBUTING.md](../CONTRIBUTING.md): setup, tests, branch model, commit style |
+| Report a security problem | [SECURITY.md](../SECURITY.md): scope and the private reporting channel |
 | Report a bug or ask a question | [SUPPORT.md](../SUPPORT.md) |
 | See what changed | [CHANGELOG.md](../CHANGELOG.md) |
 | Know the community rules | [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) |
@@ -41,7 +41,7 @@ issue-template link into this repository and every heading anchor resolves.
 - The npm command table in `README.md` and the browser-suite list/count in
   `CONTRIBUTING.md` are rendered by `scripts/build-docs.mjs` from `package.json`
   and `scripts/test-suites.mjs`. A hand edit inside a
-  `<!-- generated:… -->` block fails `scripts/build-docs.mjs --check` in
+  `[//]: # (generated:…)` block fails `scripts/build-docs.mjs --check` in
   `npm run verify`; regenerate with `npm run docs:generate`.
 
 Most prose is not generated. The facts with a mechanical owner are:

@@ -91,7 +91,7 @@ derives the rest:
   heartbeat's resolution class byte is `2`, which decodes to 203 dpi; the TLV
   is the pitch authority when it has a usable value.
 - **Tape width** = `headWidthPx / pitch`. For the reference unit,
-  `96 / 7.87` = 12.19 mm — slightly wider than the 12 mm stock, because the
+  `96 / 7.87` = 12.19 mm, slightly wider than the 12 mm stock, because the
   head is wider than the printable area of the label.
 - **Maximum length** comes from the printer's reported maximum print height
   (1600 px on the reference unit → 203 mm at 200 dpi), capped by the app at

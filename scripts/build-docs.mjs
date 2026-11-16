@@ -5,12 +5,13 @@
  * Prose stays authored. The repeated, mechanical facts are rendered from their
  * owners into marker-delimited blocks:
  *
- *   README.md       <!-- generated:scripts -->  from package.json
- *   CONTRIBUTING.md <!-- generated:suites -->   from scripts/test-suites.mjs
+ *   README.md       [//]: # (generated:scripts)  from package.json
+ *   CONTRIBUTING.md [//]: # (generated:suites)   from scripts/test-suites.mjs
  *
  * `--check` fails when a block is stale or missing; `--write` regenerates it.
- * The markers are ordinary HTML comments, so GitHub renders the document
- * without showing the bookkeeping.
+ * The markers are link-reference definitions, so GitHub renders the document
+ * without showing the bookkeeping and the prose gate does not read the marker
+ * as punctuation.
  *
  * Usage:
  *   node scripts/build-docs.mjs --check
@@ -57,8 +58,8 @@ export function renderSuitesBlock(suite) {
 /** The one marker pair for a named block. */
 export function markers(name) {
   return {
-    start: `<!-- generated:${name} -->`,
-    end: `<!-- /generated:${name} -->`,
+    start: `[//]: # (generated:${name})`,
+    end: `[//]: # (/generated:${name})`,
   };
 }
 

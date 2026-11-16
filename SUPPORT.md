@@ -7,7 +7,7 @@
 | To report a bug | [a bug report](https://github.com/LLM-4-People/drypoint/issues/new?template=bug_report.yml) |
 | A feature | [a feature request](https://github.com/LLM-4-People/drypoint/issues/new?template=feature_request.yml) |
 | To ask how something works | [a question](https://github.com/LLM-4-People/drypoint/issues/new?template=question.yml) |
-| To report a vulnerability | [a private advisory](https://github.com/LLM-4-People/drypoint/security/advisories/new) — never a public issue |
+| To report a vulnerability | [a private advisory](https://github.com/LLM-4-People/drypoint/security/advisories/new): never a public issue |
 
 Search the existing issues first: a printer that is not on the support matrix is
 the most common question, and the answer is in
@@ -45,7 +45,7 @@ before a frame is sent, and an id outside the table stays `Unknown` and blocked.
 The vendor catalogue lists more models than the app names, so "known" here
 means an id in the app's table, not every model NIIMBOT sells. A supported model
 with a sensor refusal is different: the print job reads one heartbeat and prints
-nothing. A request to support another model is welcome, but it needs evidence —
+nothing. A request to support another model is welcome, but it needs evidence:
 see [the support policy](docs/PRINTERS.md#how-to-propose-a-new-model). "It looks
 the same" is not evidence, because a wrong print sequence can jam a head.
 

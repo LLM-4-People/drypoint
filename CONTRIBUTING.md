@@ -24,7 +24,7 @@ ships no npm runtime dependency: only `node:` built-ins.
 
 | Leg | Needs | Without it |
 | --- | --- | --- |
-| Most of `npm test` | Node 22+ | — |
+| Most of `npm test` | Node 22+ | n/a |
 | The browser suites (listed below) | A Chromium binary | Skipped locally, **failed** when `CI=true` |
 | `safe-filename` | A JDK (`javac`) | Skipped locally, **failed** when `CI=true` |
 | `npm run build:android` | JDK 17+, Android SDK platform 34+ and build-tools, `python3` | Not run |
@@ -96,7 +96,7 @@ Releases are tagged from `main`; a tag must be exactly `v<package.json version>`
 - Do not mix formatting or renaming into a behaviour change.
 - Reference the issue in the body (`Fixes #123`) when there is one.
 
-## Generated files — never edit by hand
+## Generated files: never edit by hand
 
 These are generated and checked byte-for-byte in CI:
 
@@ -115,7 +115,7 @@ These are generated and checked byte-for-byte in CI:
 | `_site/` | `collectFiles()`, `sw.js`, the generated `404.html`, `.nojekyll` and the notices | `npm run pages:build` |
 
 Edit the owner and regenerate. If a generated file changed and you did not touch
-its owner, you found a bug — please say so in the pull request.
+its owner, you found a bug: please say so in the pull request.
 
 `_site/` is not tracked. `npm run pages:build` stages it and a separate
 `node scripts/build-pages.mjs --check` compares it with the sources; on a fresh
@@ -137,14 +137,14 @@ CI builds and then checks, in that order.
 
 ## Printer models: the support policy
 
-A printer model is supported only when it has been tested on real hardware —
+A printer model is supported only when it has been tested on real hardware:
 with evidence, never a guess. There are three states, defined in
 [docs/PRINTERS.md](docs/PRINTERS.md):
 
-- **Tested** — discovery and printing were verified on retail hardware.
-- **Experimental** — a known id in the same family, unverified print sequence;
+- **Tested**: discovery and printing were verified on retail hardware.
+- **Experimental**: a known id in the same family, unverified print sequence;
   the app asks before printing.
-- **Not supported** — a known id that this app will name and refuse.
+- **Not supported**: a known id that this app will name and refuse.
 
 An unknown id stays unknown. The print gate exists so a guess can never reach a
 print head.
@@ -168,8 +168,8 @@ declined: a wrong print task can feed the wrong rows to a head.
 
 Documentation is part of the change. If you add a script, a source module, a
 root Markdown file or a page under `docs/`, add it to the module map in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — that map is contract-tested. If
-you add an `npm` script, document it in the README — that list is contract-tested
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): that map is contract-tested. If
+you add an `npm` script, document it in the README: that list is contract-tested
 too. The README support matrix and storage-key table, SUPPORT's printer scope
 and the PROTOCOL page's link to the one model table are pinned to
 `src/protocol/models.js`, `storageKey()` and `docs/PRINTERS.md`; a second model

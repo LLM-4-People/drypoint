@@ -11,6 +11,7 @@ import { INFO_PROJECTION } from '../src/device/manager.js';
 import { shortcutIntent } from '../src/editor/shortcuts.js';
 import { lexJavaScript } from '../scripts/lib/js-scan.mjs';
 import { isIgnored, parseIgnore } from '../scripts/lib/tree.mjs';
+import { markers } from '../scripts/build-docs.mjs';
 import { listProjectFiles, listRootFiles, projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
 
 const pkg = JSON.parse(read('package.json'));
@@ -227,8 +228,9 @@ test('history compares documents through one function', () => {
 /* ---------------- README contracts ---------------- */
 
 test('the README command table is generated from package.json', () => {
-  const start = readme.indexOf('<!-- generated:scripts -->');
-  const end = readme.indexOf('<!-- /generated:scripts -->');
+  const { start: markerStart, end: markerEnd } = markers('scripts');
+  const start = readme.indexOf(markerStart);
+  const end = readme.indexOf(markerEnd);
   assert.ok(start >= 0 && end > start, 'the command table has its generated markers');
 
   // The table is the generated block, so it lists the scripts exactly once and
