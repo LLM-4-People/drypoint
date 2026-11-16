@@ -127,10 +127,17 @@ test('the picker is built from the page accept list, not a hard-coded image type
   assert.match(code, /params\.getMode\(\)/, 'the requested selection mode is read');
   assert.match(code, /FileChooserParams\.MODE_OPEN_MULTIPLE/, 'the multiple constant is the comparison');
   assert.match(code, /Intent\.CATEGORY_OPENABLE/, 'only openable documents are offered');
-  assert.match(code, /Intent\.EXTRA_ALLOW_MULTIPLE/, 'a multiple request is forwarded');
   assert.match(code, /Intent\.EXTRA_MIME_TYPES/, 'several exact types are forwarded');
-  assert.match(code, /intent\.setType\("\*\/\*"\)/, 'the fallback type stays open');
+  // F1: one resolved type sets the intent type directly. A `*/*` here would
+  // show every file even though the page asked for one type.
+  assert.match(code, /if \(types\.size\(\) == 1\) \{\s*\n\s*intent\.setType\(types\.get\(0\)\);/, 'a single type is the intent type');
+  assert.match(code, /if \(types\.size\(\) > 1\) intent\.putExtra\(Intent\.EXTRA_MIME_TYPES/, 'only several types need the extra');
+  assert.match(code, /intent\.setType\("\*\/\*"\)/, 'several types, or none, stay open');
   assert.doesNotMatch(code, /intent\.setType\("image\/\*"\)/, 'the hard-coded image-only intent is gone');
+  // F3: the multiple flag comes from the requested mode, never a constant.
+  assert.match(code, /boolean multiple = params != null && params\.getMode\(\) == FileChooserParams\.MODE_OPEN_MULTIPLE;/, 'the mode decides');
+  assert.match(code, /intent\.putExtra\(Intent\.EXTRA_ALLOW_MULTIPLE, multiple\);/, 'the requested value is forwarded');
+  assert.doesNotMatch(code, /EXTRA_ALLOW_MULTIPLE, true/, 'a single-file input must not offer multi-select');
 
   // No file manager: the callback is answered, not left pending.
   assert.match(code, /fileCallback = null;[\s\S]*callback\.onReceiveValue\(null\);[\s\S]*return false;/, 'a missing picker answers the page');
@@ -150,7 +157,14 @@ test('the extension map offers the label JSON as every type a picker may report'
   assert.match(resolver, /startsWith\("\."\)/, 'an extension token is recognised');
   assert.match(resolver, /toLowerCase\(Locale\.ROOT\)/, 'the extension match is case-insensitive');
   assert.match(resolver, /EXTENSION_MIME_TYPES\.get\(/, 'the map is the one resolver');
-  assert.match(resolver, /!types\.contains\(type\)/, 'the list is deduplicated');
+  // F2: an unmapped extension is dropped, never guessed. `*/*` is already the
+  // fallback type, so guessing octet-stream here would only widen the filter.
+  assert.match(resolver, /if \(mapped != null\) \{/, 'only a mapped extension contributes types');
+  assert.match(resolver, /\}\s*\n\s*continue;/, 'an unmapped extension ends the token without adding anything');
+  assert.doesNotMatch(resolver, /octet-stream/, 'the resolver never invents a type');
+  // F4: both branches dedupe; a page accept list may repeat a type.
+  assert.match(resolver, /!types\.contains\(type\)/, 'the extension branch deduplicates');
+  assert.match(resolver, /if \(!types\.contains\(value\)\) types\.add\(value\);/, 'the MIME branch deduplicates too');
   assert.match(resolver, /types\.add\(value\)/, 'a MIME token and a wildcard are kept as written');
   // The page's own input declares application/json,.json; the resolver is the
   // only thing that turns that into picker types.
@@ -169,8 +183,17 @@ test('a multi-item selection answers every URI, deduplicated, and cancel answers
 
   const result = block(activity, 'protected void onActivityResult(');
   assert.match(result, /resultCode == RESULT_OK && data != null \? selectedUris\(data\) : null/, 'cancel and a missing intent answer null');
-  assert.match(result, /fileCallback\.onReceiveValue\(result\)/, 'the page receives the answer');
-  assert.match(result, /fileCallback = null;/, 'the callback is always cleared');
+  // F5: the answer and the clear are outside any RESULT_OK branch, so a cancel
+  // or an empty selection releases the page exactly like a success.
+  const respond = result.indexOf('Uri[] result =');
+  const clear = result.indexOf('fileCallback = null;', respond);
+  assert.ok(respond >= 0 && clear > respond, 'the callback is cleared after the answer is computed');
+  assert.doesNotMatch(
+    result.slice(respond, clear),
+    /if \(resultCode/,
+    'nothing between the answer and the clear re-tests the result code'
+  );
+  assert.match(result.slice(respond, clear), /if \(fileCallback != null\)/, 'the clear is guarded, not conditional on success');
 
   const destroy = block(activity, 'protected void onDestroy()');
   assert.match(destroy, /fileCallback\.onReceiveValue\(null\)/);

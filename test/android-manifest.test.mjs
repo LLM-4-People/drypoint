@@ -91,19 +91,48 @@ test('the manifest declares the exact permission set and no component it does no
   assert.match(xml, /android\.intent\.category\.LAUNCHER/);
 });
 
+/**
+ * The exact A-F2 contract for the manifest's backup comment.
+ *
+ * `allowBackup=false` disables cloud backup, but at targetSdk 31+ some OEMs
+ * ignore it for device-to-device migration, so the comment must state the
+ * guaranteed half and the manufacturer-controlled half — and must not contain
+ * an absolute ("nothing ever leaves this phone") or a contradiction
+ * ("allowBackup=false enables cloud backup"). Returns the problem, or null.
+ *
+ * @param {string} comment the XML comment text
+ * @returns {string|null}
+ */
+function backupCommentProblem(comment) {
+  const text = String(comment ?? '');
+  if (!/cloud\s+backup/i.test(text)) return 'it must name cloud backup';
+  if (!/disabl\w*\s+cloud\s+backup|cloud\s+backup[^.]*\bdisabl/i.test(text)) return 'it must say cloud backup is disabled';
+  if (!/device-to-device/i.test(text)) return 'it must name device-to-device migration';
+  if (!/manufacturer/i.test(text)) return 'it must say D2D is manufacturer-controlled';
+  if (!/cannot be disabled by the app/i.test(text)) return 'it must say the app cannot disable D2D everywhere';
+  if (/\bnothing\b|\bnever\b|\bno copy\b/i.test(text)) return 'an absolute claim contradicts the OEM caveat';
+  if (/\benabl(e|es|ed|ing)\b/i.test(text)) return 'a contradiction: allowBackup=false disables cloud backup';
+  return null;
+}
+
 test('cloud backup is disabled and the D2D claim is honest', () => {
   const template = read('android/AndroidManifest.template.xml');
   const xml = renderManifest(template, { versionName: '1.0.0', versionCode: 10000, packageName: brand.appId });
   assert.match(xml, /android:allowBackup="false"/, 'cloud backup of the labels and the BLE address is disabled');
   assert.doesNotMatch(xml, /android:allowBackup="true"/);
   assert.doesNotMatch(xml, /fullBackupContent|dataExtractionRules/, 'no backup rules are configured either');
-  // A-F2: `allowBackup=false` does not stop device-to-device migration on every
-  // OEM at targetSdk 31+, so the manifest comment must not promise it does.
   const comment = template.slice(template.indexOf('<!-- Offline tool:'), template.indexOf('<application'));
-  assert.match(comment, /cloud\s+backup/);
-  assert.match(comment, /device-to-device/);
-  assert.match(comment, /manufacturer/, 'the manufacturer-controlled half is stated');
-  assert.match(comment, /cannot be disabled by the app/, 'the limit is stated, not hidden');
+  assert.equal(backupCommentProblem(comment), null, backupCommentProblem(comment) ?? '');
+
+  // The rule has teeth: the two shapes the review planted must fail.
+  const absolute =
+    '<!-- Nothing is ever copied off this phone; allowBackup=false disables cloud backup; device-to-device migration is controlled by the manufacturer and cannot be disabled by the app. -->';
+  assert.match(backupCommentProblem(absolute), /absolute/);
+  const contradiction =
+    '<!-- allowBackup=false enables cloud backup; device-to-device migration is controlled by the manufacturer and cannot be disabled by the app. -->';
+  assert.match(backupCommentProblem(contradiction), /contradiction|disabled/);
+  const silent = '<!-- Offline tool. -->';
+  assert.match(backupCommentProblem(silent), /cloud backup/);
 });
 
 test('the build resolves the manifest through the one writer', () => {
