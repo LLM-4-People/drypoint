@@ -96,7 +96,22 @@ export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * parallel test files can lose — one takes the port in the gap, and the other
  * dies with EADDRINUSE. Reading the allocation's own record has no gap.
  */
-async function waitForDevToolsPort(profile, timeoutMs = 10000) {
+/**
+ * How long to wait for Chromium to publish its DevTools port. Three layout
+ * suites can start their own browser at the same time on a two-core CI runner,
+ * so the bound has to cover contention, not just a warm local start. Override
+ * with `D110_CHROME_TIMEOUT_MS` when a slower machine needs more.
+ */
+const DEVTOOLS_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.D110_CHROME_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30000;
+})();
+
+/**
+ * @param {string} profile
+ * @param {{ timeoutMs?: number, exited?: () => { code: number|null, signal: string|null, stderr: string }|null }} options
+ */
+async function waitForDevToolsPort(profile, { timeoutMs = DEVTOOLS_TIMEOUT_MS, exited = () => null } = {}) {
   const file = join(profile, 'DevToolsActivePort');
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -107,9 +122,20 @@ async function waitForDevToolsPort(profile, timeoutMs = 10000) {
     } catch {
       // Chromium has not written the file yet.
     }
+    const status = exited();
+    if (status) {
+      const detail = status.stderr.trim().split('\n').slice(-6).join('\n');
+      throw new Error(
+        `Chromium exited before publishing DevToolsActivePort ` +
+          `(code=${status.code}, signal=${status.signal})${detail ? `:\n${detail}` : ''}`
+      );
+    }
     await delay(50);
   }
-  throw new Error('Chromium did not write DevToolsActivePort');
+  throw new Error(
+    `Chromium did not write DevToolsActivePort within ${timeoutMs} ms; ` +
+      'raise D110_CHROME_TIMEOUT_MS on a slow or heavily loaded machine'
+  );
 }
 
 /** Serve the app surface only, read-only, for the layout probes. */
@@ -217,10 +243,23 @@ export async function withPage(t, body) {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-gpu',
-      'localhost about:blank',
+      // CI containers can have a small /dev/shm; three concurrent browsers
+      // must not take each other down through it.
+      '--disable-dev-shm-usage',
+      'about:blank',
     ],
-    { stdio: 'ignore' }
+    // stderr is kept so a failed start names Chromium's own reason instead of
+    // only "no DevTools port".
+    { stdio: ['ignore', 'ignore', 'pipe'] }
   );
+  let chromeStderr = '';
+  chrome.stderr.on('data', (chunk) => {
+    chromeStderr = `${chromeStderr}${chunk}`.slice(-8192);
+  });
+  const exited = () =>
+    chrome.exitCode !== null || chrome.signalCode
+      ? { code: chrome.exitCode, signal: chrome.signalCode, stderr: chromeStderr }
+      : null;
   t.after(async () => {
     chrome.kill('SIGTERM');
     // Removing the profile while Chromium is still flushing it fails with
@@ -237,7 +276,7 @@ export async function withPage(t, body) {
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  const cdp = await connect(await waitForDevToolsPort(profile));
+  const cdp = await connect(await waitForDevToolsPort(profile, { exited }));
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
   await body({ cdp, port });
