@@ -586,11 +586,11 @@ test('the release authority is main-defined, split and tag-derived', async () =>
   assert.doesNotMatch(commands, /head_branch/, 'a tag that points at main HEAD does not need head_branch');
   assert.match(commands, /git merge-base --is-ancestor/, 'ancestry is checked in the main-defined workflow');
   assert.match(commands, /package\.json/, 'the tag matches the package version');
-  assert.match(commands, /gh release view/, 'an existing release is detected');
   assert.match(commands, /publish=true requires a release tag/, 'a SHA dry run cannot publish');
   assert.match(commands, /40-character SHA/, 'a short SHA is refused with a clear message');
   assert.equal(resolve.environment, undefined, 'the resolve job has no environment');
-  assert.deepEqual(Object.keys(resolve.outputs).sort(), ['existing', 'publish', 'ref', 'sha', 'tag', 'version']);
+  assert.deepEqual(Object.keys(resolve.outputs).sort(), ['publish', 'ref', 'sha', 'tag', 'version']);
+  assert.doesNotMatch(JSON.stringify(resolve), /gh release view/, 'resolve computes no dead existing release flag');
   const resolveIf = String(resolve.if).replace(/\s+/g, ' ');
   assert.match(resolveIf, /github\.event_name == 'workflow_dispatch'/, 'a manual dispatch is explicit');
   assert.match(resolveIf, /github\.event\.workflow_run\.event == 'push'/, 'a pull request Checks run cannot publish');
@@ -650,11 +650,28 @@ test('the release authority is main-defined, split and tag-derived', async () =>
   assert.match(JSON.stringify(sign.env), /vars\.RELEASE_CERT_SHA256/);
   assert.match(JSON.stringify(sign.steps), /vars\.ANDROID_KEY_ALIAS/);
   assert.doesNotMatch(JSON.stringify(sign.steps), /secrets\.ANDROID_KEY_ALIAS/);
+  // The signing toolchain is the same gate-proved JDK as the build.
+  assert.ok(
+    sign.steps.some((step) => step.uses === 'actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880' && step.with?.['java-version'] === '21')
+  );
+  // The signing scheme and the exact artifact identity come from the build's
+  // one owners; the sign job does not hard-code a second answer.
+  assert.match(JSON.stringify(sign), /--min-sdk-version \\"\$min_sdk\\"/);
+  assert.match(JSON.stringify(sign), /--v1-signing-enabled \\"\$v1_signing\\"/);
+  assert.doesNotMatch(JSON.stringify(sign), /--min-sdk-version 26/);
+  assert.doesNotMatch(JSON.stringify(sign), /--v1-signing-enabled false/);
+  assert.match(JSON.stringify(sign), /expected_version_code/);
+  // The attestation is bound to the resolved tag commit, and the bundle is
+  // checked against that binding.
+  const attest = sign.steps.find((step) => String(step.uses ?? '').startsWith('actions/attest-build-provenance@'));
+  assert.equal(attest.env.GITHUB_SHA, '${{ needs.resolve.outputs.sha }}');
+  assert.ok(sign.steps.some((step) => String(step.run ?? '').includes('.predicate.buildDefinition.resolvedDependencies')));
 
   // Publish holds contents: write and no secret, checks nothing out and uses TAG.
   const publish = parsed.jobs.publish;
   assert.deepEqual(publish.permissions, { contents: 'write' });
   assert.equal(publish.environment, undefined);
+  assert.equal(publish.env.GH_REPO, '${{ github.repository }}', 'gh can resolve the repository without a checkout');
   assert.doesNotMatch(JSON.stringify(publish.steps.map((step) => step.uses ?? '')), /actions\/checkout/);
   assert.equal(publishCommands(release).length, 1);
   assert.ok(publishCommands(release)[0].includes('$TAG'));
@@ -672,7 +689,10 @@ test('the release build proves a clean unsigned tree and the sign job proves the
   assert.match(release, /node scripts\/check-apk\.mjs/);
   assert.match(release, /git diff --exit-code/);
   assert.match(release, /git status --porcelain/);
-  assert.match(release, /--v1-signing-enabled false/);
+  assert.match(release, /--min-sdk-version "\$min_sdk"/);
+  assert.match(release, /--v1-signing-enabled "\$v1_signing"/);
+  assert.doesNotMatch(release, /--min-sdk-version 26/);
+  assert.doesNotMatch(release, /--v1-signing-enabled false/);
   assert.match(release, /--v2-signing-enabled true/);
   assert.match(release, /--v3-signing-enabled true/);
   assert.match(release, /zipalign" -c -v 4/);
@@ -681,9 +701,15 @@ test('the release build proves a clean unsigned tree and the sign job proves the
   assert.match(release, /RELEASE_CERT_SHA256/);
   assert.match(release, /gh attestation download/);
   assert.match(release, /subject-path: dist\/drypoint-\$\{\{ needs\.resolve\.outputs\.version \}\}\.apk/, 'the signed APK is the subject');
+  assert.match(release, /GITHUB_SHA: \$\{\{ needs\.resolve\.outputs\.sha \}\}/, 'the attestation names the resolved tag commit');
+  assert.match(release, /\.predicate\.resolvedDependencies/, 'the downloaded predicate is verified');
   assert.match(release, /gh release view "\$TAG"/);
   assert.match(release, /cmp -s/);
   assert.match(release, /already exists with these exact assets/);
+  assert.match(release, /gh release edit "\$TAG" --notes-file "\$notes"/, 'a re-run refreshes a changed body');
+  assert.match(release, /GH_REPO: \$\{\{ github\.repository \}\}/);
+  assert.match(release, /dist\/version-code\.txt/);
+  assert.match(release, /dist\/signing\.json/);
   // The gate's artifact check asserts the schemes; the release sign job has its
   // own workflow-owned assertions because it must not run this script with the
   // key in its environment.
@@ -963,14 +989,27 @@ test('checks.yml runs every gate and proves the APK identity', async () => {
   assert.ok(status > diff, 'the untracked-file proof follows the tracked-file proof');
 });
 
-test('actionlint is downloaded directly and checksum-verified', async () => {
+test('actionlint is downloaded directly, checksum-verified and in the required aggregate', async () => {
   const actionlint = await readFile(join(projectRoot, WORKFLOW_DIR, 'actionlint.yml'), 'utf8');
-  assert.match(actionlint, /actionlint_1\.7\.12_linux_amd64\.tar\.gz/);
-  assert.match(actionlint, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
-  assert.match(actionlint, /sha256sum -c -/);
-  assert.match(actionlint, /tar -xzf/);
-  assert.match(actionlint, /run: actionlint -color/);
+  const script = await readFile(join(projectRoot, 'scripts', 'actionlint.sh'), 'utf8');
+  assert.match(script, /^version=1\.7\.12$/m);
+  assert.match(script, /actionlint_\$\{version\}_linux_amd64\.tar\.gz/);
+  assert.match(script, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
+  assert.match(script, /sha256sum -c -/);
+  assert.match(script, /tar -xzf/);
+  assert.match(script, /RUNNER_TEMP:\?/);
+  assert.match(actionlint, /run: bash scripts\/actionlint\.sh \.github\/workflows/);
+  assert.doesNotMatch(actionlint, /actionlint_1\.7\.12/);
+  assert.doesNotMatch(actionlint, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
   assert.doesNotMatch(actionlint, /raven-actions\/actionlint/);
+
+  // The trusted policy job runs the same owner against the candidate tree, and
+  // `required` needs `policy`, so a lint error blocks the merge.
+  const checksText = await readFile(join(projectRoot, WORKFLOW_DIR, 'checks.yml'), 'utf8');
+  assert.match(checksText, /bash scripts\/actionlint\.sh "\$PR_TREE\/\.github\/workflows"/);
+  const parsed = parseWorkflow(checksText).workflow;
+  assert.ok(parsed.jobs.required.needs.includes('policy'), 'policy is in the aggregate');
+  assert.ok(GATE_COMMANDS['checks.yml'].policy.includes('bash scripts/actionlint.sh "$PR_TREE/.github/workflows"'));
 });
 
 test('pages checks out main, then proves it is the commit Checks validated', async () => {

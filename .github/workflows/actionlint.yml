@@ -27,18 +27,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install the pinned actionlint
-        run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
-          curl -fsSL \
-            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-            -o "$archive"
-          # The archive is verified before extraction; the action this replaced
-          # downloaded its tool at run time without a checksum.
-          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum -c -
-          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" --version
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - name: Run actionlint
-        run: actionlint -color
+      - name: Run the pinned actionlint
+        # One owner of the version and checksum; the trusted policy job runs the
+        # same script against the candidate workflows.
+        run: bash scripts/actionlint.sh .github/workflows

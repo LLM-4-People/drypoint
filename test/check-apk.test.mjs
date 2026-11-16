@@ -11,6 +11,7 @@ import {
   badgingFindings,
   bundledFiles,
   checkApk,
+  expectedIdentity,
   manifestXmlFindings,
   readPrecache,
   signatureFindings,
@@ -93,6 +94,34 @@ test('INTERNET in either permission form and the launcher count are checked', ()
   const twoLaunchers = `${BADGING}\nlaunchable-activity: name='dev.llm4people.drypoint.Second' label='' icon=''`;
   assert.ok(badgingFindings(twoLaunchers).some((finding) => /exactly one MAIN\/LAUNCHER activity, found 2/.test(finding)));
   assert.ok(badgingFindings("package: name='x'").some((finding) => /found 0/.test(finding)), 'a launcher is required');
+});
+
+test('the badging must carry the exact package, versionCode and versionName', () => {
+  const expected = expectedIdentity();
+  assert.deepEqual(expected, { package: 'dev.llm4people.drypoint', versionCode: 10002, versionName: '1.0.2' });
+  assert.deepEqual(badgingFindings(BADGING, expected), []);
+  const cases = [
+    ['versionCode 1', BADGING.replace("versionCode='10002'", "versionCode='1'"), /versionCode 10002/],
+    ['wrong package', BADGING.replace('dev.llm4people.drypoint', 'dev.example.other'), /not dev\.llm4people\.drypoint/],
+    ['wrong versionName', BADGING.replace("versionName='1.0.2'", "versionName='9.9.9'"), /not dev\.llm4people\.drypoint 1\.0\.2/],
+  ];
+  for (const [name, text, pattern] of cases) {
+    assert.ok(badgingFindings(text, expected).some((finding) => pattern.test(finding)), `${name} is rejected`);
+  }
+  // The composed check uses the same identity, so a hard-coded positive
+  // versionCode cannot pass the release artifact check.
+  const files = [...readPrecache().files, ...DISTRIBUTION_FILES];
+  const bytes = new Map(files.map((file) => [file, readFileSync(join(projectRoot, file))]));
+  const exec = (command, args) => {
+    if (command === 'unzip' && args[0] === '-Z1') return files.map((file) => `assets/www/${file}`).join('\n');
+    if (command === 'unzip' && args[0] === '-p') return bytes.get(args[2].replace('assets/www/', ''));
+    if (command === 'aapt2' && args[1] === 'badging') return BADGING.replace("versionCode='10002'", "versionCode='1'");
+    if (command === 'aapt2' && args[1] === 'xmltree') return XMLTREE;
+    throw new Error(`unexpected command ${command} ${args.join(' ')}`);
+  };
+  const result = checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec });
+  assert.equal(result.ok, false);
+  assert.ok(result.findings.some((finding) => /versionCode 10002/.test(finding)));
 });
 
 test('the binary manifest enforces every component, debuggable and cleartext rule', () => {

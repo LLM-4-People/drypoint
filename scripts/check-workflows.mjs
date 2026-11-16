@@ -123,6 +123,7 @@ export const GATE_COMMANDS = Object.freeze({
       'npm ci',
       'node scripts/check-workflows.mjs --workflows "$PR_TREE/.github/workflows"',
       'node scripts/check-privacy.mjs --root "$PR_TREE"',
+      'bash scripts/actionlint.sh "$PR_TREE/.github/workflows"',
     ]),
     required: Object.freeze(['node scripts/check-required.mjs']),
   }),
@@ -602,6 +603,11 @@ export function parsedWorkflowFindings(workflow, file) {
     if (!Number.isInteger(job['timeout-minutes']) || job['timeout-minutes'] <= 0) {
       findings.push(`${file}: job "${name}" has no timeout-minutes`);
     }
+    // A trusted job must run on the image the gate proved. A self-hosted,
+    // Windows or macOS label changes the shell and the tools silently.
+    if (job['runs-on'] !== 'ubuntu-24.04') {
+      findings.push(`${file}: job "${name}" must run on ubuntu-24.04, not ${JSON.stringify(job['runs-on'] ?? null)}`);
+    }
     findings.push(...permissionFindings(job.permissions, file, `job "${name}" `));
     if (job.uses != null) {
       findings.push(`${file}: job "${name}" must not call a reusable workflow (secrets: inherit is the bypass this policy removes)`);
@@ -879,8 +885,12 @@ function resolveFindings(workflow, file) {
   }
 
   const outputs = isMap(job.outputs) ? job.outputs : {};
-  for (const name of ['publish', 'tag', 'sha', 'version', 'ref']) {
+  const expectedOutputs = ['publish', 'ref', 'sha', 'tag', 'version'];
+  for (const name of expectedOutputs) {
     if (!(name in outputs)) findings.push(`${file}: job "resolve" must output ${name}`);
+  }
+  for (const name of Object.keys(outputs)) {
+    if (!expectedOutputs.includes(name)) findings.push(`${file}: job "resolve" must not expose the unused output ${name}`);
   }
 
   const steps = stepsOf(job);
@@ -899,7 +909,6 @@ function resolveFindings(workflow, file) {
     [/out "ref=/, 'report the ref the build checks out'],
     [/git merge-base --is-ancestor/, 'verify the commit is an ancestor of origin/main'],
     [/package\.json/, 'verify the tag version against package.json'],
-    [/gh release view/, 'detect an existing release'],
     [/workflow_dispatch/, 'handle the manual dry run'],
     [/publish=true requires a release tag/, 'refuse publish=true with a commit SHA'],
     [/40-character SHA/, 'refuse a short commit SHA'],
@@ -982,6 +991,14 @@ function buildFindings(workflow, file) {
   if (!steps.some((step) => stepCommands(step).some((command) => command.startsWith('node scripts/check-apk.mjs')))) {
     findings.push(`${file}: job "build" must check the built APK`);
   }
+  for (const [flag, target] of [
+    ['--version-code', 'dist/version-code.txt'],
+    ['--signing-scheme', 'dist/signing.json'],
+  ]) {
+    if (!steps.some((step) => stepCommands(step).some((command) => command.includes(flag) && command.includes(target)))) {
+      findings.push(`${file}: job "build" must publish ${target} from build-android.mjs ${flag}`);
+    }
+  }
   findings.push(...keystoreOrderFindings(job, file, 'build'));
   if (
     JSON.stringify(job.env ?? {}).includes('ANDROID_ALLOW_TEST_KEY') ||
@@ -1040,7 +1057,8 @@ function signFindings(workflow, file) {
   const joined = commands.join('\n');
   for (const [pattern, message] of [
     [/apksigner"?\s+sign/, 'sign with apksigner'],
-    [/--v1-signing-enabled"?\s+false/, 'disable the v1 signature'],
+    [/--min-sdk-version"?\s+"\$min_sdk"/, 'take the minimum SDK from the build manifest'],
+    [/--v1-signing-enabled"?\s+"\$v1_signing"/, 'take the v1 scheme from the manifest-derived answer'],
     [/--v2-signing-enabled"?\s+true/, 'enable the v2 signature'],
     [/--v3-signing-enabled"?\s+true/, 'enable the v3 signature'],
     [/apksigner"?\s+verify/, 'verify the signature'],
@@ -1048,11 +1066,24 @@ function signFindings(workflow, file) {
     [/aapt2"?\s+dump\s+badging/, 'assert package and version'],
     [/aapt2"?\s+dump\s+xmltree/, 'assert the binary manifest'],
     [/gh attestation download/, 'download the provenance bundle'],
+    [/expected_package="package: name='\$\{package_id\}' versionCode='\$\{expected_version_code\}' versionName='\$\{VERSION\}'"/, 'assert the exact package, versionCode and versionName'],
+    [/resolvedDependencies\[\]\?\.digest\.gitCommit/, 'prove the provenance resolves the tag commit'],
   ]) {
     if (!pattern.test(joined)) findings.push(`${file}: job "sign" must ${message}`);
   }
-  if (!stepsOf(job).some((step) => step.uses === 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8')) {
+  // The scheme has one owner: the manifest. A second hard-coded answer is
+  // exactly the latent divergence this policy removes.
+  if (/--min-sdk-version"?\s+26\b/.test(joined) || /--v1-signing-enabled"?\s+false/.test(joined)) {
+    findings.push(`${file}: job "sign" must not hard-code the minSdk/signing scheme; read dist/signing.json`);
+  }
+  if (!stepsOf(job).some((step) => step.uses === 'actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880' && step.with?.['java-version'] === '21')) {
+    findings.push(`${file}: job "sign" must use the pinned Temurin 21 action`);
+  }
+  const attest = stepsOf(job).find((step) => step.uses === 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8');
+  if (!attest) {
     findings.push(`${file}: job "sign" must use the pinned attest action`);
+  } else if (attest.env?.GITHUB_SHA !== '${{ needs.resolve.outputs.sha }}') {
+    findings.push(`${file}: job "sign" must bind the attestation to needs.resolve.outputs.sha, not the default-branch HEAD`);
   }
   return findings;
 }
@@ -1066,6 +1097,11 @@ function publishFindings(workflow, file) {
     if (scope !== 'contents' && level === 'write') findings.push(`${file}: job "publish" must not hold ${scope}: write`);
   }
   if (jobEnvText(job).includes('secrets.')) findings.push(`${file}: job "publish" must not read secrets`);
+  if (job.env?.GH_REPO !== '${{ github.repository }}') {
+    findings.push(
+      `${file}: job "publish" must set GH_REPO to \${{ github.repository }}; it has no checkout for gh to discover one`
+    );
+  }
   if (!needsOf(job).includes('resolve') || !needsOf(job).includes('sign')) {
     findings.push(`${file}: job "publish" must need resolve and sign`);
   }
@@ -1108,6 +1144,7 @@ function existingReleaseFindings(workflow, file) {
     [/exit 0/, 'treat an identical existing release as a pass'],
     [/--latest/, 'mark the release latest'],
     [/--notes-file/, 'publish the generated notes'],
+    [/gh release edit "\$TAG"[^\n]*--notes-file/, 'refresh the notes on a re-run instead of exiting with a stale body'],
   ]) {
     if (!pattern.test(logic)) findings.push(`${file}: job "publish" must ${message}`);
   }

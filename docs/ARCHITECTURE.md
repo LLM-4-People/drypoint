@@ -94,6 +94,7 @@ src/
 scripts/
   serve.mjs                zero-dependency dev server + pid tracking
   stop.mjs                 validated stop for the tracked server
+  actionlint.sh            the one actionlint version/checksum, run by both workflows
   precache.mjs             dependency-graph walker, allowlist, manifest generator
   android-sdk.sh           the pinned SDK packages and licence handling both workflows use
   build-brand.mjs          brand.json + package.json → manifest, strings.xml, BRAND/version modules, icon
@@ -603,8 +604,7 @@ verifies.
    dependency, so the branch push and the tag push for one commit agree. It
    accepts exactly one strict `vMAJOR.MINOR.PATCH` tag, verifies
    `git merge-base --is-ancestor "$sha" origin/main` and the tag's package
-   version, and records whether a release already exists. No tag means
-   `publish=false` and the run stops after resolve.
+   version. No tag means `publish=false` and the run stops after resolve.
 6. The `build` job has no environment and no secret. It checks out fixed
    `main` and materializes the resolved tag/SHA as a detached worktree
    (`git worktree add --detach "$RELEASE_TREE" "$REF"`), then proves
@@ -616,16 +616,20 @@ verifies.
    failure: the build never invents one.
 7. The `sign` job is the only job in the `release` environment. It checks
    nothing out and runs no `npm`, `node` or repository script: every command is
-   workflow-owned. It re-signs the downloaded APK with the pinned `apksigner`
-   (v1 off, v2 and v3 on), compares the signer with the environment-pinned
-   `vars.RELEASE_CERT_SHA256`, `brand.json` and the notes footer, asserts
-   `zipalign` and the binary manifest (allowBackup false, no debuggable, no
-   cleartext, no INTERNET, one exported MAIN/LAUNCHER activity, no provider,
-   service or receiver), attests the signed APK, downloads the bundle and
-   writes the checksum.
+   workflow-owned. It uses the same pinned Temurin 21 as the build, re-signs the
+   downloaded APK with the manifest-derived scheme (v1 only below API 24, v2 and
+   v3 always), compares the signer with the environment-pinned
+   `vars.RELEASE_CERT_SHA256`, `brand.json` and the notes footer, asserts the
+   exact package/versionCode/versionName and the binary manifest (allowBackup
+   false, no debuggable, no cleartext, no INTERNET, one exported MAIN/LAUNCHER
+   activity, no provider, service or receiver), attests the signed APK with
+   `GITHUB_SHA` set to the resolved tag commit, downloads the bundle, proves the
+   predicate's subject and `resolvedDependencies.gitCommit` are that APK and
+   that commit, and writes the checksum.
 8. The `publish` job is the only job with `contents: write`; it holds no secret
-   and checks nothing out. If the release exists it downloads and `cmp`s every
-   asset and exits 0 only on exact equality. Otherwise it runs
+   and checks nothing out, so `GH_REPO` names the repository explicitly. If the
+   release exists it downloads and `cmp`s every asset, refreshes the body with
+   `gh release edit --notes-file` and exits 0. Otherwise it runs
    `gh release create "$TAG" ... --verify-tag --latest` with the APK, the
    checksum and the provenance bundle; tags are strict
    `vMAJOR.MINOR.PATCH`, so there is no prerelease branch and never a draft.

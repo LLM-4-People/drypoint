@@ -18,6 +18,8 @@ import {
   releaseIdentityRequired,
   renderManifest,
   sdkDirs,
+  signingSchemeForMinSdk,
+  signingSchemeOf,
   syncAssets,
   UMASK_WRAPPER,
   versionCodeOf,
@@ -430,6 +432,22 @@ test('the signing schemes follow the manifest minimum', () => {
   const manifest = read('android/AndroidManifest.template.xml');
   assert.equal(minSdkVersionOf(renderManifest(manifest, { versionName: '1.0.0', versionCode: 10000, packageName: 'dev.example.labels' })), 26, 'the manifest owns the minimum');
   assert.throws(() => minSdkVersionOf('<manifest/>'), /no android:minSdkVersion/);
+
+  // One owner for the scheme: changing the manifest minimum changes the answer
+  // the build uses and the answer the sign job reads from dist/signing.json.
+  assert.deepEqual(signingSchemeOf(manifest), { minSdkVersion: 26, v1SigningEnabled: false });
+  const older = manifest.replace('android:minSdkVersion="26"', 'android:minSdkVersion="23"');
+  assert.deepEqual(signingSchemeOf(older), { minSdkVersion: 23, v1SigningEnabled: true });
+  assert.deepEqual(signingSchemeForMinSdk(24), { minSdkVersion: 24, v1SigningEnabled: false });
+  assert.throws(() => signingSchemeForMinSdk('0'), /positive integer/);
+
+  // The sign job consumes that answer; it never spells a second 26/false.
+  const { workflow } = parseWorkflow(read('.github/workflows/release.yml'));
+  const signText = JSON.stringify(workflow.jobs.sign);
+  assert.match(signText, /jq -r \.minSdkVersion dist\/signing\.json/);
+  assert.match(signText, /jq -r \.v1SigningEnabled dist\/signing\.json/);
+  assert.doesNotMatch(signText, /--min-sdk-version 26/);
+  assert.doesNotMatch(signText, /--v1-signing-enabled false/);
 });
 
 test('the release certificate in brand.json is the one the build compares', () => {
