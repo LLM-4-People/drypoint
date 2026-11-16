@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import { bootOfflineShell, registerPrecacheErrors, watchPrecacheErrors } from '../src/core/precache-status.js';
 import { CONFIG } from '../src/core/config.js';
 import { BRAND } from '../src/core/brand.js';
+import { contentTypeFor } from '../scripts/lib/content-types.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const swSource = readFileSync(resolve(root, 'sw.js'), 'utf8');
@@ -33,20 +34,9 @@ class FakeCache {
   }
 }
 
-/** The content type a well-behaved host returns for each precached extension. */
-const TYPES = {
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.html': 'text/html; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-};
-
+/** The content type a well-behaved host returns, from the one owner. */
 function typeFor(href) {
-  const path = new URL(href).pathname;
-  const dot = path.lastIndexOf('.');
-  return dot < 0 ? null : (TYPES[path.slice(dot)] ?? 'application/octet-stream');
+  return contentTypeFor(new URL(href).pathname);
 }
 
 /** The real bytes the server would return for a precached file. */

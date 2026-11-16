@@ -30,7 +30,7 @@ import {
 import { projectRoot } from './helpers/project-files.mjs';
 import { collectFiles } from '../scripts/precache.mjs';
 import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
-import { manifestTypeProblem, probe, probeMethod, smokePaths } from '../scripts/smoke-pages.mjs';
+import { manifestTypeProblem, probe, probeMethod, SITE_ONLY_FILES, smokePaths } from '../scripts/smoke-pages.mjs';
 
 const CHECKOUT_SHA = '3d3c42e5aac5ba805825da76410c181273ba90b1';
 const POLICY = join(projectRoot, 'scripts', 'check-workflows.mjs');
@@ -781,8 +781,15 @@ test('the pages smoke test covers every precached file and notice exactly once',
   const paths = await smokePaths();
   const files = await collectFiles();
   const notices = DISTRIBUTION_FILES.map((file) => `/${file}`);
+  const siteOnly = SITE_ONLY_FILES.map((file) => `/${file}`);
   assert.ok(files.length >= 64, `the runtime surface lists every file (${files.length})`);
-  assert.deepEqual(paths, ['/', ...files.map((file) => `/${file}`), ...notices].sort());
+  assert.deepEqual(
+    paths,
+    ['/', ...files.map((file) => `/${file}`), ...notices, ...siteOnly].sort(),
+    'the precache list, the notices and the deployment-only files, each once'
+  );
+  for (const file of siteOnly) assert.ok(paths.includes(file), `${file} is probed`);
+  assert.equal(paths.includes('/.nojekyll'), false, 'the host control marker is not app content');
   assert.equal(paths.filter((path) => path === '/').length, 1);
   assert.equal(paths.includes('/manifest.webmanifest'), true);
   for (const notice of notices) assert.ok(paths.includes(notice), `${notice} is probed`);

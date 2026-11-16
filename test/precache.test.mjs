@@ -20,6 +20,7 @@ import {
   OUTPUT,
   REQUIRED_FILES,
   renderBaseHelper,
+  renderContentTypes,
   resolveSurfacePath,
   stampWorker,
   SURFACE_FILES,
@@ -301,6 +302,7 @@ test('the worker stamps are replaced only at the anchored declarations', () => {
     "// const CACHE_PREFIX = 'old-';",
     "const CACHE_PREFIX = 'old-';",
     renderBaseHelper(),
+    renderContentTypes(),
   ].join('\n');
   const stamped = stampWorker(source, 'aaaabbbbccccdddd', 'new-');
   assert.match(stamped, /^const BUILD = 'aaaabbbbccccdddd';$/m, 'the real build declaration is rewritten');
@@ -357,4 +359,29 @@ test('the committed worker matches a fresh stamp', async () => {
   const built = await buildPrecache();
   const actual = await readFile(join(ROOT, SW_FILE), 'utf8');
   assert.equal(actual, built.swContent, 'npm run build regenerates the same worker');
+});
+
+/* ---------------- the generated content types (P-F3) ---------------- */
+
+test('the content-type block is stamped into sw.js exactly once', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { ROOT, renderContentTypes, stampWorker } = await import('../scripts/precache.mjs');
+  const { CONTENT_TYPES } = await import('../scripts/lib/content-types.mjs');
+  const sw = await readFile(join(ROOT, 'sw.js'), 'utf8');
+
+  assert.equal((sw.match(/\/\/ BEGIN generated content types/g) ?? []).length, 1, 'one generated block');
+  assert.ok(sw.includes(renderContentTypes()), 'the committed worker carries the owner text byte-for-byte');
+
+  // The block is the module's own data and function, not a hand-written copy.
+  const block = sw.slice(sw.indexOf('// BEGIN generated content types'), sw.indexOf('// END generated content types'));
+  for (const extension of Object.keys(CONTENT_TYPES)) {
+    assert.ok(block.includes(`"${extension}"`), `${extension} is in the stamped map`);
+  }
+  assert.match(block, /function contentTypeProblem\(file, contentType\) \{/);
+
+  const doubled = sw.replace('// END generated content types', '// END generated content types\n// BEGIN generated content types\n// END generated content types');
+  assert.throws(() => stampWorker(doubled, '0123456789abcdef'), /exactly one content types/);
+  const missing = sw.replace(/\/\/ BEGIN generated content types[\s\S]*?\/\/ END generated content types/, '');
+  assert.throws(() => stampWorker(missing, '0123456789abcdef'), /exactly one content types/);
 });

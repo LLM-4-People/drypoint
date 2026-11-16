@@ -11,24 +11,14 @@ import { createReadStream, existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join, sep } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { projectRoot } from './project-files.mjs';
 import { chromeTimeoutMs } from './env-timeout.mjs';
 import { CHROME } from '../../scripts/lib/chrome.mjs';
+import { contentTypeFor } from '../../scripts/lib/content-types.mjs';
 
 export { CHROME };
-
-const TYPES = Object.freeze({
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-});
 
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -114,7 +104,7 @@ function appServer({ basePath = '/' } = {}) {
       response.writeHead(404).end('Not found');
       return;
     }
-    response.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    response.writeHead(200, { 'content-type': contentTypeFor(file) });
     createReadStream(file).pipe(response);
   });
 }

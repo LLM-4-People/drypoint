@@ -114,6 +114,7 @@ scripts/
   test-suites.mjs          splits unit and Chromium suites from the real imports
   lib/distribution.mjs     the licence and notices every distribution ships
   lib/base-href.mjs        the one <base href> rule, stamped into sw.js
+  lib/content-types.mjs    the one content-type map, stamped into sw.js
   lib/chrome.mjs           the one Chromium discovery rule for tools and tests
   lib/js-scan.mjs          shared comment/string/template/regex lexer
   lib/png.mjs              RGBA PNG codec and flattening for the generated icons
@@ -525,6 +526,14 @@ served from a stale HTTP cache.
   controls the page,
 - never answers a non-navigation request with `index.html` and never
   content-type-checks a navigation.
+
+The extension map and the decision behind that check are authored once in
+`scripts/lib/content-types.mjs` and stamped into the worker as a generated
+block; the dev server, the browser harness and the Pages smoke import the same
+module. A host that labels a module `text/html` therefore fails the same way in
+all four places, and the smoke cannot accept a type the worker would refuse.
+`scripts/smoke-pages.mjs` also probes the deployment-only files the precache
+manifest cannot name (`sw.js`, `assets/precache.js`, `404.html`).
 
 `npm run check:precache` and `test/precache.test.mjs` fail when the graph, the
 generated manifest, or the worker stamp disagree.
