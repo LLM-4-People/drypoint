@@ -38,7 +38,9 @@ test('the package comes from brand.json through the one renderer', () => {
     versionCode: 10000,
     packageName: brand.appId,
   });
-  assert.match(xml, new RegExp(`package="${brand.appId.replace(/\./g, '\\.')}"`));
+  // A literal comparison, not an interpolated regex: there is nothing to
+  // escape, and the assertion still proves the rendered package attribute.
+  assert.ok(xml.includes(`package="${brand.appId}"`), 'the package is the brand application id');
   assert.equal((xml.match(/\.MainActivity/g) ?? []).length, 1, 'the activity name is still relative to the package');
 });
 
