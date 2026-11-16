@@ -1,0 +1,352 @@
+/**
+ * Editor controller: owns the document, selection and undo history, and exposes
+ * every mutation the UI can perform. No DOM, no rendering.
+ */
+
+import { createHistory } from '../label/history.js';
+import {
+  ELEMENT_TYPES,
+  boundElementText,
+  clampElement,
+  createDocument,
+  createElement,
+  documentHeightPx,
+  documentWidthPx,
+  droppedSourceNotice,
+  validateDocument,
+} from '../label/schema.js';
+import { CONFIG } from '../core/config.js';
+import { clamp, createId, deepClone } from '../core/format.js';
+import { geometry } from '../core/geometry.js';
+
+export function createEditor({ document: initial, onChange = () => {}, onSelection = () => {} } = {}) {
+  let document = validateDocument(initial ?? createDocument());
+  let selection = document.elements.at(-1)?.id ?? null;
+
+  const history = createHistory({
+    initial: document,
+  });
+
+  /**
+   * Notices the operator has answered. They live outside the history snapshot
+   * on purpose: rewriting `history.present` would make an undo resurrect text
+   * the operator already dismissed, and rewriting a snapshot would rewrite
+   * history. Every publish path strips them instead.
+   */
+  const acknowledged = new Set();
+
+  /** The document handed to the store: history keeps the original notices. */
+  function publishable() {
+    if (!document.notices?.length || acknowledged.size === 0) return document;
+    const remaining = document.notices.filter((notice) => !acknowledged.has(notice));
+    if (remaining.length === document.notices.length) return document;
+    const next = { ...document };
+    if (remaining.length) next.notices = remaining;
+    else delete next.notices;
+    return next;
+  }
+
+  /** Memo for documentForDisplay(): one copy per raw document, not one per render. */
+  let displayCache = null;
+
+  /**
+   * The document every display path reads: the renderer, the stage footer, the
+   * print confirmation and the print flow. History and `controller.document`
+   * keep the original notices; an undo may therefore restore a snapshot that
+   * still carries an answered notice, and this owner strips it again.
+   */
+  function documentForDisplay() {
+    if (!document.notices?.length || acknowledged.size === 0) return document;
+    if (displayCache?.source === document) return displayCache.value;
+    const value = publishable();
+    displayCache = { source: document, value };
+    return value;
+  }
+
+  function emit({ commit = true, coalesceKey = null, coalesceMs, keepNotices = false } = {}) {
+    // A deliberate edit supersedes the migration notices: they described the
+    // document as it arrived, not the label the operator is now building.
+    if (commit && !keepNotices && document.notices) {
+      document = { ...document };
+      delete document.notices;
+    }
+    if (commit) history.commit(document, { coalesceKey, coalesceMs });
+    onChange(deepClone(documentForDisplay()));
+  }
+
+  /** Announce a selection change; document mutations never do this on their own. */
+  function emitSelection() {
+    onSelection(selection);
+  }
+
+  const find = (id) => document.elements.find((element) => element.id === id) ?? null;
+
+  /** Append one operator-facing notice, bounded and deduplicated. */
+  function addNotice(text) {
+    const notices = document.notices ?? [];
+    if (notices.includes(text)) return;
+    document = { ...document, notices: [...notices, text].slice(0, CONFIG.bounds.maxNotices) };
+  }
+
+  /**
+   * The collection cap, one owner for both ways an element enters the label.
+   * `addElement` and `duplicateElement` must refuse at the same boundary: a
+   * duplicate used to grow the label past what validation can keep on reload.
+   */
+  function refuseElementCap() {
+    if (document.elements.length < CONFIG.bounds.maxElements) return false;
+    const notice = `A label holds at most ${CONFIG.bounds.maxElements} elements.`;
+    if (!document.notices?.includes(notice)) {
+      document = { ...document, notices: [...(document.notices ?? []), notice] };
+      emit({ commit: false, keepNotices: true });
+    }
+    return true;
+  }
+
+  function updateElement(id, patch, { coalesceKey = null, coalesceMs } = {}) {
+    const current = find(id);
+    if (!current) return null;
+    // A locked element accepts only its own lock/visibility switches. Geometry
+    // and content edits (arrow keys, inspector, canvas drags) are rejected here,
+    // at the one place every mutation passes through.
+    const allowed = Object.keys(patch).every((key) => key === 'locked' || key === 'visible');
+    if (current.locked && !allowed) return null;
+    let droppedSrc = false;
+    const elements = document.elements.map((element) => {
+      if (element.id !== id) return element;
+      // The inspector edits a document that validation already produced, so
+      // it bypasses validateDocument entirely; the same input-bound owner
+      // must still cap what a paste can put into a field.
+      const bounded = boundElementText({ ...element, ...patch });
+      droppedSrc = bounded.droppedSrc;
+      return clampElement(bounded.element, document);
+    });
+    document = { ...document, elements };
+    if (droppedSrc) {
+      // An edit answers the notices that described the document as it arrived,
+      // but the dropped source is a fact about this edit and must be said.
+      document = { ...document };
+      delete document.notices;
+      addNotice(droppedSourceNotice());
+    }
+    // One undo step per gesture, per element: two elements dragged inside the
+    // same coalesce window must still be two steps. Callers pass the gesture
+    // name only; the owner adds the id.
+    emit({ coalesceKey: coalesceKey ? `${coalesceKey}:${id}` : null, coalesceMs, keepNotices: droppedSrc });
+    return find(id);
+  }
+
+  function addElement(type, props = {}) {
+    // One cap at the collection owner: imported and scripted callers cannot
+    // grow a label past what the renderer and the warning pass can handle.
+    if (refuseElementCap()) return null;
+    const bounded = boundElementText(createElement(type, props));
+    const element = clampElement(bounded.element, document);
+    document = { ...document, elements: [...document.elements, element] };
+    if (bounded.droppedSrc) {
+      document = { ...document };
+      delete document.notices;
+      addNotice(droppedSourceNotice());
+    }
+    selection = element.id;
+    emit({ keepNotices: bounded.droppedSrc });
+    emitSelection();
+    return element;
+  }
+
+  function removeElement(id) {
+    // Locking protects the element from every mutation, whatever control asked:
+    // the layer trash, Delete/Backspace and the inspector all land here.
+    if (find(id)?.locked) return false;
+    document = { ...document, elements: document.elements.filter((element) => element.id !== id) };
+    const hadSelection = selection === id;
+    if (hadSelection) selection = document.elements.at(-1)?.id ?? null;
+    emit();
+    if (hadSelection) emitSelection();
+    return true;
+  }
+
+  function duplicateElement(id) {
+    const source = find(id);
+    if (!source) return null;
+    // The same collection cap as addElement: a duplicate is another element.
+    if (refuseElementCap()) return null;
+    // A copy of a locked element must be usable, so it always starts unlocked.
+    const copy = clampElement(
+      { ...deepClone(source), id: createId(source.type), x: source.x + 4, y: source.y + 4, locked: false },
+      document
+    );
+    document = { ...document, elements: [...document.elements, copy] };
+    selection = copy.id;
+    emit();
+    emitSelection();
+    return copy;
+  }
+
+  function reorder(id, direction) {
+    const index = document.elements.findIndex((element) => element.id === id);
+    if (index < 0) return;
+    // Restacking is a geometry-class mutation: a locked element stays put.
+    if (document.elements[index].locked) return;
+
+    const target = clamp(index + direction, 0, document.elements.length - 1);
+    if (target === index) return;
+    const elements = [...document.elements];
+    const [moved] = elements.splice(index, 1);
+    elements.splice(target, 0, moved);
+    document = { ...document, elements };
+    emit();
+  }
+
+  function setDocumentLength(lengthMm) {
+    const next = clamp(Math.round(lengthMm), CONFIG.geometry.minLengthMm, geometry().maxLengthMm);
+    document = validateDocument({ ...document, lengthMm: next });
+    // A preset click is a deliberate edit. Coalescing it with the next click
+    // collapsed a sequence of presets into one undo step.
+    emit();
+  }
+
+  /**
+   * Re-apply the active geometry limits after the device reports its head and
+   * dpi. A truncation changes what prints, so it is reported and committed
+   * (undoable) instead of quietly rewriting the operator's label.
+   */
+  function revalidate() {
+    const previous = document;
+    const next = validateDocument(previous);
+    if (JSON.stringify(next) === JSON.stringify(previous)) return false;
+    const moved = next.elements.filter((element) => {
+      const before = previous.elements.find((candidate) => candidate.id === element.id);
+      return !before || ['x', 'y', 'w', 'h'].some((key) => before[key] !== element[key]);
+    }).length;
+    document = next;
+    if (!find(selection)) selection = document.elements.at(-1)?.id ?? null;
+
+    const parts = [];
+    const elementsLabel = `${moved} element${moved === 1 ? '' : 's'}`;
+    if (next.lengthMm !== previous.lengthMm) {
+      const direction = next.lengthMm < previous.lengthMm ? 'shortened' : 'lengthened';
+      parts.push(`Label ${direction} from ${previous.lengthMm} mm to ${next.lengthMm} mm to fit the printer`);
+      parts.push(`${elementsLabel} moved or resized`);
+    } else if (moved) {
+      parts.push(`${elementsLabel} moved or resized to stay inside the label`);
+    }
+    if (parts.length) {
+      document = { ...document, notices: [...(document.notices ?? []), `${parts.join('; ')}.`] };
+    }
+    emit({ keepNotices: true });
+    return true;
+  }
+
+  /**
+   * The operator accepted the label as it stands, so its migration notices are
+   * answered. Metadata, not content: no undo step and no dirtying of the label.
+   * The acknowledgement lives in the controller, not in a history snapshot, so
+   * a later edit + undo cannot resurrect an answered notice.
+   */
+  function dismissNotices() {
+    if (!document.notices?.length) return false;
+    for (const notice of document.notices) acknowledged.add(notice);
+    document = { ...document };
+    delete document.notices;
+    emit({ commit: false, keepNotices: true });
+    return true;
+  }
+
+  function patchDocument(patch, { coalesceKey = null } = {}) {
+    document = validateDocument({ ...document, ...patch });
+    emit({ coalesceKey });
+  }
+
+  function replaceDocument(next) {
+    // A different label has its own notices: nothing carries over.
+    acknowledged.clear();
+    displayCache = null;
+    document = validateDocument(next);
+    selection = document.elements.at(-1)?.id ?? null;
+    // Commit instead of reset so applying a template is an undoable edit, and
+    // announce the new selection so the inspector rebinds to the new elements.
+    emit();
+    emitSelection();
+  }
+
+  function select(id) {
+    if (selection === id) return;
+    selection = id;
+    emitSelection();
+  }
+
+  function undo() {
+    const previous = history.undo();
+    if (!previous) return false;
+    document = previous;
+    if (!find(selection)) selection = document.elements.at(-1)?.id ?? null;
+    onChange(deepClone(documentForDisplay()));
+    onSelection(selection);
+    return true;
+  }
+
+  function redo() {
+    const next = history.redo();
+    if (!next) return false;
+    document = next;
+    if (!find(selection)) selection = document.elements.at(-1)?.id ?? null;
+    onChange(deepClone(documentForDisplay()));
+    onSelection(selection);
+    return true;
+  }
+
+  /** Align the selected element inside the label. */
+  function alignElement(id, axis) {
+    const element = find(id);
+    if (!element) return;
+    const width = documentWidthPx(document);
+    const height = documentHeightPx(document);
+    const patch = {};
+    if (axis === 'left') patch.x = 0;
+    if (axis === 'centerX') patch.x = Math.round((width - element.w) / 2);
+    if (axis === 'right') patch.x = width - element.w;
+    if (axis === 'top') patch.y = 0;
+    if (axis === 'centerY') patch.y = Math.round((height - element.h) / 2);
+    if (axis === 'bottom') patch.y = height - element.h;
+    updateElement(id, patch);
+  }
+
+  function rotateElement(id, delta = 90) {
+    const element = find(id);
+    if (!element) return;
+    updateElement(id, { rotation: (element.rotation + delta + 360) % 360 });
+  }
+
+  return {
+    get document() {
+      return document;
+    },
+    /** The renderer/print view: the same document without answered notices. */
+    documentForDisplay,
+    get selection() {
+      return selection;
+    },
+    get selected() {
+      return find(selection);
+    },
+    canUndo: () => history.canUndo(),
+    canRedo: () => history.canRedo(),
+    updateElement,
+    addElement,
+    removeElement,
+    duplicateElement,
+    reorder,
+    setDocumentLength,
+    revalidate,
+    dismissNotices,
+    patchDocument,
+    replaceDocument,
+    select,
+    undo,
+    redo,
+    alignElement,
+    rotateElement,
+    elementTypes: ELEMENT_TYPES,
+  };
+}

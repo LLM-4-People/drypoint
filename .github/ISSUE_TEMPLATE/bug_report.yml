@@ -1,0 +1,105 @@
+name: Bug report
+description: Something in the web app, the Android APK or the build does not work as documented.
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before you paste anything, remove the printer's
+        **serial number**, its **Bluetooth address**, the roll tag's serial and
+        your **home directory path**. A device serial identifies someone's
+        hardware and must not appear in a public issue.
+
+        A printer that is not on the support matrix is not a bug: see
+        [docs/PRINTERS.md](docs/PRINTERS.md) first.
+  - type: input
+    id: summary
+    attributes:
+      label: What happened
+      description: One sentence. The details go below.
+      placeholder: Printing a 40 mm label stops after the first row
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which build
+      options:
+        - Web app in a browser
+        - Android APK
+        - Running from source
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The release tag, or the commit you run from source.
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS and browser version, or Android version and phone model.
+      placeholder: Windows 11, Chrome 141 / Android 15, Pixel 8
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Printer model and reported id
+      description: The model name and the id shown in the Print panel. No serial numbers.
+      placeholder: D110_M, 0x0910
+    validations:
+      required: true
+  - type: dropdown
+    id: support
+    attributes:
+      label: Support state shown by the app
+      options:
+        - Tested
+        - Experimental
+        - Not supported
+        - Unknown
+        - Not connected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence that shows the problem.
+      placeholder: |
+        1. Open the app
+        2. Connect the printer
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics log (optional)
+      description: Print panel → diagnostics → export. Redact serials, addresses and paths first.
+      render: json
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: I removed serial numbers, Bluetooth addresses and home paths.
+          required: true
+        - label: I can reproduce this on the latest release or the current `main`.
+          required: true

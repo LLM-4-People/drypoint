@@ -1,0 +1,39 @@
+name: Stale
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: stale
+  cancel-in-progress: false
+
+jobs:
+  stale:
+    name: stale
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Mark quiet issues and pull requests
+        uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
+        with:
+          days-before-stale: 60
+          # A maintainer decides whether an old report is closed; the action
+          # only labels it so the queue stays readable.
+          days-before-close: -1
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: 'security, pinned, good first issue'
+          exempt-pr-labels: 'security, pinned, good first issue'
+          stale-issue-message: >
+            This issue has had no activity for 60 days. It is labelled stale so
+            the open queue stays useful; add a comment if it is still relevant.
+          stale-pr-message: >
+            This pull request has had no activity for 60 days. It is labelled
+            stale; rebase it on the current main branch if you want it reviewed.
+          operations-per-run: 60

@@ -1,0 +1,39 @@
+name: Question
+description: Ask how something works, or whether a setup is supported.
+title: '[Question]: '
+labels: ['question']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A question is welcome here. Please do not paste a printer serial, a
+        Bluetooth address or a home directory path — see
+        [SUPPORT.md](SUPPORT.md) for what to redact.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you have already tried
+      description: Documentation you read, steps you ran, and what happened.
+    validations:
+      required: false
+  - type: input
+    id: setup
+    attributes:
+      label: Setup
+      description: Build (web app or APK), version, OS/browser and printer model.
+      placeholder: Web app 1.0.0, Windows 11, Chrome 141, D110_M
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the documentation and the existing issues.
+          required: true

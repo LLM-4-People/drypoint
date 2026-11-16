@@ -1,0 +1,3 @@
+# The maintainer review is the default owner for every path: files, workflows,
+# the Pages deployment, the signing secrets and the release tags.
+* @amberflag48

@@ -1,0 +1,323 @@
+/**
+ * Capability model: merges what the printer reports (capability TLV, heartbeat
+ * frames, GetInfo keys, roll tag) into one object the UI reads.
+ */
+
+import { CONFIG } from '../core/config.js';
+import { maxLengthFor, pitchFor } from '../core/geometry.js';
+import { modelFor } from '../protocol/models.js';
+
+
+const reported = (value) => value !== null && value !== undefined;
+
+/** Human names for the `source` groups, so the UI never prints internal keys. */
+export const CAPABILITY_GROUP_LABELS = Object.freeze({
+  model: 'Model',
+  geometry: 'Head geometry',
+  density: 'Density',
+  labelType: 'Tape type',
+  battery: 'Battery',
+  sensors: 'Sensors',
+  rfid: 'Roll tag',
+  rtc: 'Clock',
+  volume: 'Sound',
+  cutter: 'Cutter',
+  autoShutdown: 'Auto power-off',
+});
+
+/**
+ * A reported boolean is three-valued: supported, reported-unsupported, or never
+ * reported. The UI must render all three differently.
+ * @returns {'reported-yes'|'reported-no'|'not-reported'}
+ */
+export function capabilityState(value) {
+  if (value === true) return 'reported-yes';
+  if (value === false) return 'reported-no';
+  return 'not-reported';
+}
+
+/**
+ * Every connection state the device manager publishes. The header pill and the
+ * Print panel read one table, so a status can never render as "Offline" in one
+ * place and as something else in the other.
+ */
+export const CONNECTION_STATUSES = Object.freeze(['idle', 'connecting', 'connected', 'error']);
+
+const OFFLINE_TEXT = Object.freeze({
+  idle: { dot: 'offline', label: 'Connect printer', title: 'Connect printer', panelLabel: 'Offline' },
+  connecting: { dot: 'connecting', label: 'Connecting…', title: 'Connecting…', panelLabel: 'Connecting…' },
+  error: { dot: 'error', label: 'Connect printer', title: 'Connect printer', panelLabel: 'Connection error' },
+});
+
+/**
+ * One description of a device state, shared by the header pill and the panel.
+ * @param {{status?:string, capabilities?:object, transportLabel?:string|null}} state
+ */
+export function describeDeviceStatus(state = {}) {
+  const status = CONNECTION_STATUSES.includes(state.status) ? state.status : 'idle';
+  if (status === 'connected') {
+    // A printer that never named its model is still a printer: naming a made-up
+    // model would be a fabricated fact in the header and the panel.
+    const model = state.capabilities?.model ?? 'Printer';
+    const serial = state.capabilities?.serial;
+    const label = `${model}${serial ? ` · ${serial}` : ''}`;
+    const transport = state.transportLabel ? ` · ${state.transportLabel}` : '';
+    return {
+      status,
+      dot: 'online',
+      label,
+      title: `Open printer controls${transport}`,
+      // The accessible name contains the visible text (WCAG 2.5.3).
+      ariaLabel: `${label} — open printer controls`,
+      panelLabel: 'Connected',
+    };
+  }
+  const text = OFFLINE_TEXT[status];
+  return { status, ...text, ariaLabel: text.label };
+}
+
+/** Sensors are usable only when the printer actually reported both flags. */
+function sensorsFrom(advanced) {
+  if (typeof advanced?.lidClosed !== 'boolean' || typeof advanced?.paperPresent !== 'boolean') return null;
+  return { lidClosed: advanced.lidClosed, paperPresent: advanced.paperPresent, rfidOk: advanced.rfidOk ?? null };
+}
+
+function batteryFrom(advanced, info) {
+  if (advanced && Number.isFinite(advanced.batteryPercent)) {
+    return {
+      percent: advanced.batteryPercent,
+      level: advanced.batteryLevel,
+      voltageMv: advanced.voltageMv,
+      temperatureRaw: advanced.temperatureRaw,
+    };
+  }
+  return reported(info?.batteryPercent) ? { percent: info.batteryPercent, level: info.batteryLevel } : null;
+}
+
+export function emptyCapabilities() {
+  return {
+    model: null,
+    modelSupport: null,
+    task: null,
+    deviceType: null,
+    serial: null,
+    firmware: null,
+    hardware: null,
+    protocolVersion: null,
+    headWidthPx: CONFIG.geometry.widthPx,
+    dpi: null,
+    maxLengthMm: CONFIG.geometry.maxLengthMm,
+    density: null,
+    densityRange: { min: CONFIG.print.density.min, max: CONFIG.print.density.max },
+    labelType: null,
+    labelTypes: Object.keys(CONFIG.print.labelTypes).map(Number),
+    rfid: { read: null, write: null },
+    battery: null,
+    roll: null,
+    sensors: null,
+    autoShutdown: null,
+    autoShutdownRange: null,
+    // null = the printer never reported the feature; false = it reported "no".
+    hasRtc: null,
+    hasVolume: null,
+    hasCutter: null,
+    discovered: false,
+    /** 'reported' when the printer answered, 'default' when the value is a guess. */
+    source: {
+      model: 'default',
+      geometry: 'default',
+      density: 'default',
+      labelType: 'default',
+      battery: 'default',
+      sensors: 'default',
+      rfid: 'default',
+      rtc: 'default',
+      volume: 'default',
+      cutter: 'default',
+      autoShutdown: 'default',
+    },
+  };
+}
+
+/**
+ * @param {object} input
+ * @param {ReturnType<import('../protocol/replies.js').decodeHeartbeatInfo>} [input.heartbeat]
+ * @param {ReturnType<import('../protocol/replies.js').decodeHeartbeatAdvanced>} [input.advanced]
+ * @param {ReturnType<import('../protocol/replies.js').decodeCapabilities>} [input.capabilities]
+ * @param {ReturnType<import('../protocol/replies.js').decodeStatusData>} [input.statusData]
+ * @param {Record<string, unknown>} [input.info] decoded GetInfo values
+ * @param {ReturnType<import('../protocol/replies.js').decodeRfid>} [input.roll]
+ * @param {object} [input.previous] the same session's last published model; a
+ *        group this discovery did not report falls through to it instead of
+ *        reverting to a default
+ */
+export function mergeCapabilities({ heartbeat, advanced, capabilities, statusData, info = {}, roll, previous = null } = {}) {
+  const base = emptyCapabilities();
+  // One fall-through rule per group: a probe that went unanswered on this pass
+  // must not erase a fact the printer already reported on the same link.
+  const prior = previous ?? base;
+
+  // A hostile or truncated geometry report is not a report: a 0 or 65535-dot
+  // head would otherwise become geometry and a raster width. The print gate
+  // then treats the fallback width as the guess it is.
+  const usableHeadWidth = (value) =>
+    Number.isFinite(value) && value > 0 && value <= CONFIG.geometry.maxHeadWidthPx;
+  const reportedHeadWidth = [capabilities?.headWidthPx, heartbeat?.headWidthPx].find(usableHeadWidth) ?? null;
+  const headWidthPx = reportedHeadWidth ?? prior.headWidthPx;
+  const model = info.model ?? prior.model ?? modelFor(info.deviceType).name;
+  const modelSupport = info.modelSupport ?? prior.modelSupport ?? null;
+  const task = info.task ?? prior.task ?? null;
+  const dpi = capabilities?.dpi ?? heartbeat?.dpi ?? prior.dpi;
+  const maxPrintHeightPx = capabilities?.maxPrintHeightPx ?? null;
+  // A reported maximum below the shortest label the app can author is not a
+  // usable limit: keep what the previous pass or the defaults established.
+  const reportedLengthMm = maxPrintHeightPx ? Math.floor(maxPrintHeightPx / pitchFor({ dpi })) : null;
+  const maxLengthMm = maxLengthFor(reportedLengthMm) ?? prior.maxLengthMm;
+
+  const sensors = sensorsFrom(advanced) ?? prior.sensors;
+  const battery = batteryFrom(advanced, info) ?? prior.battery;
+  const rfidReported = reported(capabilities?.rfidRead) || reported(heartbeat?.rfidRead);
+
+  const source = {
+    model: reported(info.model) ? 'reported' : prior.source.model,
+    // The gate's "reported" fact is the head width: a known dpi with a
+    // fallback 96-dot head is still a guessed label width.
+    geometry: reportedHeadWidth !== null ? 'reported' : prior.source.geometry,
+    density: reported(capabilities?.densityRange) || reported(info.density) ? 'reported' : prior.source.density,
+    labelType: capabilities?.labelTypes?.length || reported(info.labelType) ? 'reported' : prior.source.labelType,
+    battery: battery ? 'reported' : prior.source.battery,
+    sensors: sensors ? 'reported' : prior.source.sensors,
+    rfid: rfidReported ? 'reported' : prior.source.rfid,
+    rtc: reported(capabilities?.hasRtc) ? 'reported' : prior.source.rtc,
+    volume: reported(capabilities?.hasVolume) ? 'reported' : prior.source.volume,
+    cutter: reported(capabilities?.hasCutter) ? 'reported' : prior.source.cutter,
+    autoShutdown: reported(capabilities?.autoShutdownRange) || reported(info.autoShutdown) ? 'reported' : prior.source.autoShutdown,
+  };
+
+  return {
+    ...base,
+    model,
+    modelSupport,
+    task,
+    deviceType: info.deviceType ?? prior.deviceType,
+    serial: info.serial ?? prior.serial,
+    firmware: heartbeat?.softwareVersion ?? info.softwareVersion ?? prior.firmware,
+    hardware: heartbeat?.hardwareVersion ?? info.hardwareVersion ?? prior.hardware,
+    protocolVersion: statusData?.protocolVersion ?? prior.protocolVersion,
+    headWidthPx,
+    dpi,
+    maxLengthMm,
+    density: info.density ?? prior.density,
+    densityRange: capabilities?.densityRange ?? prior.densityRange,
+    labelType: info.labelType ?? prior.labelType,
+    labelTypes: capabilities?.labelTypes?.length ? capabilities.labelTypes : prior.labelTypes,
+    rfid: {
+      read: capabilities?.rfidRead ?? heartbeat?.rfidRead ?? prior.rfid.read,
+      write: heartbeat?.rfidWrite ?? prior.rfid.write,
+    },
+    battery,
+    sensors,
+    autoShutdown: info.autoShutdown ?? prior.autoShutdown,
+    autoShutdownRange: capabilities?.autoShutdownRange ?? prior.autoShutdownRange,
+    // Null survives the merge: "unreported" must not render as "unsupported".
+    hasRtc: capabilities?.hasRtc ?? prior.hasRtc,
+    hasVolume: capabilities?.hasVolume ?? prior.hasVolume,
+    hasCutter: capabilities?.hasCutter ?? prior.hasCutter,
+    discovered: Boolean(heartbeat || capabilities),
+    roll: roll ?? prior.roll,
+    source,
+  };
+}
+
+/**
+ * Drop the readings that belong to the link that just ended. Identity, learned
+ * features and geometry survive a disconnect; battery, sensors and the roll tag
+ * describe "right now" and must not keep rendering as current.
+ */
+export function clearVolatileCapabilities(capabilities) {
+  const base = capabilities ?? emptyCapabilities();
+  return {
+    ...base,
+    battery: null,
+    sensors: null,
+    roll: null,
+    source: { ...base.source, battery: 'default', sensors: 'default', rfid: 'default' },
+  };
+}
+
+/**
+ * Fold a fresh advanced-heartbeat sample into a capability model. One owner for
+ * "the newest sensor/battery reading", used by the print gate and the UI.
+ */
+export function applyHeartbeatSample(capabilities, sample) {
+  if (!sample) return capabilities;
+  const sensors = sensorsFrom(sample) ?? capabilities.sensors;
+  const battery = batteryFrom(sample, null) ?? capabilities.battery;
+  if (sensors === capabilities.sensors && battery === capabilities.battery) return capabilities;
+  return {
+    ...capabilities,
+    sensors,
+    battery,
+    source: { ...capabilities.source, sensors: sensors ? 'reported' : capabilities.source.sensors, battery: battery ? 'reported' : capabilities.source.battery },
+  };
+}
+
+/** Human label for a label-type id, falling back to the raw id. */
+export function labelTypeName(id) {
+  return CONFIG.print.labelTypes[id] ?? `Type ${id}`;
+}
+
+/**
+ * Clamp a value to the printer's advertised range. A range that is present but
+ * not two finite numbers is malformed and yields the fallback; an absent range
+ * means "no clamping", so the value passes through.
+ */
+export function clampToRange(value, range, fallback) {
+  const numeric = Number.isFinite(value) ? value : fallback;
+  if (!range) return numeric;
+  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) return fallback;
+  return Number.isFinite(numeric) ? Math.min(range.max, Math.max(range.min, numeric)) : fallback;
+}
+
+/** Auto power-off choices, built from the range the printer reports. */
+export function autoShutdownOptions(capabilities) {
+  const labels = CONFIG.device.autoShutdownLabels;
+  const range = capabilities?.autoShutdownRange;
+  const values = range
+    ? Array.from({ length: range.max - range.min + 1 }, (_, index) => range.min + index)
+    : Object.keys(labels).map(Number);
+  // The value the printer reports must always be selectable, even when it sits
+  // outside the advertised range.
+  const current = capabilities?.autoShutdown;
+  if (Number.isFinite(current) && !values.includes(current)) values.push(current);
+  values.sort((a, b) => a - b);
+  return values.map((value) => [String(value), labels[value] ?? `Level ${value}`]);
+}
+
+/**
+ * Why a job must not start, or null when it may.
+ *
+ * The model gate is first: an unsupported model can never print, and an
+ * unknown model or a guessed head width is not a basis for a raster. Sensors
+ * and battery are only enforced when the printer actually reported them. The
+ * whole function is defensive: a hostile capability object blocks, it never
+ * throws.
+ */
+export function printBlockReason(capabilities) {
+  const support = capabilities?.modelSupport ?? 'unknown';
+  if (support === 'unsupported') {
+    return `${capabilities?.model ?? 'This printer'} is not supported. ${CONFIG.device.printGate.unsupported}`;
+  }
+  if (!capabilities?.model || support === 'unknown') return CONFIG.device.printGate.unknownModel;
+  if (capabilities?.source?.geometry !== 'reported') return CONFIG.device.printGate.guessedGeometry;
+  const sensors = capabilities?.sensors;
+  if (sensors) {
+    if (!sensors.lidClosed) return 'Close the printer lid before printing';
+    if (!sensors.paperPresent) return 'Load a label roll before printing';
+  }
+  const percent = capabilities?.battery?.percent;
+  if (percent != null && percent <= CONFIG.device.battery.criticalPercent) {
+    return `Battery is too low to print (${percent}%)`;
+  }
+  return null;
+}

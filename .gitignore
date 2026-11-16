@@ -1,0 +1,30 @@
+# Local runtime state and build output
+.run/
+node_modules/
+_site/
+dist/
+android/build/
+android/build-*/
+coverage/
+
+# Secrets: the release key, its passwords and every other private key format
+android/keystore/
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*.apk
+*.aab
+*.idsig
+
+# Environment and logs
+.env*
+*.log
+*.tmp
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/

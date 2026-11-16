@@ -1,0 +1,172 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: web (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use Node ${{ matrix.node }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Generated files are current
+        run: |
+          set -euo pipefail
+          npm run build:brand -- --check
+          npm run check:precache
+      - name: Privacy gate
+        run: npm run privacy:check
+      - name: Test suite
+        run: npm test
+      - name: No tracked file changed
+        run: git diff --exit-code
+
+  browser:
+    name: browser (measured layout)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use the pinned Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Locate a Chromium binary
+        run: |
+          set -euo pipefail
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [ -z "$chrome" ]; then
+            echo "::error::no Chromium on this runner; the measured layout suites cannot run"
+            exit 1
+          fi
+          "$chrome" --version
+          echo "D110_CHROME=$chrome" >> "$GITHUB_ENV"
+      - name: Measured layout suites
+        env:
+          # The helper turns a missing browser into a failure, never a skip.
+          CI: 'true'
+        run: npm run test:browser
+
+  android:
+    name: android (APK)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ANDROID_PLATFORM: android-36
+      ANDROID_BUILD_TOOLS: '36.0.0'
+      ANDROID_KEYSTORE_PASSWORD: ci-throwaway-not-a-release-key
+      ANDROID_KEYSTORE_KEY_PASSWORD: ci-throwaway-not-a-release-key
+      ANDROID_KEY_ALIAS: ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use the pinned Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Use JDK 21
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install the pinned SDK packages
+        run: |
+          set -euo pipefail
+          sdkmanager="$(command -v sdkmanager || true)"
+          if [ -z "$sdkmanager" ]; then
+            sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          if [ ! -x "$sdkmanager" ]; then
+            echo "::error::sdkmanager not found; set ANDROID_HOME to an SDK with cmdline-tools"
+            exit 1
+          fi
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" "platforms;$ANDROID_PLATFORM" "build-tools;$ANDROID_BUILD_TOOLS"
+      - name: Create a throwaway signing key
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/ci-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_PASSWORD" > "$RUNNER_TEMP/ci-pass.txt"
+          chmod 600 "$RUNNER_TEMP/ci-pass.txt"
+          keytool -genkeypair \
+            -keystore "$keystore" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 1 \
+            -storepass:file "$RUNNER_TEMP/ci-pass.txt" \
+            -keypass:file "$RUNNER_TEMP/ci-pass.txt" \
+            -dname "CN=CI Throwaway, O=LLM-4-People, C=CA"
+          chmod 600 "$keystore"
+          echo "ANDROID_KEYSTORE_FILE=$keystore" >> "$GITHUB_ENV"
+      - name: Build, sign and verify the APK
+        run: |
+          set -euo pipefail
+          # CI=true makes a missing keystore a hard failure, never a new key.
+          npm run build:android
+          version="$(node -p "require('./package.json').version")"
+          apk="android/build/drypoint-${version}.apk"
+          test -f "$apk"
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" dump badging "$apk" | grep -F "versionName='${version}'"
+          sha256sum "$apk"
+      - name: Upload the APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drypoint-apk
+          path: android/build/drypoint-*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  required:
+    name: required
+    if: always()
+    needs: [web, browser, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every leg must have succeeded
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const results = {
+              web: '${{ needs.web.result }}',
+              browser: '${{ needs.browser.result }}',
+              android: '${{ needs.android.result }}',
+            };
+            const notSuccessful = Object.entries(results).filter(([, result]) => result !== 'success');
+            if (notSuccessful.length > 0) {
+              core.setFailed(
+                `required leg(s) did not succeed: ${notSuccessful.map(([name, result]) => `${name}=${result}`).join(', ')}`
+              );
+            } else {
+              core.info('web, browser and android all succeeded');
+            }

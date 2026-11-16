@@ -1,0 +1,1733 @@
+:root {
+  --bg: #08080a;
+  --surface: #0f0f12;
+  --surface-2: #15151a;
+  --surface-3: #1c1c23;
+  --line: #222229;
+  --line-2: #2f2f39;
+  --text: #f2f2f5;
+  --muted: #8b8b96;
+  --muted-2: #5f5f6a;
+  --accent: #c8f751;
+  --accent-soft: rgba(200, 247, 81, 0.14);
+  --accent-ink: #0c1200;
+  --danger: #ff6b5e;
+  --warn: #ffc46b;
+  /**
+   * Field borders are a control boundary, so they owe WCAG 1.4.11's 3:1 against
+   * the field surface. --line-2 is a divider tone (1.37:1 on --surface-2) and
+   * stays for separators; this dedicated token is 3.47:1.
+   */
+  --field-border: #6b6b78;
+  --radius-xs: 8px;
+  --shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Height reserved for the sticky action bar: toasts, #status clearance and
+     focused-field scroll margins all read this one value. */
+  --actionbar-clearance: 84px;
+  color-scheme: dark;
+}
+
+:root[data-accent="amber"] {
+  --accent: #ffb454;
+  --accent-soft: rgba(255, 180, 84, 0.14);
+  --accent-ink: #1a0f00;
+}
+:root[data-accent="sky"] {
+  --accent: #67c7ff;
+  --accent-soft: rgba(103, 199, 255, 0.14);
+  --accent-ink: #001018;
+}
+:root[data-accent="violet"] {
+  --accent: #b79cff;
+  --accent-soft: rgba(183, 156, 255, 0.14);
+  --accent-ink: #0d0018;
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f4f2;
+  --surface: #ffffff;
+  --surface-2: #f7f7f5;
+  --surface-3: #eeeeeb;
+  --line: #e3e3df;
+  --line-2: #d3d3cd;
+  --text: #14141a;
+  --muted: #6b6b76;
+  --muted-2: #9a9aa4;
+  /*
+   * The dark-mode accents are luminous by design; on a light page they fall to
+   * ~1.1:1. These deep tones keep the lime identity while passing AA as text
+   * and as a control surface. --accent-soft and --accent-ink derive from
+   * --accent, so switching accent cannot leave them behind.
+   */
+  --accent: #4a6b00;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-ink: color-mix(in srgb, var(--accent) 8%, #fff);
+  --danger: #b3261e;
+  --warn: #8a5a00;
+  --field-border: #8a8a8a;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.14);
+  color-scheme: light;
+}
+
+/* Light accents are the same hue families as the dark ones, dark enough for
+   AA on --bg. Higher specificity than the shared light block above. */
+:root[data-theme="light"][data-accent="amber"] {
+  --accent: #8a5a00;
+}
+:root[data-theme="light"][data-accent="sky"] {
+  --accent: #0b5d8a;
+}
+:root[data-theme="light"][data-accent="violet"] {
+  --accent: #5b3ea8;
+}
+
+/* applyTheme adds this class before it flips data-theme: transitions would
+   otherwise paint the intermediate colour and, at boot, a ~1.01:1 device pill
+   for the duration of the animation. It is removed after two frames. */
+.theme-switching,
+.theme-switching * {
+  transition: none !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: radial-gradient(120% 80% at 50% -20%, color-mix(in srgb, var(--surface-2) 90%, var(--accent) 10%) 0%, var(--bg) 55%);
+  color: var(--text);
+  font: 400 14px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  /* A hint may sit in a flex row next to a control; without a zero minimum
+     its longest word (an element name, a URL) floors the row and the page
+     scrolls sideways. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app {
+  display: grid;
+  /* One explicit column. Without it the implicit `auto` column is floored by
+     the content's min-content width (431px with 44px safe-area insets on a
+     390px phone) and the clipped right edge cannot be scrolled back. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100dvh;
+}
+
+/* ---------------- top bar ---------------- */
+
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 320px) 1fr;
+  align-items: center;
+  gap: 12px;
+  /* Safe-area padding is added to a 390px viewport; without a zero minimum the
+     bar's min-content width pushes the whole app grid wider than the screen. */
+  min-width: 0;
+  padding: calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px
+    calc(16px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(14px);
+  z-index: 20;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 14px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0 58%,
+    transparent 58% 64%,
+    var(--accent) 64% 78%,
+    transparent 78% 84%,
+    var(--accent) 84% 100%
+  );
+}
+
+.brand-text {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.brand-text em {
+  font-style: normal;
+  font-weight: 450;
+  color: var(--muted);
+}
+
+.topbar-center {
+  display: flex;
+  justify-content: center;
+}
+
+.doc-name {
+  width: 100%;
+  max-width: 320px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  text-align: center;
+  font-weight: 550;
+  font-size: 13.5px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.doc-name:hover {
+  background: var(--surface-2);
+}
+
+.doc-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.doc-name:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* A coarse header must not compress its icon targets below 44px: the pill is
+   the only flexible piece (it has its own ellipsis). */
+.topbar-actions .icon-btn,
+.topbar-actions .divider {
+  flex: none;
+}
+
+.divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin: 0 4px;
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  color: var(--muted);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+}
+
+.device-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 260px;
+  padding: 7px 13px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.device-pill:hover {
+  border-color: color-mix(in srgb, var(--line-2) 60%, var(--accent) 40%);
+}
+
+.device-pill span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted-2);
+  flex: none;
+}
+
+.dot[data-state="connecting"] {
+  background: var(--warn);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.dot[data-state="online"] {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.dot[data-state="error"] {
+  background: var(--danger);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* ---------------- workspace ---------------- */
+
+.workspace {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr) 344px;
+  min-height: 0;
+  /* Notches and rounded corners cut into the sides in landscape; the rail,
+     tabs, fields and templates must start inside the inset. */
+  padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+}
+
+/* ---------------- sidebar ---------------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.rail {
+  display: flex;
+  gap: 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rail button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--surface-2);
+  transition: all 0.14s ease;
+}
+
+.rail button:hover {
+  color: var(--text);
+  border-color: var(--line-2);
+  transform: translateY(-1px);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel:last-child {
+  border-bottom: none;
+}
+
+.layers-panel {
+  flex: 1 1 auto;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px 8px;
+}
+
+.panel-head h2 {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.layer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.layer-row {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  border-radius: 9px;
+  transition: background 0.12s ease;
+}
+
+.layer-row:hover {
+  background: var(--surface-2);
+}
+
+.layer-row[data-selected="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* The whole row is the selection control; the actions are a sibling row so
+   they never take width away from the name. */
+.layer-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 9px;
+  color: var(--text);
+  text-align: left;
+}
+
+.layer-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.layer-row .layer-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  flex: none;
+  color: var(--muted);
+}
+
+.layer-row[data-selected="true"] .layer-icon {
+  color: var(--accent);
+}
+
+.layer-name {
+  flex: 1;
+  min-width: 6ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+/* The six actions take their own row under the name. A 160 px floating strip
+   left the label text no room at the narrowest sidebar (200 px); the row is
+   still a full-width target and nothing covers the name. */
+.layer-actions {
+  display: none;
+  flex: 1 0 100%;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 2px 4px;
+}
+
+.layer-row:hover .layer-actions,
+.layer-row:focus-within .layer-actions {
+  display: flex;
+}
+
+.layer-actions button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.layer-actions button:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* Touch gets one overflow button instead of a six-button strip. */
+.layer-menu {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 1;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.layer-menu:hover {
+  color: var(--text);
+}
+
+.templates-panel {
+  flex: 0 0 auto;
+}
+
+.template-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 0 10px 12px;
+}
+
+.template-grid button {
+  padding: 9px 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: left;
+  transition: all 0.14s ease;
+}
+
+.template-grid button:hover {
+  color: var(--text);
+  border-color: var(--line-2);
+}
+
+/* ---------------- stage ---------------- */
+
+.stage {
+  display: grid;
+  /* One explicit column for the same reason as .app: an implicit auto track is
+     floored by the bar's max-content width and the bar then paints over the
+     inspector between 901 and 1100px. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  min-width: 0;
+  background:
+    radial-gradient(80% 60% at 50% 0%, color-mix(in srgb, var(--surface-2) 70%, transparent) 0%, transparent 70%);
+}
+
+.stage-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+}
+
+.stage-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Compact layout moves the label name here (see the 900px query); desktop
+   keeps it centred in the top bar. */
+.stage-name {
+  display: none;
+}
+
+/* The zoom cluster keeps its coarse-pointer 44px targets; only the pixel hint
+   beside the badge gives way when the bar is narrow. */
+#zoomControls {
+  flex: none;
+}
+
+.badge {
+  /* The size is a fixed fact; the reference detail next to it is what gives
+     way, so the bar stays one line at 1024 with a coarse pointer. */
+  flex: none;
+  white-space: nowrap;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* Flexible, ellipsised pixel hint. Compact hides it entirely; the desktop bar
+   never wraps to a second line for it. */
+#labelPx {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.zoom button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.zoom button:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.zoom .zoom-value {
+  min-width: 44px;
+  text-align: center;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.stage-scroll {
+  position: relative;
+  overflow: auto;
+  display: grid;
+  /* "safe" keeps an oversized zoomed label reachable from its left/top edge
+     instead of centring it into unreachable overflow. */
+  place-items: safe center;
+  padding: 8px 24px 20px;
+  min-height: 0;
+}
+
+.canvas-stack {
+  position: relative;
+  line-height: 0;
+  /* One finger: the label is an editor surface, but a vertical swipe must
+     still scroll the page. Two fingers pan the zoomed label (canvas.js). */
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.label-canvas {
+  display: block;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: var(--shadow);
+  image-rendering: pixelated;
+}
+
+.overlay-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+}
+
+.overlay-canvas[data-mode="move"] {
+  cursor: move;
+}
+
+.overlay-canvas[data-mode="resize"] {
+  cursor: nwse-resize;
+}
+
+.stage-foot {
+  display: flex;
+  justify-content: center;
+  padding: 0 16px 10px;
+  min-height: 22px;
+  /* The footer is the last row of the stage column: it must be able to shrink
+     and wrap a long warning instead of widening the page. */
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+/* :empty never matched: the hint span always exists. While it is empty the row
+   collapses to nothing but stays in the accessibility tree (display:none would
+   remove the role=status live region, and a region added later is unreliable). */
+.stage-foot:has(#stageHint:empty) {
+  min-height: 0;
+  height: 0;
+  padding-block: 0;
+  overflow: hidden;
+}
+
+/* ---------------- inspector ---------------- */
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs button {
+  padding: 8px 12px 10px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 550;
+  transition: color 0.14s ease, border-color 0.14s ease;
+}
+
+.tabs button:hover {
+  color: var(--text);
+}
+
+.tabs button[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+}
+
+.group {
+  margin-bottom: 18px;
+}
+
+.group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ---------------- controls ---------------- */
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.control:last-child {
+  margin-bottom: 0;
+}
+
+.control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.control-head .value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+}
+
+.control-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.input,
+.select {
+  width: 100%;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  font-size: 13.5px;
+  transition: border-color 0.14s ease;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Keyboard focus keeps a real ring in both themes; the accent is AA in light
+   mode and unchanged in dark. */
+.input:focus-visible,
+.select:focus-visible,
+.textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 66px;
+  padding: 9px 11px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  font-size: 13.5px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none' stroke='%238b8b96' stroke-width='1.6'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+}
+
+input[type="range"] {
+  width: 100%;
+  height: 22px;
+  appearance: none;
+  background: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-2);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+
+/* One owner for the disabled cursor, after the range rule so a disabled
+   slider does not keep the pointer. Every focusable control type is covered. */
+:is(button, input, select, textarea):disabled {
+  cursor: not-allowed;
+}
+
+/* A disabled control outside <button> must look disabled too: the textarea
+   kept a full-opacity border, the slider a live accent thumb, and the
+   segmented/icon-grid buttons their full accent. */
+:is(input, select, textarea):disabled,
+.segmented button:disabled,
+.icon-grid button:disabled,
+.layer-actions button:disabled,
+.switch:disabled {
+  opacity: 0.55;
+}
+
+.segmented {
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+}
+
+.segmented button {
+  flex: 1;
+  padding: 6px 4px;
+  /* The selected chip only recolours this border, so switching selection
+     cannot change the control's height. */
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  transition: all 0.13s ease;
+}
+
+.segmented button:hover {
+  color: var(--text);
+}
+
+/* Selected state: a --field-border ring (3.22:1 light, 3.43:1 dark on this
+   surface) plus two non-colour cues — bolder text and a bar along the bottom
+   edge. The old inset divider ring was 1.08:1 and colour was the only cue. */
+.segmented button[aria-pressed="true"] {
+  border-color: var(--field-border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 650;
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 23px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface-3);
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.switch[aria-checked="true"] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.switch[aria-checked="true"] i {
+  transform: translateX(17px);
+  background: var(--accent);
+}
+
+/* A switch whose printer value has not been read (or whose read failed) must
+   not look like a definite ON or OFF. The dashed --field-border track is the
+   non-colour cue and stays at full opacity (3.22:1 light, 3.47:1 dark): dimming
+   the whole switch composited it to ~1.15:1. Only the knob is muted. */
+.switch-row[data-state="unknown"] .switch {
+  border: 1px dashed var(--field-border);
+  opacity: 1;
+}
+
+.switch-row[data-state="unknown"] .switch i {
+  background: var(--muted-2);
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 550;
+  transition: all 0.14s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--line-2);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+.btn.primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.btn.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.btn.small {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.icon-grid button {
+  display: grid;
+  place-items: center;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.icon-grid button:hover {
+  color: var(--text);
+  border-color: var(--line-2);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.empty .icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-row .label {
+  color: var(--muted);
+}
+
+.stat-row .value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-word;
+}
+
+/* ---------------- action bar ---------------- */
+
+.actionbar {
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(14px);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.progress {
+  height: 2px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.12s linear;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));
+}
+
+.status {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An empty live region must not claim a share of the row: at 360px its flex:1
+   base squeezed "Test label" onto two lines. */
+.status:empty {
+  flex: 0 1 auto;
+}
+
+.status[data-tone="ok"] {
+  color: var(--accent);
+}
+
+.status[data-tone="error"] {
+  color: var(--danger);
+}
+
+.status[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.primary,
+.ghost {
+  height: 42px;
+  padding: 0 22px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  /* Action labels are one word pair on one line; an ellipsised or wrapped
+     "Test label" reads as a broken control. */
+  white-space: nowrap;
+  transition: transform 0.1s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 1px solid transparent;
+  min-width: 108px;
+}
+
+.primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.ghost {
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--text);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.primary:active:not(:disabled),
+.ghost:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.primary:disabled,
+.ghost:disabled {
+  opacity: 0.5;
+}
+
+/* ---------------- toasts ---------------- */
+
+.toasts {
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* main.js measures the action bar (its wrapped status line and safe-area
+     padding included) and writes this token; adding env() here would count the
+     inset twice. */
+  bottom: var(--actionbar-clearance);
+  /* Safe-area insets, never a notch; the box is centred inside them. */
+  inset-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
+  width: auto;
+  max-width: 460px;
+  margin-inline: auto;
+  transform: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Dialog feedback intentionally overlays the dialog: "Diagnostics exported"
+     raised from the log viewer must be readable above the modal it came from.
+     The backdrop stays at 70; only this layer is above it. */
+  z-index: 80;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  animation: toast-in 0.18s ease;
+  pointer-events: auto;
+}
+
+.toast[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+
+.toast[data-tone="ok"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.toast .icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+/* A persistent toast carries a real focusable close button (WCAG 2.1.1): the
+   click-anywhere handler alone is unreachable from the keyboard. */
+.toast-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.toast-close:hover,
+.toast-close:focus-visible {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ---------------- modal ---------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  /* A fixed overlay must clear the notch and the home indicator too. */
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom))
+    max(20px, env(safe-area-inset-left));
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  animation: fade-in 0.14s ease;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.modal {
+  width: min(560px, 100%);
+  max-height: min(84vh, 760px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-head h2 {
+  font-size: 14px;
+}
+
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.log-view {
+  max-height: 300px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  font: 11px/1.5 var(--mono);
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-view b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---------------- responsive ---------------- */
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 200px minmax(0, 1fr) 300px;
+  }
+}
+
+@media (max-width: 900px) {
+  /* The 900 literal must equal CONFIG.ui.compactBreakpointPx (900), which owns
+     the same breakpoint for placement and fit in main.js. ui-contract asserts
+     the equality, so the two owners cannot drift. */
+  .app {
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  /* Brand, one flexible middle, actions: the brand keeps a real column instead
+     of collapsing to 0 while the actions take min-content. */
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .topbar-center {
+    display: none;
+  }
+
+  .brand-text em {
+    display: none;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stage {
+    /* The stage scrolls with the page on phones. A 281px sticky preview left
+       too little room to edit and let sections scroll underneath it; the
+       compact fit still puts the whole label on screen at boot. There is no
+       position or z-index override here: static is the default and an inert
+       z-index only implied a stacking context that never existed. */
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .stage-scroll {
+    padding: 6px 12px 10px;
+    max-height: 40vh;
+  }
+
+  .stage-bar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .stage-bar-group .hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The pixel count is reference detail; hiding it lets the zoom controls sit
+     on the same row as the size badge instead of taking a row of their own. */
+  #labelPx {
+    display: none;
+  }
+
+  .stage-name {
+    display: flex;
+    order: -1;
+    flex: 1 0 100%;
+    min-width: 0;
+    /* Reserve the row before the input is moved in, so boot causes no shift. */
+    min-height: 44px;
+  }
+
+  .stage-name .doc-name {
+    max-width: none;
+    border-color: var(--field-border);
+    background: var(--surface-2);
+    text-align: left;
+  }
+
+  /* Warnings stay visible on a phone; the row disappears when there is none
+     (the base :has(#stageHint:empty) rule owns that). */
+  .stage-foot {
+    display: block;
+    padding: 0 12px 8px;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .rail {
+    overflow-x: auto;
+  }
+
+  .layers-panel {
+    flex: none;
+    max-height: 200px;
+  }
+
+  .inspector {
+    border-left: none;
+    border-top: 1px solid var(--line);
+    min-height: 0;
+  }
+
+  .panel-body {
+    overflow: visible;
+  }
+
+  /* One guard against sideways page scroll: wide content pans inside its own
+     box (the canvas), never by moving the whole document. */
+  #app {
+    overflow-x: clip;
+  }
+
+  .stage-scroll {
+    overscroll-behavior-x: contain;
+  }
+
+  .workspace,
+  .sidebar,
+  .inspector,
+  .panel-body,
+  .stage-bar,
+  .tabs,
+  .segmented,
+  .action-row {
+    min-width: 0;
+  }
+
+  /* The compact bar is shorter; every consumer of the token follows. */
+  :root {
+    --actionbar-clearance: 76px;
+  }
+
+  html {
+    scroll-padding-bottom: var(--actionbar-clearance);
+  }
+
+  /* Print stays reachable while the inspector scrolls underneath. */
+  .actionbar {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    /* Opaque: content scrolling under a translucent bar would show through. */
+    background: var(--bg);
+  }
+
+  .action-row {
+    flex-wrap: wrap;
+    padding: 8px calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
+  }
+
+  .status {
+    display: block;
+  }
+
+  /* A non-empty status owns its own line: sharing one nowrap row with the
+     buttons left it 1px wide at 360 with insets. */
+  .status:not(:empty) {
+    flex: 1 0 100%;
+  }
+
+  .ghost,
+  .primary {
+    flex: 1;
+  }
+
+  .primary {
+    flex: 1.3;
+  }
+}
+
+@media (max-width: 420px) {
+  .device-pill {
+    max-width: 150px;
+    font-size: 11.5px;
+  }
+
+  .brand-text {
+    display: none;
+  }
+}
+
+/* ---------------- touch targets ---------------- */
+
+/*
+ * Coarse pointers get a >=44px hit area on every interactive control. Glyph
+ * sizes stay unchanged: only the boxes grow. The layer row switches from the
+ * hover strip to one overflow menu whose actions open as a 3x2 grid.
+ */
+@media (pointer: coarse) {
+  /* The compact pill can collapse to the dot; keep a 44px tap target. Measured
+     at 360 with 44/44/34/44 insets: it fits without sideways scroll. */
+  .device-pill {
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  .icon-btn,
+  .rail button,
+  .zoom button,
+  .layer-menu,
+  .layer-select,
+  .layer-actions button,
+  .device-pill,
+  .doc-name {
+    min-height: 44px;
+  }
+
+  .icon-btn,
+  .rail button,
+  .zoom button,
+  .layer-menu,
+  .layer-actions button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .tabs button,
+  .template-grid button,
+  .segmented button,
+  .btn,
+  .btn.small,
+  .primary,
+  .ghost,
+  .icon-grid button,
+  .input,
+  .select {
+    min-height: 44px;
+  }
+
+  .tabs button,
+  .template-grid button {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* A vertical scroll that starts on a slider must scroll the page; only a
+     horizontal drag changes the value. */
+  input[type="range"] {
+    height: 44px;
+    touch-action: pan-y;
+  }
+
+  /* Panning wins over accidental activation on every dense touch control. */
+  .segmented button,
+  .tabs button,
+  .layer-select,
+  .template-grid button,
+  .rail button,
+  .icon-btn,
+  .switch,
+  .btn {
+    touch-action: manipulation;
+  }
+
+  /* Focusing a field must scroll it clear of the sticky action bar. */
+  .input,
+  .select,
+  .segmented,
+  .switch {
+    scroll-margin-block: var(--actionbar-clearance);
+  }
+
+  /* Keep the 40x23 track and 17px knob, but give the button a 44px box: the
+     track is drawn by ::before and the knob is positioned inside it. */
+  .switch {
+    width: 44px;
+    height: 44px;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .switch::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 40px;
+    height: 23px;
+    transform: translate(-50%, -50%);
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    background: var(--surface-3);
+    transition: background 0.16s ease, border-color 0.16s ease;
+  }
+
+  .switch[aria-checked="true"] {
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .switch[aria-checked="true"]::before {
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+
+  .switch i {
+    top: 50%;
+    left: 4px;
+    transform: translateY(-50%);
+  }
+
+  .switch[aria-checked="true"] i {
+    transform: translate(17px, -50%);
+  }
+
+  /* The row keeps a full-width tap target; the trigger sits on top of its
+     right edge, so the name reserves that width instead of hiding under it. */
+  .layer-select {
+    padding-right: 52px;
+  }
+
+  /* The hover strip is a fine-pointer affordance only. */
+  .layer-row:hover .layer-actions,
+  .layer-row:focus-within .layer-actions {
+    display: none;
+  }
+
+  /* One overflow button, and only on the current row: an unselected row stays
+     a full-width target so a tap anywhere selects instead of firing an action. */
+  .layer-row[data-selected="true"] .layer-menu,
+  .layer-row:focus-within .layer-menu {
+    display: grid;
+  }
+
+  /* Opening the menu moves focus into the grid, so the trigger is never
+     display:none'd while it holds focus. The grid stays in the row's normal
+     flow — the list's overflow-y must keep clipping a long list, so a floating
+     popup was cut off at the list edges. The row grows and the list scrolls it
+     into view instead. */
+  .layer-row[data-menu="open"] .layer-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, 44px);
+    justify-content: end;
+    gap: 2px;
+    padding: 2px 4px 4px;
+    border-radius: 8px;
+    background: var(--surface-3);
+  }
+
+  /* The expanded grid owns the second line; keep the trigger on the row's
+     first line instead of centring it over both. */
+  .layer-row[data-menu="open"] .layer-menu {
+    top: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

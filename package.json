@@ -1,0 +1,47 @@
+{
+  "name": "drypoint",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Design and print 12 mm labels on a NIIMBOT D110, entirely offline.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LLM-4-People/drypoint.git"
+  },
+  "homepage": "https://llm-4-people.github.io/drypoint/",
+  "bugs": {
+    "url": "https://github.com/LLM-4-People/drypoint/issues"
+  },
+  "author": "LLM-4-People",
+  "license": "MIT",
+  "keywords": [
+    "label",
+    "printer",
+    "niimbot",
+    "thermal",
+    "offline",
+    "pwa",
+    "web-serial",
+    "web-bluetooth",
+    "code128",
+    "qr-code"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "stop": "node scripts/stop.mjs",
+    "build": "node scripts/precache.mjs --write",
+    "check:precache": "node scripts/precache.mjs --check",
+    "build:brand": "node scripts/build-brand.mjs",
+    "build:android": "node scripts/build-android.mjs",
+    "pages:build": "node scripts/build-pages.mjs",
+    "docs:check": "node scripts/check-docs.mjs",
+    "privacy:check": "node scripts/check-privacy.mjs",
+    "workflows:check": "node scripts/check-workflows.mjs",
+    "test": "node --test \"test/*.test.mjs\"",
+    "test:browser": "node --test test/actionbar-clearance.test.mjs test/stage-hint.test.mjs test/toast-overlay.test.mjs",
+    "verify": "npm run build:brand -- --check && npm run check:precache && npm run privacy:check && npm test && npm run docs:check && npm run workflows:check"
+  }
+}

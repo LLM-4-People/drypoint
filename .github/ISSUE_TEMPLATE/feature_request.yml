@@ -1,0 +1,47 @@
+name: Feature request
+description: Suggest a capability the editor, the print flow or the build does not have.
+title: '[Feature]: '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        New printer models need hardware evidence, not a name that looks close.
+        Read [docs/PRINTERS.md](docs/PRINTERS.md#how-to-propose-a-new-model)
+        before requesting one.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that the app makes hard or impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The behaviour you expect, not necessarily the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false
+  - type: input
+    id: printer
+    attributes:
+      label: Printer model (if the request is model-specific)
+      placeholder: D110_M
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and the documentation.
+          required: true
+        - label: I understand a new printer model needs a captured handshake, a print sequence and a hardware test.
+          required: true

@@ -1,0 +1,102 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use the pinned Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Stage the site from the runtime file list
+        run: |
+          set -euo pipefail
+          npm run build:brand -- --check
+          npm run pages:build
+          node scripts/build-pages.mjs --check
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      - name: Smoke-test the deployment
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          base="${{ steps.deployment.outputs.page_url }}"
+          base="${base%/}"
+          if [ -z "$base" ]; then
+            echo "::error::the deployment page_url is empty"
+            exit 1
+          fi
+
+          # The Pages CDN can answer a previous build for a few seconds after a
+          # deployment. Retry, bounded, and fail when it never turns 200.
+          probe() {
+            path="$1"
+            attempt=1
+            while [ "$attempt" -le 12 ]; do
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$base$path?smoke=$RUN_ID")" || code="000"
+              if [ "$code" = "200" ]; then
+                echo "200 $base$path"
+                return 0
+              fi
+              echo "attempt $attempt: $base$path answered $code"
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+            echo "::error::$base$path did not answer 200"
+            return 1
+          }
+
+          probe /
+          probe /sw.js
+          probe /manifest.webmanifest
+          probe /assets/precache.js
+
+          type="$(curl -sSI --max-time 20 -H 'Cache-Control: no-cache' "$base/manifest.webmanifest?smoke=$RUN_ID" \
+            | tr -d '\r' | tr '[:upper:]' '[:lower:]' | sed -n 's/^content-type:[[:space:]]*//p' | head -n 1)"
+          echo "manifest content-type: $type"
+          case "$type" in
+            application/manifest+json*) ;;
+            *)
+              echo "::error::the manifest is served as '$type', not application/manifest+json"
+              exit 1
+              ;;
+          esac
