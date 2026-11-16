@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: '5e5ee11497395a21',
+  version: '7f8a7dd5964d4c98',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -101,11 +101,11 @@ self.__PRECACHE = {
     'src/core/geometry.js': '7ff525954d39b13f3c95c495ebeb798d76815a0a75f128c1c11f7a33d60f6a1b',
     'src/core/log.js': '56aef6a0a9320285cac60d3b922de61bf62654a1711506d5e1d896a45246f5c9',
     'src/core/precache-status.js': 'ab921331cc719570efe2f590375d70256dc550ac8fd4972bc31c68feb37808d2',
-    'src/core/settings.js': '3e548364b0e19b75ac2507b9c404369839ffe843a5de877cf4ba7d8e541d1c0d',
+    'src/core/settings.js': 'd567ac002757ed1d4974378fc1d44a89df9d888f4bf995d7154d92579ba2d66f',
     'src/core/store.js': '64cbd3307e649d616b9098f2f46a954331b1f53fdfb09d554db029b29c718f18',
     'src/core/version.js': 'a1d28c290d12ec28a1f6538e7e818957b6f09661fb55b3b99149acca888da0c9',
     'src/device/capabilities.js': '2ffd376cd6574f9d8afc83a55fff7a846ea0ac11a373ceab57c72778a800f519',
-    'src/device/manager.js': 'c4c7a1f03153b373b5ce42e5adbd0687f9717abfce549ac3733e92e574dd63b6',
+    'src/device/manager.js': 'f00975f57d7ed2759b10340b10a07e4a6281c8d2f79d117a2b723f23d93dcc4b',
     'src/device/print-job.js': '96f4912dcd46bd31dd9d86742e495fde0d12080e649edbbdf222ca2f15f662f2',
     'src/device/print-options.js': '9fc5ce0e105afe54ea4a6b42bf2e80e67f62284f414aa9eb21dcd39df941b901',
     'src/device/roll-profiles.js': '126411a8472364f015be6aa77d4e62ee94661585ac3059f56acd43ddae3666b2',
@@ -125,7 +125,7 @@ self.__PRECACHE = {
     'src/label/qr.js': '69299f52d5ecb7ac786c62ad352903ca1ffe7aeaa29c195245173684e9f1e393',
     'src/label/raster.js': '169d9a237956126ee79084bba5ddb047c1675caf213cb6d2bce62685fde409d3',
     'src/label/render.js': '18daa7e18f34f784d5a110542a08de89b8e3a5cbd3e120523b29e5b69b32d274',
-    'src/label/schema.js': '89885107b9f52ec2a540eded8e2c652665f9d30c3a28cdc63d0e77082309afaa',
+    'src/label/schema.js': 'e6a7701d0fe5c7ead1c966d952605b552d72680415989be4d864fe8981d6adb2',
     'src/label/templates.js': '165b47fc6bee66c8f7121053bd24d26227ac0d951300b56714b0c0e2fc17142a',
     'src/label/text-layout.js': '475d60e209e7ecade8208829c8a244b6d37d5c01ef04069d577afbe165171599',
     'src/label/transfer.js': '52e7235d27f578655dfb14c4e194d4ca8080e29b690607c5479c0dccf11daa88',
