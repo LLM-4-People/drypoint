@@ -54,7 +54,11 @@ async function fakeKeytool(t, { create = true, fail = false } = {}) {
   return { directory, log, tool };
 }
 
-function runCli(env) {
+function runCli(env, remove = []) {
+  const childEnv = { ...process.env, ...env };
+  // A test that proves a variable is required must remove it from the
+  // inherited runner environment too, not only omit it from the override.
+  for (const name of remove) delete childEnv[name];
   try {
     return {
       status: 0,
@@ -62,7 +66,7 @@ function runCli(env) {
         cwd: projectRoot,
         encoding: 'utf8',
         stdio: 'pipe',
-        env: { ...process.env, ...env },
+        env: childEnv,
       }),
     };
   } catch (error) {
@@ -158,7 +162,7 @@ test('the CLI fails closed when an Actions variable is missing', async () => {
     [{ GITHUB_ENV: '/tmp/env' }, 'RUNNER_TEMP'],
     [{ RUNNER_TEMP: '/tmp' }, 'GITHUB_ENV'],
   ]) {
-    const result = runCli(env);
+    const result = runCli(env, [name]);
     assert.notEqual(result.status, 0, `${name}: exit nonzero`);
     assert.match(result.stderr, new RegExp(`${name} is required`), `${name}: the message names the variable`);
   }
