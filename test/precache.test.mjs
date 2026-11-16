@@ -19,6 +19,7 @@ import {
   moduleSpecifiers,
   OUTPUT,
   REQUIRED_FILES,
+  renderBaseHelper,
   resolveSurfacePath,
   stampWorker,
   SURFACE_FILES,
@@ -299,6 +300,7 @@ test('the worker stamps are replaced only at the anchored declarations', () => {
     "const BUILD = 'fedcba9876543210';",
     "// const CACHE_PREFIX = 'old-';",
     "const CACHE_PREFIX = 'old-';",
+    renderBaseHelper(),
   ].join('\n');
   const stamped = stampWorker(source, 'aaaabbbbccccdddd', 'new-');
   assert.match(stamped, /^const BUILD = 'aaaabbbbccccdddd';$/m, 'the real build declaration is rewritten');
@@ -308,6 +310,7 @@ test('the worker stamps are replaced only at the anchored declarations', () => {
   assert.equal(stamped.match(/^const BUILD = /gm).length, 1);
   assert.equal(stamped.match(/^const CACHE_PREFIX = /gm).length, 1);
   assert.throws(() => stampWorker('// no stamp here\n', 'aaaabbbbccccdddd', 'new-'), /exactly one build stamp/);
+  assert.throws(() => stampWorker(`// no base helper\n${source.replace(/\/\/ BEGIN[\s\S]*END generated base helper/, '')}`, 'aaaabbbbccccdddd', 'new-'), /exactly one base helper/);
   assert.throws(
     () => stampWorker(`${source}\nconst BUILD = '1111111111111111';`, 'aaaabbbbccccdddd', 'new-'),
     /exactly one build stamp/,
@@ -323,4 +326,35 @@ test('the worker stamps are replaced only at the anchored declarations', () => {
 test('the live worker carries the authored cache prefix', async () => {
   const { BRAND } = await import('../src/core/brand.js');
   assert.match(read(SW_FILE), new RegExp(`^const CACHE_PREFIX = '${BRAND.cachePrefix}';$`, 'm'));
+});
+
+/* ---------------- the generated worker helper (P-F1) ---------------- */
+
+test('the base helper is stamped into sw.js exactly once', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { ROOT, renderBaseHelper, stampWorker } = await import('../scripts/precache.mjs');
+  const sw = await readFile(join(ROOT, 'sw.js'), 'utf8');
+
+  assert.equal((sw.match(/\/\/ BEGIN generated base helper/g) ?? []).length, 1, 'one generated block');
+  assert.ok(sw.includes(renderBaseHelper()), 'the committed worker carries the owner text byte-for-byte');
+
+  // Exactly-one is enforced: a second block or a missing block fails the stamp.
+  const doubled = sw.replace('// END generated base helper', '// END generated base helper\n// BEGIN generated base helper\n// END generated base helper');
+  assert.throws(() => stampWorker(doubled, '0123456789abcdef'), /exactly one base helper/);
+  const missing = sw.replace(/\/\/ BEGIN generated base helper[\s\S]*?\/\/ END generated base helper/, '');
+  assert.throws(() => stampWorker(missing, '0123456789abcdef'), /exactly one base helper/);
+  // The scalar stamps are still exactly-one.
+  const doubledBuild = sw.replace(/^const BUILD = '[0-9a-f]{16}';$/m, (line) => `${line}\n${line}`);
+  assert.notEqual(doubledBuild, sw);
+  assert.throws(() => stampWorker(doubledBuild, '0123456789abcdef'), /exactly one build/);
+});
+
+test('the committed worker matches a fresh stamp', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { ROOT, SW_FILE, buildPrecache } = await import('../scripts/precache.mjs');
+  const built = await buildPrecache();
+  const actual = await readFile(join(ROOT, SW_FILE), 'utf8');
+  assert.equal(actual, built.swContent, 'npm run build regenerates the same worker');
 });

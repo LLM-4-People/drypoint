@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: '0adccd93ac5bb83a',
+  version: '011c40fee2820065',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -90,7 +90,7 @@ self.__PRECACHE = {
     'assets/icon-512.png': '45fcfcfb212262f227be5745c0cd0b85b58787c4338471e0ea3c1583971c1573',
     'assets/icon-maskable-512.png': 'd5df4b979fd21e9af56424f3777ae974f8cb115e0ef8b92884588e55186b9688',
     'assets/icon.svg': '0d57f5f217288935f039793a3bc1b2d99c755c085a0326276a4f2f817464e53d',
-    'index.html': 'b447e7b64c6b46e04edc4a2e0923dd1a28e4327a7807cfca08ae6984d10654ce',
+    'index.html': 'ee2d184889efc6eada1bc579b5bf353ff5da4d514088c31906800cc021b4ce6d',
     'manifest.webmanifest': 'a10e67c48b85ab46e6ed82d1e0069c11c1bf41f14ced34af76e987c54e629c64',
     'src/core/brand.js': '32c84f1ae52254f0948feb3f4513b5124ec8e46c7063adf7ec55bdcd63c9017f',
     'src/core/config.js': '065268efac425a80d088675c7eb99324e988e138faedd461eb7ba8778a447d90',

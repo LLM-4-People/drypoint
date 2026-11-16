@@ -113,6 +113,7 @@ scripts/
   smoke-pages.mjs          headless check that every precached URL answers 200
   test-suites.mjs          splits unit and Chromium suites from the real imports
   lib/distribution.mjs     the licence and notices every distribution ships
+  lib/base-href.mjs        the one <base href> rule, stamped into sw.js
   lib/chrome.mjs           the one Chromium discovery rule for tools and tests
   lib/js-scan.mjs          shared comment/string/template/regex lexer
   lib/png.mjs              RGBA PNG codec and flattening for the generated icons
