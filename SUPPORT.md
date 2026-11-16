@@ -20,8 +20,8 @@ the most common question, and the answer is in
 - **Which printer**: the model name and the id the app shows in the Print panel.
   Say whether it is tested, experimental, not supported or unknown.
 - **What you expected and what happened**, with the shortest reproduction.
-- **The diagnostics log** when it applies: Print panel → diagnostics → export.
-  It is a local JSON file; nothing in the app uploads it.
+- **The diagnostics log** when it applies: Print panel → diagnostics →
+  **Export report**. It is a local JSON file; nothing in the app uploads it.
 
 Before you paste anything, remove:
 

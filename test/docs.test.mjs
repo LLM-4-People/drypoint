@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { checkDocs, headingSlugs, headingText, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
 import { CONFIG } from '../src/core/config.js';
 import { MODELS } from '../src/protocol/models.js';
-import { readProjectFile as read } from './helpers/project-files.mjs';
+import { listProjectFiles, readProjectFile as read } from './helpers/project-files.mjs';
 
 /** The data rows of the first table after one heading. */
 function tableRows(markdown, heading) {
@@ -266,12 +266,14 @@ test('the backup section states both importers and the 1.0.2 APK limitation', ()
   const warning = readme.indexOf('Do not install v1.0.0 for new work');
   assert.ok(warning >= 0, 'the README carries the v1.0.0 warning');
   assert.ok(warning < readme.indexOf('**Live app:**'), 'the warning is above the install links');
+  assert.match(readme, /the 1\.0\.0 APK had been downloaded/, 'the retirement claim is not "before any public install"');
+  assert.doesNotMatch(readme, /retired before any public install/);
 });
 
 test('the file surface names every saveFile caller', () => {
   const saveFile = /label export, the diagnostics report(?:,| and)/;
   assert.match(read('README.md'), saveFile);
-  assert.match(read('SECURITY.md'), /one file save \(label export, diagnostics report, or\s+the raw copy of an unreadable stored label\)/);
+  assert.match(read('SECURITY.md'), /one `saveFile` method \(label export, diagnostics\s+report, or\s+the raw copy of an unreadable stored label\)/);
   assert.match(read('SECURITY.md'), /native save bridge \(label export, diagnostics report, and the raw copy of\s+an unreadable stored label\)/);
   assert.match(read('docs/ANDROID.md'), /the label export, the\s+diagnostics report and the raw\s+copy of an unreadable stored label/);
   assert.doesNotMatch(read('SECURITY.md'), /beyond the image picker and the diagnostics download/);
@@ -342,9 +344,84 @@ test('SECURITY.md does not present 1.0.0 as a supported install', () => {
   const security = read('SECURITY.md');
   const table = security.slice(security.indexOf('## Supported versions'), security.indexOf('## Reporting a vulnerability'));
   assert.match(table, /\| 1\.0\.0 \| No — do not install it\./);
-  assert.match(table, /signed with a retired key/);
+  assert.match(table, /retired before any known install \(the 1\.0\.0 APK had been downloaded\)/);
   assert.match(table, /uninstalling it deletes every label/);
   assert.doesNotMatch(table, /\| 1\.x \| Yes/);
+});
+
+test('the README and ARCHITECTURE storage-key tables are the storageKey() calls', () => {
+  const keys = new Set();
+  for (const file of listProjectFiles('src').filter((entry) => entry.endsWith('.js'))) {
+    for (const match of read(file).matchAll(/storageKey\('([^']+)'\)/g)) {
+      keys.add(`${CONFIG.app.storagePrefix}.${match[1]}`);
+    }
+  }
+  const expected = [...keys].sort();
+  assert.equal(expected.length, 4, 'document, settings, rolls and zoom are the whole set');
+
+  const readmeRows = tableRows(read('README.md'), '## Storage keys');
+  const readmeKeys = readmeRows.map(([key]) => key.replaceAll('`', '').trim()).sort();
+  assert.deepEqual(readmeKeys, expected, 'the README table names exactly the storage keys');
+
+  const architectureRows = tableRows(read('docs/ARCHITECTURE.md'), '## Storage keys');
+  const architectureKeys = architectureRows.map(([key]) => key.replaceAll('`', '').trim()).sort();
+  assert.deepEqual(architectureKeys, expected, 'the ARCHITECTURE table names exactly the storage keys');
+
+  const documentRow = readmeRows.find(([key]) => key.includes(`${CONFIG.app.storagePrefix}.document`));
+  assert.ok(documentRow[1].includes(`version: ${CONFIG.app.documentVersion}`), 'the document version is the code owner');
+});
+
+test('PROTOCOL.md links the one model table instead of copying it', () => {
+  const protocol = read('docs/PROTOCOL.md');
+  assert.ok(protocol.includes('[the printer support matrix](PRINTERS.md)'));
+  assert.doesNotMatch(
+    protocol,
+    /^\|\s*[^|]+\|\s*`0x[0-9a-f]{4}`\s*\|/m,
+    'a second model-id table is refused; link PRINTERS.md instead'
+  );
+  assert.doesNotMatch(protocol, /\| \*\*D110_M\*\* \| `0x0910`/);
+});
+
+test('the documented printer controls are the panel labels', () => {
+  const panel = read('src/ui/print-panel.js');
+  const labels = new Set([...panel.matchAll(/actionButton\('([^']+)'/g)].map((match) => match[1]));
+  for (const label of [
+    'Feed / align paper',
+    'Self-test page',
+    'Sync clock',
+    'Read paper info',
+    'Read history',
+    'Read capabilities',
+    'Read device info',
+    'Reset settings',
+    'Export report',
+    'Open log',
+  ]) {
+    assert.ok(labels.has(label), `print-panel builds "${label}"`);
+  }
+  assert.match(read('docs/PRINTERS.md'), /\*\*Feed \/\s*align paper\*\*/);
+  assert.match(read('SUPPORT.md'), /Export report/);
+  assert.match(read('.github/ISSUE_TEMPLATE/bug_report.yml'), /Export report/);
+  assert.doesNotMatch(read('docs/PRINTERS.md'), /Feed \/ Align one label/);
+});
+
+test('the 12 mm scope and the protocol-compatible refusals are stated', () => {
+  const page = read('docs/PRINTERS.md');
+  assert.match(page, /## Why 12 mm is a scope decision, not a protocol limit/);
+  const rows = new Map(tableRows(page, '## Support matrix').map((cells) => [plain(cells[0]), cells]));
+  for (const [model, width] of [['D101', '24 mm'], ['B21 Pro', '50 mm'], ['B2 Pro', '50 mm'], ['B1 Pro', '50 mm']]) {
+    const row = rows.get(model);
+    assert.ok(row, `${model} is in the table`);
+    assert.ok(row.join(' ').includes(width), `${model} names its ${width} media`);
+    assert.match(row[5], /scope/i, `${model}'s refusal is a scope decision`);
+  }
+  assert.match(page, /D11_Pro is a 12 mm model, but only one uncorroborated source/);
+  assert.match(page, /stays unsupported pending a device capture/);
+  assert.match(page, /M2_H/);
+  assert.match(page, /The discovery prefix is a filter, not a support claim/);
+  assert.doesNotMatch(page, /every protocol fact/);
+  assert.doesNotMatch(read('README.md'), /every other known/i);
+  assert.doesNotMatch(read('SUPPORT.md'), /every other known model/i);
 });
 
 test('the documentation index links every page in docs/', () => {

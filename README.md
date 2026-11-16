@@ -5,9 +5,10 @@ in the browser, entirely offline, with no account, no server and no telemetry.
 
 [![Checks](https://github.com/LLM-4-People/drypoint/actions/workflows/checks.yml/badge.svg)](https://github.com/LLM-4-People/drypoint/actions/workflows/checks.yml)
 
-> **Do not install v1.0.0 for new work.** It is signed with a retired key,
-> cannot be upgraded in place to 1.0.1 or later, and has no label export, so
-> uninstalling it deletes every label. Use the latest release.
+> **Do not install v1.0.0 for new work.** Its key was retired before any known
+> install; the 1.0.0 APK had been downloaded. It cannot be upgraded in place to
+> 1.0.1 or later, and has no label export, so uninstalling it deletes every
+> label. Use the latest release.
 
 - **Live app:** <https://llm-4-people.github.io/drypoint/>
 - **Android APK:** [latest release](https://github.com/LLM-4-People/drypoint/releases/latest)
@@ -134,7 +135,7 @@ not install 1.0.0 for new work.
   remaining labels, lid and paper sensors. Values the printer did not report are
   labelled as assumed.
 - Job settings: density, tape type, **Print quality** (Normal/Quality), copies.
-- Maintenance: feed/align one label, printer self-test page, sync clock (a
+- Maintenance: **Feed / align paper**, printer self-test page, **Sync clock** (a
   "not supported" row when the printer reports no RTC).
 - Device settings: auto power-off, Bluetooth and power sounds (a "not supported"
   hint when the printer reports no volume support).

@@ -18,6 +18,13 @@ through Web Serial or Web Bluetooth. `sw.js` plus the generated
 ## Module map
 
 ```
+README.md                  quick start, support matrix, browser support, backup and limits
+CONTRIBUTING.md            setup, test legs, branch model, generated files
+SECURITY.md                threat model, supported versions, private reporting
+SUPPORT.md                 where to ask, what to include, printer scope
+CHANGELOG.md               release history and the source of every release body
+CODE_OF_CONDUCT.md         community standard
+THIRD_PARTY_NOTICES.md     vendored work and attribution
 brand.json                 the authored product identity: name, slug, app id, prefixes
 index.html                 shell markup, module entry, classic vendor script
 manifest.webmanifest       PWA metadata and icons
@@ -332,7 +339,10 @@ namespace is new, so no old key is read and no compatibility shim exists.
 `label/transfer.js` is the one owner of the transfer file. It renders
 `{ format, version, document }`, where `format` is `CONFIG.app.id` and `version`
 is `CONFIG.app.documentVersion`; `downloadJson` writes it with two-space
-indentation. Import applies the same bounds as storage and in the same order:
+indentation. Import applies the same document bounds and migration as storage,
+with one deliberate difference: the source budget is refused at the two
+authoring boundaries (import and export), while validation keeps an existing
+over-budget label intact. In order:
 
 1. the byte length is bounded by `CONFIG.document.transfer.maxBytes` **before**
    `JSON.parse`. The bound is `bounds.maxSourceChars` (itself
@@ -561,6 +571,11 @@ Three facts are recorded as accepted for this release rather than fixed:
   explicit id was removed because it collided across origins; do not re-add one
   without a regression test for that collision, and record the reason here if a
   future release does.
+- **Scorecard keeps two known limits.** The pinned action SHA still pulls the
+  `ghcr.io/ossf/scorecard-action:v2.5.0` container tag rather than a digest, and
+  Signed-Releases averages the last five releases, so v1.0.0 and v1.0.1 (which
+  have no provenance assets) hold that score down until three more provenance
+  releases exist. Both are recorded, not gamed with a second workflow.
 
 ## Logging
 
@@ -584,8 +599,9 @@ page logs and shows (see Offline strategy). No other module calls `console`.
 
 ## Dev server and operations
 
-`scripts/serve.mjs` serves exactly the app surface with no dependencies: the
-files listed by `assets/precache.js` plus `sw.js`. It binds to `127.0.0.1` by
+`scripts/serve.mjs` serves exactly the app surface with Node's standard library
+only: the files listed by `assets/precache.js` plus `sw.js`. It binds to
+`127.0.0.1` by
 default; `--host 0.0.0.0` is an explicit LAN opt-in, useful for viewing only —
 a LAN origin is plain HTTP and not a secure context, so Web Serial, Web
 Bluetooth and the service worker do not work there. Printing or offline work on
@@ -746,6 +762,10 @@ applied to the release page. A section whose body predates the generated
 certificate footer carries `<!-- release-notes: no signing footer -->`; the
 directive is consumed by the generator and never published. Tags and assets are
 never edited, and a historical section is never used by the release workflow.
+
+A body correction is published with `gh release edit <tag> --notes-file <file>`.
+Only the title, notes and pre-release flag are editable on an immutable release;
+never re-upload or replace an asset, and never move the tag.
 
 Every workflow pins each action to a commit SHA, declares explicit
 `permissions`, a `concurrency` group and a job `timeout-minutes`, and sets

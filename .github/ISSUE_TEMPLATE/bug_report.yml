@@ -88,7 +88,7 @@ body:
     id: logs
     attributes:
       label: Diagnostics log (optional)
-      description: Print panel → diagnostics → export. Redact serials, addresses and paths first.
+      description: Print panel → diagnostics → Export report. Redact serials, addresses and paths first.
       render: json
     validations:
       required: false

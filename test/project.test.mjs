@@ -11,7 +11,7 @@ import { INFO_PROJECTION } from '../src/device/manager.js';
 import { shortcutIntent } from '../src/editor/shortcuts.js';
 import { lexJavaScript } from '../scripts/lib/js-scan.mjs';
 import { isIgnored, parseIgnore } from '../scripts/lib/tree.mjs';
-import { listProjectFiles, projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
+import { listProjectFiles, listRootFiles, projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
 
 const pkg = JSON.parse(read('package.json'));
 const indexHtml = read('index.html');
@@ -423,6 +423,16 @@ test('the ARCHITECTURE module map lists every real src, scripts and docs file', 
 
   for (const anchor of ['index.html', 'manifest.webmanifest', 'sw.js', 'assets/app.css', 'assets/precache.js']) {
     assert.ok(files.includes(anchor), `the module map lists ${anchor}`);
+  }
+});
+
+test('the ARCHITECTURE module map lists every root Markdown document', () => {
+  const files = parseModuleMap(read('docs/ARCHITECTURE.md'));
+  const roots = listRootFiles().filter((file) => file.endsWith('.md'));
+  assert.ok(roots.includes('README.md') && roots.length >= 6, 'the root Markdown is real');
+  for (const file of roots) assert.ok(files.includes(file), `the module map lists ${file}`);
+  for (const file of files.filter((entry) => !entry.includes('/') && entry.endsWith('.md'))) {
+    assert.ok(roots.includes(file), `the module map has no phantom root document: ${file}`);
   }
 });
 

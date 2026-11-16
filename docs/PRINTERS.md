@@ -32,31 +32,54 @@ table is `Unknown` and blocked, never guessed from a neighbouring name.
 
 | Model | Id | Status | Head and pitch | Tape | Why | What would be needed |
 | --- | --- | --- | --- | --- | --- | --- |
-| **D110_M** | `0x0910` | Tested | 96 dots at the capability TLV's 200 dpi → 7.87 dots/mm | 12.19 mm derived from the head (12 mm stock) | The reference unit; every protocol fact in this repository was captured on it. | Nothing. |
+| **D110_M** | `0x0910` | Tested | 96 dots at the capability TLV's 200 dpi → 7.87 dots/mm | 12.19 mm derived from the head (12 mm stock) | The reference unit; the print sequence, geometry and the facts in [the verified table](PROTOCOL.md#verified-facts-captured-unit) were captured on it. Family-known opcode layouts and the reply maps marked unverified were not. | Nothing. |
 | **D11_H** | `0x0210` | Experimental | Not measured | Not measured | Reports a known id in the same family, but no print was captured on this model, so its task and page sequence are unverified. | A captured discovery handshake and a test print, and the print task its firmware expects. |
 | D110 | `0x0900` | Not supported | Not measured | Not measured | A separate catalogue id from the D110_M; this release has no captured evidence for its print task. | A captured handshake and print sequence for this exact id, plus a hardware test. |
 | D11 | `0x0200` | Not supported | Not measured | Not measured | Known id outside the verified path; the D110M V4 sequence is not established for it. | The same evidence as above. |
 | D11S | `0x0202` | Not supported | Not measured | Not measured | Known id outside the verified path. | The same evidence as above. |
-| D11_Pro | `0x0213` | Not supported | Not measured | Not measured | Known id outside the verified path. | The same evidence as above. |
-| B18 | `0x0e00` | Not supported | Vendor: 96 dots at 203 dpi; not measured here | Not measured | A 12 mm sibling from the vendor catalogue; its print task is not established and no D110M V4 print was captured. | A captured handshake and print, and the task its firmware accepts. |
-| B18S | `0x0e01` | Not supported | Vendor: 96 dots at 203 dpi; not measured here | Not measured | The same 12 mm sibling family; the print task is not established. | The same evidence as B18. |
-| N1 | `0x0e02` | Not supported | Vendor: 96 dots at 203 dpi; no head-width report on the device | Not measured | An independent capture shows its firmware refusing the 13-byte `SetPageSize`/`PageEnd` of the D110M V4 sequence (`0xDB 06`) and printing with the `b1` task; it reports no head width on the `0xDC[0x03]` probe. | A captured handshake and the task its firmware accepts; head-width evidence. |
-| H1 | `0x0f00` | Not supported | Vendor: 96 dots at 203 dpi; not measured here | Not measured | A 12 mm sibling from the vendor catalogue; its print task is not established. | A captured handshake and print. |
-| H1S | `0x1100` | Not supported | Vendor: 96 dots at 203 dpi; not measured here | Not measured | It uses its own task (2-byte `PrintStart`, 9-byte `SetPageSize`, `PageStart`), not the D110M V4 sequence. | A model-specific implementation and a hardware test. |
+| D11_Pro | `0x0213` | Not supported | Vendor: 300 dpi, 12 mm class; not measured here | 12 mm stock | A 12 mm model, but only one uncorroborated source suggests it uses the 9-byte `SetPageSize` generation; no capture in this repository verifies it. Not promoted. | A device capture in this repository, including the print sequence. |
+| B18 | `0x0e00` | Not supported | Vendor: 203 dpi, 12 mm class; 96 dots derived, not measured here | Not measured | A 12 mm sibling from the vendor catalogue; its print task is not established and no D110M V4 print was captured. | A captured handshake and print, and the task its firmware accepts. |
+| B18S | `0x0e01` | Not supported | Vendor: 203 dpi, 12 mm class; 96 dots derived, not measured here | Not measured | The same 12 mm sibling family; the print task is not established. | The same evidence as B18. |
+| N1 | `0x0e02` | Not supported | Vendor: 203 dpi, 12 mm class; no head-width report on the device | Not measured | An independent capture shows its firmware refusing the 13-byte `SetPageSize`/`PageEnd` of the D110M V4 sequence (`0xDB 06`) and printing with the `b1` task; it reports no head width on the `0xDC[0x03]` probe. | A captured handshake and the task its firmware accepts; head-width evidence. |
+| H1 | `0x0f00` | Not supported | Vendor: 203 dpi, 12 mm class; 96 dots derived, not measured here | Not measured | A 12 mm sibling from the vendor catalogue; its print task is not established. | A captured handshake and print. |
+| H1S | `0x1100` | Not supported | Vendor: 203 dpi, 12 mm class; 96 dots derived, not measured here | Not measured | It uses its own task (2-byte `PrintStart`, 9-byte `SetPageSize`, `PageStart`), not the D110M V4 sequence. | A model-specific implementation and a hardware test. |
 | D101 | `0x0a00` | Not supported | Vendor: 192 dots at 203 dpi; 24 mm head | 24 mm stock | The D110M V4 sequence is reported to work, but the D101 head is 24 mm and this app is scoped to 12 mm; the geometry gate would refuse the label. This is a scope refusal, not a protocol failure. | A 24 mm product scope decision and a capture in this repo. |
 | B1 | `0x1000` | Not supported | Not measured | Not measured | A different printer family; this app only speaks the 12 mm D110 path. | A model-specific protocol implementation, not just an id. |
-| B1 Pro | `0x1001` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
+| B1 Pro | `0x1001` | Not supported | Vendor: 300 dpi, 50 mm media; not measured here | 50 mm stock | Independent captures report the D110M V4 sequence works, but its 50 mm media is outside this release's 12 mm scope; the model gate refuses it. A scope decision, not a different family or an unknown task. | A wider-media product scope decision and a capture in this repository. |
 | B1 SE | `0x1002` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
 | B2 | `0x1b01` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
-| B2 Pro | `0x1b00` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
+| B2 Pro | `0x1b00` | Not supported | Vendor: 300 dpi, 50 mm media; not measured here | 50 mm stock | Independent captures report the D110M V4 sequence works, but its 50 mm media is outside this release's 12 mm scope; the model gate refuses it. A scope decision, not a different family or an unknown task. | A wider-media product scope decision and a capture in this repository. |
 | B21 | `0x0300` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
 | B21S | `0x0309` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
-| B21 Pro | `0x0311` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
+| B21 Pro | `0x0311` | Not supported | Vendor: 50 mm class; not measured here | 50 mm stock | Independent captures report the D110M V4 sequence works, but its 50 mm media is outside this release's 12 mm scope; the model gate refuses it. A scope decision, not a different family or an unknown task. | A wider-media product scope decision and a capture in this repository. |
 | D110 / Hi-D110 | `0x0901` | Not supported | Not measured | Not measured | The vendor reports this one id under two names, so the model behind it is ambiguous. | Evidence of which device answers it, then a captured handshake and print. |
 
 No model other than the D110_M has been tested. The D11_H is listed as
 experimental because it reports a known id in the same family, not because a
 print was verified on it.
+
+## Why 12 mm is a scope decision, not a protocol limit
+
+The app is mechanically head-width agnostic: `canvasToRaster` takes its width
+from `canvas.height` (the head the printer reported), and the geometry comes
+from the reported head width and resolution. The product is scoped and branded
+to 12 mm stock, and the document length is sized for that roll.
+
+That is why D101 (24 mm) and B21 Pro, B2 Pro and B1 Pro (50 mm) are refused even
+though independent captures report the D110M V4 task working on them: their
+media are outside this release's scope. This is a product-scope decision, not "a
+different printer family" and not an unknown task. Those three are candidates
+for a later wider-media release, not support in this one: such a release needs a
+capture in this repository and a decision about the longer and wider canvas.
+
+D11_Pro is a 12 mm model, but only one uncorroborated source suggests the 9-byte
+`SetPageSize` generation; it stays unsupported pending a device capture. M2_H
+(`0x1200`: the `b1` task, 300 dpi, 50 mm media), M3, B31 and B4 are not in the
+table because the task or the media does not match this release.
+
+The discovery prefix is a filter, not a support claim: a device whose name
+matches a prefix is offered to the picker, and the reported id alone decides
+support.
 
 ## Head, pitch and tape
 
@@ -87,7 +110,7 @@ measured 7.87 dots/mm. This is a layout inset, not a printer margin: the app
 sends a full-height raster and does not compensate for the printer's own
 non-printable leading or trailing margin, which was not measured for this
 release. If prints sit consistently high or low on the tape, use **Feed /
-Align one label**, then set the document length to match the stock.
+align paper**, then set the document length to match the stock.
 
 ## How to propose a new model
 

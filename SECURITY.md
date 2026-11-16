@@ -14,9 +14,9 @@ API.
 - **Web Bluetooth** — a user-granted GATT device, used in Chrome and Edge on
   desktop and in Chrome on Android.
 - **The Android bridge** — inside the APK, a `JavascriptInterface` that exposes
-  BLE scan/connect/write, one file save (label export, diagnostics report, or
-  the raw copy of an unreadable stored label) and the system-bar colour. It is
-  reachable only from the bundled page at the app's own origin.
+  BLE scan/connect/write, one `saveFile` method (label export, diagnostics
+  report, or the raw copy of an unreadable stored label) and the system-bar
+  colour. It is reachable only from the bundled page at the app's own origin.
 - **`localStorage`** — the label, settings, roll profiles and zoom.
 
 **What it cannot do**
@@ -43,7 +43,7 @@ bytes cannot poison the cache.
 | Version | Supported |
 | --- | --- |
 | 1.x, except 1.0.0 | Yes — fixes land on `main` and are released as a new tag. The 1.0.2 APK cannot import an exported label; the fix ships in 1.0.3. |
-| 1.0.0 | No — do not install it. It is signed with a retired key, cannot be upgraded in place, and has no label export; uninstalling it deletes every label. |
+| 1.0.0 | No — do not install it. Its key was retired before any known install (the 1.0.0 APK had been downloaded); it cannot be upgraded in place, and has no label export, so uninstalling it deletes every label. |
 | Anything older than 1.0 | No — there is no compatibility branch |
 
 Releases are the signed APK and the static site at
