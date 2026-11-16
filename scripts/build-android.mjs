@@ -590,8 +590,12 @@ export function addDexEntry({ apk, dex, dateTime = APK_ENTRY_DATE_TIME, exec = r
  * the project backs up. A local build without either still generates a
  * throwaway key, but says loudly that it did.
  */
-async function ensureKeystore({ requireKey = false } = {}) {
-  const dir = join(androidDir, 'keystore');
+export async function ensureKeystore({
+  requireKey = false,
+  directory = join(androidDir, 'keystore'),
+  env = process.env,
+} = {}) {
+  const dir = directory;
   const propertiesFile = join(dir, 'keystore.properties');
   // 0700 before anything is written. The directory is what keeps another local
   // user out while keytool creates the store with the login umask (0664); a
@@ -599,26 +603,34 @@ async function ensureKeystore({ requireKey = false } = {}) {
   // chmod.
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700);
-  // The password is a secret: prefer the environment, then a local file that
-  // .gitignore excludes. Only a throwaway run with neither gets a generated one.
-  if (!existsSync(propertiesFile) && !process.env.ANDROID_KEYSTORE_PASSWORD) {
-    const password = randomBytes(18).toString('base64url');
-    await writeFile(propertiesFile, `storePassword=${password}\nkeyPassword=${password}\nkeyAlias=drypoint\n`, { mode: 0o600 });
-    console.log('android: generated a local keystore password in android/keystore/ (ignored by git; back it up)');
-  }
-  const properties = existsSync(propertiesFile) ? parseProperties(await readFile(propertiesFile, 'utf8')) : {};
-  const { store, storePassword, keyPassword, keyAlias } = resolveKeystore({ properties, directory: dir });
-  if (!storePassword) {
-    fail('set ANDROID_KEYSTORE_PASSWORD or keep android/keystore/keystore.properties');
-  }
-  const action = keystoreAction({ exists: existsSync(store), requireKey });
+  const hasProperties = existsSync(propertiesFile);
+  let properties = hasProperties ? parseProperties(await readFile(propertiesFile, 'utf8')) : {};
+  let identity = resolveKeystore({ env, properties, directory: dir });
+  // Decide before any side effect. A CI or --require-key run that may not
+  // invent a key must refuse without writing a password file that outlives the
+  // failed build.
+  const action = keystoreAction({ exists: existsSync(identity.store), requireKey });
   if (action === 'fail') {
     fail(
-      `the release keystore is missing (${store}). CI and --require-key never generate one: ` +
+      `the release keystore is missing (${identity.store}). CI and --require-key never generate one: ` +
         'restore android/keystore/drypoint-release.jks or set ANDROID_KEYSTORE_FILE.'
     );
   }
   const generated = action === 'generate';
+  if (!identity.storePassword) {
+    // A malformed existing file is a configuration error, never a reason to
+    // overwrite it. Only a first local throwaway build may create the file,
+    // and only after the action is known to be `generate`.
+    if (!generated || hasProperties) {
+      fail('set ANDROID_KEYSTORE_PASSWORD or keep android/keystore/keystore.properties');
+    }
+    const password = randomBytes(18).toString('base64url');
+    await writeFile(propertiesFile, `storePassword=${password}\nkeyPassword=${password}\nkeyAlias=${identity.keyAlias}\n`, { mode: 0o600 });
+    console.log('android: generated a local keystore password in android/keystore/ (ignored by git; back it up)');
+    properties = parseProperties(await readFile(propertiesFile, 'utf8'));
+    identity = resolveKeystore({ env, properties, directory: dir });
+  }
+  const { store, storePassword, keyPassword, keyAlias } = identity;
   if (generated) {
     // keytool creates the store with the process umask. `umask 077` makes the
     // file 0600 from its first byte instead of 0664 until the chmod, and the

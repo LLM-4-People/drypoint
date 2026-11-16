@@ -12,6 +12,7 @@ import {
   APK_ENTRY_DATE_TIME,
   apksignerArgs,
   certificateSha256,
+  ensureKeystore,
   keystoreAction,
   minSdkVersionOf,
   publishApkPair,
@@ -387,6 +388,28 @@ test('a failed build leaves no staging directory', async (t) => {
 });
 
 /* ---------------- version arithmetic and the signing identity ---------------- */
+
+test('a forbidden CI build refuses before writing a keystore password', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'drypoint-keystore-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await assert.rejects(
+    ensureKeystore({ requireKey: true, directory, env: {} }),
+    /never generate one/
+  );
+  assert.deepEqual(await readdir(directory), [], 'the failed run leaves no password file');
+});
+
+test('an existing password file without a password is not overwritten', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'drypoint-keystore-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, 'keystore.properties'), 'keyAlias=drypoint\n');
+  await assert.rejects(ensureKeystore({ directory, env: {} }), /set ANDROID_KEYSTORE_PASSWORD/);
+  assert.equal(
+    await readFile(join(directory, 'keystore.properties'), 'utf8'),
+    'keyAlias=drypoint\n',
+    'the malformed file is left for the operator, not replaced'
+  );
+});
 
 test('the versionCode arithmetic refuses a component that would collide', () => {
   assert.equal(versionCodeOf('1.0.0'), 10000);
