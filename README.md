@@ -356,6 +356,7 @@ The table is generated from `package.json`; edit the script there and run
 | `npm run check:precache` | `node scripts/precache.mjs --check` |
 | `npm run build:brand` | `node scripts/build-brand.mjs` |
 | `npm run build:icons` | `node scripts/build-icons.mjs` |
+| `npm run build:social` | `node scripts/build-social.mjs` |
 | `npm run build:android` | `node scripts/build-android.mjs` |
 | `npm run pages:build` | `node scripts/build-pages.mjs` |
 | `npm run docs:check` | `node scripts/check-docs.mjs` |
@@ -364,7 +365,7 @@ The table is generated from `package.json`; edit the script there and run
 | `npm run workflows:check` | `node scripts/check-workflows.mjs` |
 | `npm test` | `node --test "test/*.test.mjs"` |
 | `npm run test:browser` | `node scripts/test-suites.mjs browser` |
-| `npm run verify` | `npm run build:brand -- --check && npm run build:icons -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
+| `npm run verify` | `npm run build:brand -- --check && npm run build:icons -- --check && npm run build:social -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
 | `npm run test:unit` | `node scripts/test-suites.mjs unit` |
 | `npm run verify:all` | `npm run verify && npm run test:browser` |
 [//]: # (/generated:scripts)

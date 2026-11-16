@@ -20,7 +20,7 @@ import {
   checkDeployment,
   MANIFEST_PATH,
   probeMethod,
-  SITE_ONLY_FILES,
+  PROBED_SITE_FILES,
   smokePaths,
   workerBuild,
 } from '../scripts/smoke-pages.mjs';
@@ -68,10 +68,11 @@ test('the deployment set includes the worker, the manifest and the 404 page', as
   const paths = await smokePaths({ root: out });
 
   assert.ok(paths.includes('/'), 'the document root is always probed');
-  for (const file of SITE_ONLY_FILES) {
+  for (const file of PROBED_SITE_FILES) {
     assert.ok(paths.includes(`/${file}`), `${file} is probed`);
   }
   assert.ok(paths.includes('/CNAME'), 'the custom domain marker is probed');
+  assert.ok(paths.includes('/assets/social-card.png'), 'the social card is probed');
   assert.ok(paths.includes('/assets/app.css'), 'the precache manifest still supplies the app files');
   assert.equal(paths.includes('/.nojekyll'), false, '.nojekyll is a host control marker, not app content');
 
@@ -79,6 +80,7 @@ test('the deployment set includes the worker, the manifest and the 404 page', as
   assert.equal(probeMethod('/assets/precache.js'), 'GET', 'the manifest body and type are read');
   assert.equal(probeMethod('/404.html'), 'GET', 'the fallback body and type are read');
   assert.equal(probeMethod('/assets/app.css'), 'HEAD', 'a precached asset only has to answer');
+  assert.equal(probeMethod('/assets/social-card.png'), 'HEAD', 'a binary deployment asset only has to answer');
 });
 
 test('a complete staged deployment passes every URL and content type', async (t) => {

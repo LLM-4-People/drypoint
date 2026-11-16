@@ -21,6 +21,7 @@ import {
   readThemeColor,
   renderAll,
 } from '../scripts/build-brand.mjs';
+import { SOCIAL_CARD } from '../scripts/build-social.mjs';
 import { projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
 
 const brandJson = JSON.parse(read('brand.json'));
@@ -178,6 +179,9 @@ test('the product name has no owner outside brand.json and the read-only surface
     file === OUTPUTS.strings ||
     file === OUTPUTS.module ||
     file === OUTPUTS.icon ||
+    // The generated social card is artwork: the name it draws comes from the
+    // same brand owner as the icon, never from a second literal.
+    file === SOCIAL_CARD.svg ||
     file.startsWith(`docs${sep}`) ||
     file.startsWith(`test${sep}`) ||
     file.startsWith(`.github${sep}`) ||

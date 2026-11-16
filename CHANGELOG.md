@@ -13,6 +13,11 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 
 ## [1.0.3] - 2026-11-16
 
+### Added
+
+- The site publishes a generated social card and Open Graph and Twitter
+  metadata, so a shared link previews the product instead of a bare URL.
+
 ### Fixed
 
 - **Android label import now works.** The 1.0.2 APK filtered its system file

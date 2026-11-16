@@ -20,6 +20,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import brand from '../brand.json' with { type: 'json' };
+import { SOCIAL_CARD } from './build-social.mjs';
 import { DISTRIBUTION_FILES, resolveDistributionFile } from './lib/distribution.mjs';
 import { OUTPUT, ROOT, SW_FILE, checkPrecache, resolveSurfacePath } from './precache.mjs';
 
@@ -37,9 +38,18 @@ export const CNAME_FILE = 'CNAME';
  * manifest cannot carry its own digest, and the worker is what loads it), so
  * they are named here from the precache owner's own constants. Omitting either
  * ships a worker that cannot install. The CNAME file keeps the custom domain
- * bound after every deployment; its value comes from the homepage below.
+ * bound after every deployment; its value comes from the homepage below. The
+ * social card is link-preview metadata rather than an offline runtime file, so
+ * a shared link can fetch it without adding weight to the precache or the APK.
  */
-export const SITE_ONLY_FILES = Object.freeze([WORKER_FILE, PRECACHE_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE, CNAME_FILE]);
+export const SITE_ONLY_FILES = Object.freeze([
+  WORKER_FILE,
+  PRECACHE_FILE,
+  NOT_FOUND_FILE,
+  NO_JEKYLL_FILE,
+  CNAME_FILE,
+  SOCIAL_CARD.png,
+]);
 
 /**
  * The staged copy of each site-only file. The list above is the file set; this
@@ -52,6 +62,7 @@ const SITE_ONLY_CONTENT = Object.freeze({
   [NOT_FOUND_FILE]: (basePath) => notFoundPage(basePath),
   [NO_JEKYLL_FILE]: '',
   [CNAME_FILE]: () => `${new URL(brand.homepage).hostname}\n`,
+  [SOCIAL_CARD.png]: null,
 });
 
 /**

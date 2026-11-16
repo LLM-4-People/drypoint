@@ -1,10 +1,11 @@
 /**
- * A minimal PNG codec for the generated icon surface.
+ * A minimal PNG codec for the generated raster surface.
  *
- * The icons are generated output: the decoder only has to understand the
- * 8-bit RGBA, non-interlaced form the generator writes, and a different format
- * fails loudly rather than being guessed. One implementation serves the build
- * check and the test assertions.
+ * The generated files are output: the decoder only has to understand the
+ * 8-bit truecolour forms Chromium and this project's encoder write, with or
+ * without an alpha channel, non-interlaced. Both are normalised to RGBA, so
+ * every consumer reads one shape; a different format fails loudly rather than
+ * being guessed. One implementation serves the build checks and the tests.
  */
 
 import { deflateSync, inflateSync } from 'node:zlib';
@@ -42,7 +43,9 @@ function chunk(type, data) {
 }
 
 /**
- * Decode an 8-bit RGBA, non-interlaced PNG.
+ * Decode an 8-bit RGB or RGBA, non-interlaced PNG. The result is always RGBA:
+ * an RGB source gets an opaque alpha byte, so a consumer never has two pixel
+ * layouts to handle.
  * @param {Buffer} bytes
  * @returns {{width:number, height:number, bitDepth:number, colorType:number, data:Buffer}}
  */
@@ -61,7 +64,7 @@ export function decodePng(bytes) {
   const interlace = buffer[28];
   requirePng(width > 0 && height > 0, 'a PNG with pixels');
   requirePng(bitDepth === 8, 'an 8-bit PNG');
-  requirePng(colorType === 6, 'truecolour with alpha (RGBA)');
+  requirePng(colorType === 6 || colorType === 2, 'truecolour with or without alpha (RGB or RGBA)');
   requirePng(interlace === 0, 'not interlaced');
 
   const chunks = [];
@@ -75,8 +78,10 @@ export function decodePng(bytes) {
   }
   requirePng(chunks.length > 0, 'PNG image data');
   const raw = inflateSync(Buffer.concat(chunks));
+  const bytesPerPixel = colorType === 6 ? 4 : 3;
+  const rawStride = width * bytesPerPixel;
   const stride = width * 4;
-  requirePng(raw.length >= height * (stride + 1), 'as many PNG rows as the header declares');
+  requirePng(raw.length >= height * (rawStride + 1), 'as many PNG rows as the header declares');
   const data = Buffer.alloc(height * stride);
   const paeth = (a, b, c) => {
     const p = a + b - c;
@@ -85,13 +90,16 @@ export function decodePng(bytes) {
     const pc = Math.abs(p - c);
     return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
   };
+  let previous = null;
   for (let row = 0; row < height; row++) {
-    const filter = raw[row * (stride + 1)];
-    const line = raw.subarray(row * (stride + 1) + 1, (row + 1) * (stride + 1));
-    for (let column = 0; column < stride; column++) {
-      const left = column >= 4 ? data[row * stride + column - 4] : 0;
-      const up = row > 0 ? data[(row - 1) * stride + column] : 0;
-      const upLeft = row > 0 && column >= 4 ? data[(row - 1) * stride + column - 4] : 0;
+    const filter = raw[row * (rawStride + 1)];
+    const line = raw.subarray(row * (rawStride + 1) + 1, (row + 1) * (rawStride + 1));
+    // Filtering runs on the encoded channel layout, before any expansion.
+    const current = Buffer.alloc(rawStride);
+    for (let column = 0; column < rawStride; column++) {
+      const left = column >= bytesPerPixel ? current[column - bytesPerPixel] : 0;
+      const up = previous ? previous[column] : 0;
+      const upLeft = previous && column >= bytesPerPixel ? previous[column - bytesPerPixel] : 0;
       const value = line[column];
       const unfiltered =
         filter === 0
@@ -103,8 +111,17 @@ export function decodePng(bytes) {
               : filter === 3
                 ? value + ((left + up) >> 1)
                 : value + paeth(left, up, upLeft);
-      data[row * stride + column] = unfiltered & 0xff;
+      current[column] = unfiltered & 0xff;
     }
+    for (let pixel = 0; pixel < width; pixel++) {
+      const at = row * stride + pixel * 4;
+      const from = pixel * bytesPerPixel;
+      data[at] = current[from];
+      data[at + 1] = current[from + 1];
+      data[at + 2] = current[from + 2];
+      data[at + 3] = bytesPerPixel === 4 ? current[from + 3] : 255;
+    }
+    previous = current;
   }
   return { width, height, bitDepth, colorType, data };
 }

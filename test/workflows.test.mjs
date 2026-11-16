@@ -32,7 +32,7 @@ import {
 import { projectRoot } from './helpers/project-files.mjs';
 import { collectFiles } from '../scripts/precache.mjs';
 import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
-import { manifestTypeProblem, probe, probeMethod, SITE_ONLY_FILES, smokePaths } from '../scripts/smoke-pages.mjs';
+import { manifestTypeProblem, probe, probeMethod, PROBED_SITE_FILES, smokePaths } from '../scripts/smoke-pages.mjs';
 
 const CHECKOUT_SHA = '3d3c42e5aac5ba805825da76410c181273ba90b1';
 const POLICY = join(projectRoot, 'scripts', 'check-workflows.mjs');
@@ -1766,7 +1766,7 @@ test('the pages smoke test covers every precached file and notice exactly once',
   const paths = await smokePaths();
   const files = await collectFiles();
   const notices = DISTRIBUTION_FILES.map((file) => `/${file}`);
-  const siteOnly = SITE_ONLY_FILES.map((file) => `/${file}`);
+  const siteOnly = PROBED_SITE_FILES.map((file) => `/${file}`);
   assert.ok(files.length >= 64, `the runtime surface lists every file (${files.length})`);
   assert.deepEqual(
     paths,

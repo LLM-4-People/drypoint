@@ -17,7 +17,6 @@
  *   node scripts/build-icons.mjs --check
  */
 
-import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -27,6 +26,7 @@ import { MANIFEST_ICONS } from './build-brand.mjs';
 import { syncResources } from './build-android.mjs';
 import { CHROME } from './lib/chrome.mjs';
 import { decodePng, encodePng, flattenOnto, pixelAt } from './lib/png.mjs';
+import { screenshotHtml } from './lib/rasterize.mjs';
 
 export const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
 export const ARTWORK = 'assets/icon.svg';
@@ -59,29 +59,19 @@ function transparentBaseFor(icon, icons) {
  * @returns {Promise<{width:number, height:number, data:Buffer}>}
  */
 async function renderTransparent(icon, artwork, directory) {
-  const page = join(directory, `${basename(icon.src)}.html`);
-  const shot = join(directory, `${basename(icon.src)}.png`);
-  await writeFile(
-    page,
-    `<!doctype html><meta charset="utf-8"><style>
+  const html = `<!doctype html><meta charset="utf-8"><style>
 html,body{margin:0;width:${icon.width}px;height:${icon.height}px;overflow:hidden;background:transparent}
 img{display:block;width:${icon.width}px;height:${icon.height}px}
-</style><img src="${pathToFileURL(artwork).href}">`
-  );
-  execFileSync(
-    CHROME,
-    [
-      '--headless=new',
-      '--disable-gpu',
-      '--hide-scrollbars',
-      '--default-background-color=00000000',
-      `--window-size=${icon.width},${icon.height}`,
-      `--screenshot=${shot}`,
-      pathToFileURL(page).href,
-    ],
-    { stdio: 'ignore' }
-  );
-  return decodePng(await readFile(shot));
+</style><img src="${pathToFileURL(artwork).href}">`;
+  const { image } = await screenshotHtml({
+    html,
+    width: icon.width,
+    height: icon.height,
+    directory,
+    name: basename(icon.src, '.png'),
+    backgroundColor: '00000000',
+  });
+  return image;
 }
 
 /** The artwork's opaque background, sampled from its straight left edge. */
