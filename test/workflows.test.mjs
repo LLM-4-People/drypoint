@@ -676,6 +676,34 @@ test('trusted wiring, injection, permissions and release authority reject every 
       release.replace('          gh release create "$TAG" \\', '          gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/1"\n          gh release create "$TAG" \\'),
       /may only run gh release/,
     ],
+    // A3-23: the attestation must carry the custom predicate, not a step env.
+    [
+      'attestation predicate path removed',
+      RELEASE_FILE,
+      release.replace('          predicate-path: dist/provenance.json\n', ''),
+      /attest step must pass predicate-path/,
+    ],
+    [
+      'attestation GITHUB_SHA restored',
+      RELEASE_FILE,
+      release.replace(
+        '        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:',
+        '        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        env:\n          GITHUB_SHA: ${{ needs.resolve.outputs.sha }}\n        with:'
+      ),
+      /must not override GITHUB_SHA/,
+    ],
+    [
+      'predicate built from a literal commit',
+      RELEASE_FILE,
+      release.replace('--sha "$SHA" --tag "$TAG"', `--sha "${'c'.repeat(40)}" --tag "$TAG"`),
+      /must run exactly these commands/,
+    ],
+    [
+      'provenance step removed',
+      RELEASE_FILE,
+      release.replace(/      - name: Write the provenance predicate[\s\S]*?--out dist\/provenance\.json\n/, ''),
+      /must run exactly these commands|must have exactly/,
+    ],
     // F14: concurrency.
     ['checks release group', 'checks.yml', checks.replace('  group: checks-${{ github.workflow }}-${{ github.ref }}', '  group: release'), /concurrency group must be exactly/],
     // N8: the runner image.
@@ -828,11 +856,20 @@ test('the release authority is main-defined, split and tag-derived', async () =>
   assert.doesNotMatch(JSON.stringify(sign), /--min-sdk-version 26/);
   assert.doesNotMatch(JSON.stringify(sign), /--v1-signing-enabled false/);
   assert.match(JSON.stringify(sign), /expected_version_code/);
-  // The attestation is bound to the resolved tag commit, and the bundle is
-  // checked against that binding.
+  // The attestation is a custom predicate written by the build, not the
+  // action's default github.context predicate; the downloaded bundle is
+  // checked against the resolved commit.
   const attest = sign.steps.find((step) => String(step.uses ?? '').startsWith('actions/attest-build-provenance@'));
-  assert.equal(attest.env.GITHUB_SHA, '${{ needs.resolve.outputs.sha }}');
-  assert.ok(sign.steps.some((step) => String(step.run ?? '').includes('.predicate.buildDefinition.resolvedDependencies')));
+  assert.equal(attest.with['predicate-type'], 'https://slsa.dev/provenance/v1');
+  assert.equal(attest.with['predicate-path'], 'dist/provenance.json');
+  assert.equal(attest.env?.GITHUB_SHA, undefined, 'a step-level GITHUB_SHA is overwritten by GitHub');
+  assert.ok(
+    build.steps.some(
+      (step) => step.name === 'Write the provenance predicate' && String(step.run ?? '').includes('release-provenance.mjs')
+    ),
+    'the build writes the predicate from the resolved SHA'
+  );
+  assert.ok(sign.steps.some((step) => String(step.run ?? '').includes('predicate.buildDefinition.resolvedDependencies')));
 
   // Publish holds contents: write and no secret, checks nothing out and uses TAG.
   const publish = parsed.jobs.publish;
@@ -868,8 +905,15 @@ test('the release build proves a clean unsigned tree and the sign job proves the
   assert.match(release, /RELEASE_CERT_SHA256/);
   assert.match(release, /gh attestation download/);
   assert.match(release, /subject-path: dist\/drypoint-\$\{\{ needs\.resolve\.outputs\.version \}\}\.apk/, 'the signed APK is the subject');
-  assert.match(release, /GITHUB_SHA: \$\{\{ needs\.resolve\.outputs\.sha \}\}/, 'the attestation names the resolved tag commit');
-  assert.match(release, /\.predicate\.resolvedDependencies/, 'the downloaded predicate is verified');
+  assert.match(release, /predicate-type: https:\/\/slsa\.dev\/provenance\/v1/, 'the attestation uses a custom SLSA predicate');
+  assert.match(release, /predicate-path: dist\/provenance\.json/, 'the predicate comes from the build tree');
+  assert.doesNotMatch(release, /GITHUB_SHA:/, 'a step-level GITHUB_SHA cannot bind the action context');
+  assert.match(
+    release,
+    /release-provenance\.mjs --sha "\$SHA" --tag "\$TAG" --version "\$VERSION" --out dist\/provenance\.json/,
+    'the build writes the predicate from the resolved SHA'
+  );
+  assert.match(release, /predicate\.buildDefinition\.resolvedDependencies/, 'the downloaded predicate is verified');
   assert.match(release, /gh release view "\$TAG"/);
   assert.match(release, /cmp -s/);
   assert.match(release, /already exists with these exact assets/);
