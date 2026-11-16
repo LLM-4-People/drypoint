@@ -20,25 +20,37 @@ concurrency:
 jobs:
   build:
     name: build
-    # The trust boundary, declared where it can be checked: only this
-    # repository's own main branch may deploy. `workflow_run` runs with the
-    # default branch's workflow file, and this condition is what makes
-    # `head_sha` a commit from this repository rather than a fork's.
+    # `workflow_run` fires for every conclusion; only success may deploy. A
+    # manual dispatch has no triggering run, so it is always allowed and always
+    # deploys main (see the checkout below).
     if: >-
-      (github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout the commit Checks validated
+        # The repository and branch comparison is the guard that makes
+        # `head_sha` a commit of *this* repository on main rather than a fork's
+        # or another branch's; it sits on the checkout it protects.
+        if: >-
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          github.event.workflow_run.head_branch == 'main'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The commit Checks validated. `github.sha` on a workflow_run event is
-          # the default branch head, which may already have moved on.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # `github.sha` on a workflow_run event is the default branch head,
+          # which may already have moved on from the commit Checks validated.
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Checkout main for a manual deploy
+        # A dispatch has no validated commit, so it deploys main and nothing
+        # else: the ref is a constant, never whatever the operator typed.
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
           persist-credentials: false
       - name: Use the pinned Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -81,22 +93,30 @@ jobs:
   smoke:
     name: smoke
     needs: [build, deploy]
-    # Same trust boundary as `build`: this job checks the commit out too.
+    # Same rule as `build`: success for main, and the same two checkouts.
     if: >-
-      (github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - name: Checkout
+      - name: Checkout the commit Checks validated
+        if: >-
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          github.event.workflow_run.head_branch == 'main'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Checkout main for a manual deploy
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
           persist-credentials: false
       - name: Use the pinned Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

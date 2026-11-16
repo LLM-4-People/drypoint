@@ -410,19 +410,20 @@ test('pages deploys only a successful Checks run for the commit it validated', a
   assert.match(pages, /workflows: \[Checks\]/);
   assert.match(pages, /types: \[completed\]/);
   assert.match(pages, /branches: \[main\]/);
-  // A red Checks run must not deploy: the condition is on the job and the
+  // A red Checks run must not deploy: the condition is on the job, and the
   // commit checked out is the run's own head SHA.
   assert.match(pages, /github\.event\.workflow_run\.conclusion == 'success'/, 'a red run cannot deploy');
-  // The trust boundary that makes head_sha a commit of *this* repository: the
-  // guard is a job condition, so it dominates the checkout it protects
-  // (CodeQL recognises the head_repository comparison there).
+  // The guard that makes head_sha a commit of *this* repository on main sits on
+  // the checkout it protects, for both jobs that check the commit out.
   assert.equal(
     (pages.match(/github\.event\.workflow_run\.head_repository\.full_name == github\.repository/g) ?? []).length,
     2,
-    'both checking-out jobs refuse a run from a fork'
+    'each checkout refuses a run from a fork'
   );
-  assert.equal((pages.match(/github\.event\.workflow_run\.head_branch == 'main'/g) ?? []).length, 2, 'and from another branch');
-  assert.equal((pages.match(/github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'/g) ?? []).length, 2, 'a manual deploy must name main');
+  assert.equal((pages.match(/ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/g) ?? []).length, 2, 'the validated commit is checked out');
+  // A manual dispatch has no validated commit, so it deploys main and only
+  // main; a constant ref cannot be steered at another branch.
+  assert.equal((pages.match(/ref: refs\/heads\/main/g) ?? []).length, 2, 'a manual deploy deploys main');
   assert.match(pages, /workflow_dispatch:/, 'a manual deploy is still possible');
 
   const jobs = jobsOf(pages);
@@ -430,8 +431,8 @@ test('pages deploys only a successful Checks run for the commit it validated', a
   for (const name of ['build', 'smoke']) {
     assert.match(
       jobs.find((job) => job.name === name).block,
-      /ref: \$\{\{ github\.event\.workflow_run\.head_sha \|\| github\.sha \}\}/,
-      `${name} checks out the validated commit`
+      /ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/,
+      `${name} checks out the commit Checks validated`
     );
   }
 
