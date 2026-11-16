@@ -52,7 +52,7 @@ was tested on hardware.
 
 | Capability | Chrome | Chrome Android | Edge | Firefox | Safari |
 | --- | --- | --- | --- | --- | --- |
-| **Web Serial** | 89+ | 148+ (138–148 partial RFCOMM) | mirrors Chrome | 151+ | none |
+| **Web Serial** | 89+ | 148+ (138–147 partial RFCOMM) | mirrors Chrome | 151+ | none |
 | **Web Bluetooth** | 70+ | 56+ | mirrors Chrome | none | none |
 
 - **Chromium on Linux** (Chrome and Edge) ships Web Bluetooth disabled by

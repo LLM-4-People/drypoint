@@ -1,7 +1,9 @@
 # Architecture
 
-A static PWA: no runtime server, no bundler or compile step, no dependencies.
-Its outputs are generated from owned sources: `scripts/build-brand.mjs`
+A static PWA: no runtime server, no bundler or compile step, no runtime npm
+dependencies. The repository's one dev-only dependency, the ISC `yaml` parser,
+backs the workflow policy gate. Its outputs are generated from owned sources:
+`scripts/build-brand.mjs`
 renders `manifest.webmanifest`, the Android strings, `src/core/brand.js`,
 `src/core/version.js` and the icon's accessible name;
 `scripts/build-icons.mjs` rasterises that artwork into the manifest PNGs;

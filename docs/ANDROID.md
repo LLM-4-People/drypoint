@@ -136,11 +136,13 @@ scratch directory and is never hand-edited; nothing is copied into the source
 tree. Each manifest entry carries a SHA-256 digest of the file
 bytes; `sw.js` verifies every staged body before caching, `npm run
 check:precache` recomputes the digests and fails when a listed file changed, and
-`test/precache.test.mjs` re-hashes every file on disk. The APK bundles exactly
-that list; run `npm run check:precache` and `npm test` before packaging to catch
-a stale or tampered asset. The build also re-asserts the app-surface allowlist
-for every entry (`index.html`, `manifest.webmanifest`, `assets/**`, `src/**`), so
-keystore, docs, tests and scripts cannot enter the APK.
+`test/precache.test.mjs` re-hashes every file on disk. The APK bundles that list
+plus the two distribution notices (`LICENSE` and `THIRD_PARTY_NOTICES.md`); run
+`npm run check:precache` and `npm test` before packaging to catch a stale or
+tampered asset. The build also re-asserts the app-surface allowlist for every
+manifest entry (`index.html`, `manifest.webmanifest`, `assets/**`, `src/**`), so
+keystore, docs, tests and scripts cannot enter the APK. The notices are staged
+from `scripts/lib/distribution.mjs`, the same list the site uses.
 
 ## Install
 
@@ -170,7 +172,7 @@ sides own half of every rule, and neither guesses:
 
 | Concern | Web side | Java side |
 | --- | --- | --- |
-| A call that never answers | every call has `CONFIG.transport.androidCallTimeoutMs` (15 s) and rejects | a destroyed bridge answers `{ok:false}` immediately |
+| A call that never answers | every non-interactive call is bounded by `CONFIG.transport.androidCallTimeoutMs` (15 s) and rejects; the interactive picker is bounded by `CONFIG.transport.androidPickerTimeoutMs` (120 s) | a destroyed bridge answers `{ok:false}` immediately |
 | Closing | `close()` rejects every pending call and clears its timer | `disconnect()` drops the GATT link |
 | Connect handshake | `open()` awaits the `connect` reply | resolves after the notification descriptor is written **and** the MTU exchange finished, or after a 300 ms fallback |
 | Write pacing | the session serialises requests | each chunk waits for its ack; a 2 s missing ack closes the link with "Printer stopped acknowledging writes" |
@@ -230,10 +232,11 @@ CI, so verify it once on a phone:
 
 `index.html` carries a Content-Security-Policy meta element —
 `default-src 'self'; img-src 'self' data: blob:; style-src 'self'
-'unsafe-inline'; script-src 'self'` — with no inline script. It applies equally
-to the Pages deployment and to the WebView, because both serve the same
-document. `data:` and `blob:` are allowed for images only: the editor renders
-canvas and object URLs it creates itself.
+'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self';
+form-action 'none'` — with no inline script. It applies equally to the Pages
+deployment and to the WebView, because both serve the same document. `data:` and
+`blob:` are allowed for images only: the editor renders canvas and object URLs
+it creates itself.
 
 ## Platform notes
 

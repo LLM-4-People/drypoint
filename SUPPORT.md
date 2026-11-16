@@ -39,9 +39,12 @@ A maintainer may edit or redact a report that contains them.
 
 ## Supported models
 
-Only the D110_M is tested; the D11_H is experimental; every other known model is
-named and every write is refused before a frame is sent. A supported model with
-a sensor refusal is different: the print job reads one heartbeat and prints
+Only the D110_M is tested; the D11_H is experimental. The app names 21 ids in
+[docs/PRINTERS.md](docs/PRINTERS.md); every other id it recognises is refused
+before a frame is sent, and an id outside the table stays `Unknown` and blocked.
+The vendor catalogue lists more models than the app names, so "known" here
+means an id in the app's table, not every model NIIMBOT sells. A supported model
+with a sensor refusal is different: the print job reads one heartbeat and prints
 nothing. A request to support another model is welcome, but it needs evidence —
 see [the support policy](docs/PRINTERS.md#how-to-propose-a-new-model). "It looks
 the same" is not evidence, because a wrong print sequence can jam a head.

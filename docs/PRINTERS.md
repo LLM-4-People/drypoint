@@ -27,6 +27,9 @@ The pitch is the reported resolution divided by 25.4. "Derived" tape
 width is the reported head width in dots divided by that pitch; it is a
 property of the head, not a claim about the roll in the printer.
 
+The table names 21 ids. The vendor catalogue has more models; an id outside the
+table is `Unknown` and blocked, never guessed from a neighbouring name.
+
 | Model | Id | Status | Head and pitch | Tape | Why | What would be needed |
 | --- | --- | --- | --- | --- | --- | --- |
 | **D110_M** | `0x0910` | Tested | 96 dots at the capability TLV's 200 dpi → 7.87 dots/mm | 12.19 mm derived from the head (12 mm stock) | The reference unit; every protocol fact in this repository was captured on it. | Nothing. |

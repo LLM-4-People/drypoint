@@ -11,7 +11,8 @@ git clone https://github.com/LLM-4-People/drypoint.git
 cd drypoint
 node --version        # 22 or newer; .node-version pins the development version
 npm ci                # installs the one dev-only YAML parser used by the workflow policy
-npm test              # the unit suite; the browser suites have their own command
+npm test              # every test file, including the Chromium suites
+npm run test:unit     # the unit suite only
 npm start             # http://127.0.0.1:8080
 ```
 

@@ -9,8 +9,27 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { checkDocs, headingSlugs, headingText, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
+import { CONFIG } from '../src/core/config.js';
 import { MODELS } from '../src/protocol/models.js';
 import { readProjectFile as read } from './helpers/project-files.mjs';
+
+/** The data rows of the first table after one heading. */
+function tableRows(markdown, heading) {
+  const start = markdown.indexOf(heading);
+  assert.ok(start >= 0, `${heading} exists`);
+  const section = markdown.slice(start + heading.length);
+  const end = section.indexOf('\n## ');
+  const body = end < 0 ? section : section.slice(0, end);
+  return body
+    .split('\n')
+    .filter((line) => line.trim().startsWith('|'))
+    .slice(2)
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+}
+
+function plain(cell) {
+  return cell.replaceAll('**', '').trim();
+}
 
 async function tempTree(t, files) {
   const root = await mkdtemp(join(tmpdir(), 'drypoint-docs-'));
@@ -169,6 +188,61 @@ test('the support matrix lists exactly the models the code knows', () => {
   assert.match(page, /No model other than the D110_M has been tested/);
   assert.match(page, /4 dots on every side/, 'the measured padding is stated');
   assert.match(page, /0\.51 mm/, 'the padding is stated in millimetres');
+});
+
+test('the README support matrix and the SUPPORT scope match the model table', () => {
+  const readme = read('README.md');
+  const rows = tableRows(readme, '## Support matrix');
+  const status = new Map(rows.map(([model, state]) => [plain(model), state]));
+
+  for (const model of MODELS.filter((entry) => entry.support === 'confirmed')) {
+    assert.equal(status.get(model.name), 'Tested', `${model.name} is documented as tested`);
+  }
+  for (const model of MODELS.filter((entry) => entry.support === 'experimental')) {
+    assert.equal(status.get(model.name), 'Experimental', `${model.name} is documented as experimental`);
+  }
+  assert.equal(status.get('Every other id the app recognises'), 'Not supported');
+  assert.equal(status.get('Any model the printer reports outside the table'), 'Unknown');
+
+  // The count is a fact from models.js, not a hand-maintained number.
+  const count = `names ${MODELS.length} ids`;
+  assert.ok(readme.includes(count), `README states "${count}"`);
+  assert.ok(read('SUPPORT.md').includes(count), `SUPPORT states "${count}"`);
+  assert.ok(read('docs/PRINTERS.md').includes(count), `PRINTERS states "${count}"`);
+});
+
+test('the README Web Serial range is the BCD range, not an extra version', () => {
+  // BCD: chrome_android version_added 138, version_removed 148, partial RFCOMM,
+  // then full from 148. The partial window is therefore 138–147, not 138–148.
+  const readme = read('README.md');
+  assert.match(readme, /148\+ \(138–147 partial RFCOMM\)/);
+  assert.doesNotMatch(readme, /138–148/);
+});
+
+test('the ANDROID.md CSP quote is the one policy in index.html', () => {
+  const html = read('index.html');
+  const policy = html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]+)"/)?.[1];
+  assert.ok(policy, 'index.html owns one CSP meta element');
+  const quoted = read('docs/ANDROID.md').match(/Content-Security-Policy meta element —\n`([^`]+)`/)?.[1];
+  assert.ok(quoted, 'ANDROID.md quotes the policy');
+  assert.equal(quoted.replace(/\s+/g, ' ').trim(), policy, 'the quote is the whole policy, not a four-directive subset');
+});
+
+test('ANDROID.md states the call and picker timeouts the transport uses', () => {
+  const doc = read('docs/ANDROID.md');
+  const call = Math.round(CONFIG.transport.androidCallTimeoutMs / 1000);
+  const picker = Math.round(CONFIG.transport.androidPickerTimeoutMs / 1000);
+  assert.ok(call < picker, 'the picker is deliberately longer than a bridge call');
+  assert.match(doc, new RegExp(`androidCallTimeoutMs\` \\(${call} s\\)`));
+  assert.match(doc, new RegExp(`androidPickerTimeoutMs\` \\(${picker} s\\)`));
+  assert.doesNotMatch(doc, /every call has `CONFIG\.transport\.androidCallTimeoutMs`/);
+});
+
+test('ANDROID.md lists both distribution notices beside the precache files', () => {
+  const doc = read('docs/ANDROID.md');
+  assert.match(doc, /bundles that list\s+plus the two distribution notices/);
+  assert.match(doc, /`LICENSE` and `THIRD_PARTY_NOTICES\.md`/);
+  assert.doesNotMatch(doc, /The APK bundles exactly\s+that list/);
 });
 
 test('the documentation index links every page in docs/', () => {
