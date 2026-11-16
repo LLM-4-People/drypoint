@@ -91,11 +91,19 @@ test('the manifest declares the exact permission set and no component it does no
   assert.match(xml, /android\.intent\.category\.LAUNCHER/);
 });
 
-test('the app is not backed up anywhere', () => {
-  const xml = renderManifest(read('android/AndroidManifest.template.xml'), { versionName: '1.0.0', versionCode: 10000, packageName: brand.appId });
-  assert.match(xml, /android:allowBackup="false"/, 'no cloud or device-to-device copy of the labels or the BLE address');
+test('cloud backup is disabled and the D2D claim is honest', () => {
+  const template = read('android/AndroidManifest.template.xml');
+  const xml = renderManifest(template, { versionName: '1.0.0', versionCode: 10000, packageName: brand.appId });
+  assert.match(xml, /android:allowBackup="false"/, 'cloud backup of the labels and the BLE address is disabled');
   assert.doesNotMatch(xml, /android:allowBackup="true"/);
   assert.doesNotMatch(xml, /fullBackupContent|dataExtractionRules/, 'no backup rules are configured either');
+  // A-F2: `allowBackup=false` does not stop device-to-device migration on every
+  // OEM at targetSdk 31+, so the manifest comment must not promise it does.
+  const comment = template.slice(template.indexOf('<!-- Offline tool:'), template.indexOf('<application'));
+  assert.match(comment, /cloud\s+backup/);
+  assert.match(comment, /device-to-device/);
+  assert.match(comment, /manufacturer/, 'the manufacturer-controlled half is stated');
+  assert.match(comment, /cannot be disabled by the app/, 'the limit is stated, not hidden');
 });
 
 test('the build resolves the manifest through the one writer', () => {

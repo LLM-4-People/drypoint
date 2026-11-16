@@ -1,6 +1,7 @@
 package dev.llm4people.drypoint;
 
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
@@ -20,7 +21,11 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -36,6 +41,35 @@ public class MainActivity extends Activity {
   private static final String HOST = hostOf(ORIGIN);
   private static final String START_URL = ORIGIN + "/index.html";
   private static final int REQ_FILE = 71;
+
+  /**
+   * The MIME types a page extension is offered as.
+   *
+   * A file picker filters on MIME types, not on extensions, and Android
+   * pickers disagree about which type a `.json` file is reported as: some
+   * answer `application/json`, others `text/plain` or
+   * `application/octet-stream`. A label export therefore has to be offered as
+   * all three, or the system picker greys it out and the app's only import path
+   * on the phone is unreachable.
+   */
+  private static final Map<String, String[]> EXTENSION_MIME_TYPES;
+  static {
+    Map<String, String[]> types = new HashMap<>();
+    types.put(".json", new String[] { "application/json", "text/plain", "application/octet-stream" });
+    types.put(".txt", new String[] { "text/plain" });
+    types.put(".png", new String[] { "image/png" });
+    types.put(".jpg", new String[] { "image/jpeg" });
+    types.put(".jpeg", new String[] { "image/jpeg" });
+    types.put(".gif", new String[] { "image/gif" });
+    types.put(".webp", new String[] { "image/webp" });
+    types.put(".bmp", new String[] { "image/bmp" });
+    types.put(".svg", new String[] { "image/svg+xml" });
+    types.put(".heic", new String[] { "image/heic" });
+    types.put(".heif", new String[] { "image/heif" });
+    types.put(".avif", new String[] { "image/avif" });
+    types.put(".ico", new String[] { "image/x-icon", "image/vnd.microsoft.icon" });
+    EXTENSION_MIME_TYPES = Collections.unmodifiableMap(types);
+  }
 
   private WebView webView;
   private BleBridge ble;
@@ -98,11 +132,29 @@ public class MainActivity extends Activity {
       @Override
       public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
         if (destroyed) return false;
+        // A second request supersedes the first: the earlier page callback is
+        // answered now, not left waiting for a result that cannot arrive.
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         fileCallback = callback;
+
+        // Build the intent from the page's own `accept` list. Hard-coding
+        // image/* filtered out the label JSON the Document panel imports, so
+        // the one backup path on the phone could not be used at all.
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
+        List<String> types = acceptTypes(params != null ? params.getAcceptTypes() : null);
+        if (types.size() == 1) {
+          intent.setType(types.get(0));
+        } else {
+          // Several exact types, or none: keep the picker open to everything
+          // and let EXTRA_MIME_TYPES do the filtering.
+          intent.setType("*/*");
+          if (types.size() > 1) intent.putExtra(Intent.EXTRA_MIME_TYPES, types.toArray(new String[0]));
+        }
+        // The current inputs are single-file, but a page that asks for several
+        // must not have the extra selection silently dropped by this shell.
+        boolean multiple = params != null && params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple);
         try {
           startActivityForResult(intent, REQ_FILE);
           return true;
@@ -205,13 +257,66 @@ public class MainActivity extends Activity {
     return "application/octet-stream";
   }
 
+  /**
+   * The MIME types one page `accept` list asks for.
+   *
+   * The page sends `accept` tokens (MIME types and extensions) through
+   * FileChooserParams; a picker only understands MIME types, so an extension
+   * is resolved through the one map below. `image/*` and any other MIME token
+   * is kept as written. Unknown tokens are dropped rather than guessed, and
+   * the result is ordered and duplicate-free so the intent is deterministic.
+   *
+   * @param accept the page's tokens, or null
+   * @returns the resolved MIME types
+   */
+  static List<String> acceptTypes(String[] accept) {
+    List<String> types = new ArrayList<>();
+    if (accept == null) return types;
+    for (String token : accept) {
+      if (token == null) continue;
+      String value = token.trim();
+      if (value.isEmpty()) continue;
+      if (value.startsWith(".")) {
+        String[] mapped = EXTENSION_MIME_TYPES.get(value.toLowerCase(Locale.ROOT));
+        if (mapped != null) {
+          for (String type : mapped) {
+            if (!types.contains(type)) types.add(type);
+          }
+        }
+        continue;
+      }
+      if (!types.contains(value)) types.add(value);
+    }
+    return types;
+  }
+
+  /**
+   * Satisfy one page file request. A picker that offers several items answers
+   * through ClipData, so both shapes are read, the primary URI is kept and the
+   * list is deduplicated.
+   *
+   * @returns the selected URIs, or null when nothing was selected
+   */
+  private static Uri[] selectedUris(Intent data) {
+    List<Uri> uris = new ArrayList<>();
+    Uri single = data.getData();
+    if (single != null) uris.add(single);
+    ClipData clip = data.getClipData();
+    if (clip != null) {
+      for (int index = 0; index < clip.getItemCount(); index++) {
+        Uri uri = clip.getItemAt(index).getUri();
+        if (uri != null && !uris.contains(uri)) uris.add(uri);
+      }
+    }
+    return uris.isEmpty() ? null : uris.toArray(new Uri[0]);
+  }
+
   @Override
   protected void onActivityResult(int requestCode, int resultCode, Intent data) {
     if (requestCode == REQ_FILE) {
-      Uri[] result = null;
-      if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-        result = new Uri[] { data.getData() };
-      }
+      // Cancel, a missing file manager and an empty selection all answer null;
+      // the callback is cleared either way so the page never waits.
+      Uri[] result = resultCode == RESULT_OK && data != null ? selectedUris(data) : null;
       if (fileCallback != null) {
         fileCallback.onReceiveValue(result);
         fileCallback = null;

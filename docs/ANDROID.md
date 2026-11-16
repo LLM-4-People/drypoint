@@ -264,6 +264,9 @@ canvas and object URLs it creates itself.
   written, and a failed write deletes the pending row again. A display name that
   Downloads already holds is refused before the insert, because MediaStore would
   otherwise silently rename the new file to `name (1).json`.
+- On Android 8–9 the file itself is the duplicate check: an existing name is
+  refused rather than truncated, and a write or close that fails deletes the
+  partial file before the bridge reports the failure.
 - Image import uses the system file picker exposed by the shell. The picked file
   becomes a data URL, which the interceptor releases to the WebView (see the
   scheme policy above).
@@ -296,7 +299,8 @@ The JavaScript transport is covered by `test/android-transport.test.mjs`
 (picker, connect frame, notifications, close, rejected writes, a bridge that
 never answers, a close that rejects pending calls) and the native bridge
 contract by `test/android-bridge.test.mjs` (ack watchdog, MTU reset and
-handshake, token settling, teardown guards) plus `test/android-shell.test.mjs`
+handshake, token settling, teardown guards, the file picker's accept handling
+and the legacy save path) plus `test/android-shell.test.mjs`
 (method names, permissions, asset packaging). `SafeFileName` is compiled and
 executed by `test/safe-filename.test.mjs`, so its rule is a runtime assertion,
 not a source grep. The interceptor's scheme allowlist is a source contract; the
@@ -305,3 +309,20 @@ native GATT path itself needs a physical Android phone
 and the printer; it cannot be exercised in CI or an emulator, so the GATT
 behaviour is a source contract verified by `javac` in
 `scripts/build-android.mjs`, not by execution.
+
+### On-device import check
+
+The system picker is the one path a static test cannot prove. On a phone, with
+the release APK installed:
+
+1. **Image import** — add an image element; the picker lists pictures and the
+   chosen image appears on the label.
+2. **Label import** — export a label, then Document → Import label; the
+   exported `.json` file is selectable (not greyed out) and the label loads as
+   one undoable step.
+3. **Cancel** — open either picker and press Back; the app stays responsive and
+   the page does not wait for a callback.
+4. **Multiple** — on a picker that offers multi-select, a multiple selection
+   answers every file it returns; the current single-file inputs still read the
+   first one.
+
