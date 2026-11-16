@@ -122,9 +122,18 @@ public class MainActivity extends Activity {
 
       @Override
       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-        // Navigation stays in the app: a link that leaves the one origin is
-        // refused here instead of being handed to a browser or an external app.
-        return !isAppUrl(request.getUrl());
+        Uri url = request.getUrl();
+        // The header title is the one deliberate external link: open the
+        // repository in a browser. Every other navigation stays in the app.
+        if (url != null && url.toString().equals(getString(R.string.repository_url))) {
+          try {
+            startActivity(new Intent(Intent.ACTION_VIEW, url));
+          } catch (Exception error) {
+            Log.w("DrypointShell", "no browser for the repository link: " + error.getMessage());
+          }
+          return true;
+        }
+        return !isAppUrl(url);
       }
     });
 

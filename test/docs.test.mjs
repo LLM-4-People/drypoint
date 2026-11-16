@@ -12,6 +12,7 @@ import { checkDocs, changelogProseText, headingSlugs, headingText, markdownLinks
 import { dashFindings, doubleDashFindings, titleCaseFindings } from '../scripts/lib/prose.mjs';
 import { listFiles, listTrackedFiles } from '../scripts/lib/tree.mjs';
 import { CONFIG } from '../src/core/config.js';
+import { BRAND } from '../src/core/brand.js';
 import { MODELS } from '../src/protocol/models.js';
 import { ROLL_BARCODE, ROLL_TOTAL, ROLL_USED } from './fixtures/captured-unit.mjs';
 import { listProjectFiles, readProjectFile as read } from './helpers/project-files.mjs';
@@ -335,6 +336,12 @@ test('the release runbook covers every failed or partial outcome', () => {
   assert.match(history, /--tag v1\.0\.0 --historical --out/);
   assert.match(history, /gh api repos\/LLM-4-People\/drypoint\/releases\/tags\/v1\.0\.0/);
   assert.match(history, /never used by the release workflow/);
+});
+
+test('the issue template live-app link is the authored homepage', () => {
+  const config = read('.github/ISSUE_TEMPLATE/config.yml');
+  const url = config.match(/name: Live app and quick start\n\s+url: (\S+)/)?.[1];
+  assert.equal(url, BRAND.homepage, 'the contact link is the one live app URL');
 });
 
 test('the issue templates point at the latest release, not a past version', () => {

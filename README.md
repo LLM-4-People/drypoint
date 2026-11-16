@@ -10,7 +10,7 @@ in the browser, entirely offline, with no account, no server and no telemetry.
 > 1.0.1 or later, and has no label export, so uninstalling it deletes every
 > label. Use the latest release.
 
-- **Live app:** <https://llm-4-people.github.io/drypoint/>
+- **Live app:** <https://drypoint.llm4people.dev/>
 - **Android APK:** [latest release](https://github.com/LLM-4-People/drypoint/releases/latest)
 
 Drypoint is not affiliated with NIIMBOT. It is an independent client for
@@ -30,7 +30,7 @@ would need before it could print is in [docs/PRINTERS.md](docs/PRINTERS.md).
 
 ## Quick start
 
-**In a browser.** Open <https://llm-4-people.github.io/drypoint/> in a browser
+**In a browser.** Open <https://drypoint.llm4people.dev/> in a browser
 that exposes the printer API you need: Chrome or Edge on desktop, or Chrome on
 Android (see [Browser support](#browser-support)). Pair the printer first
 (Windows: Settings → Bluetooth), then use **Connect printer** in the header or
@@ -356,6 +356,7 @@ The table is generated from `package.json`; edit the script there and run
 | `npm run check:precache` | `node scripts/precache.mjs --check` |
 | `npm run build:brand` | `node scripts/build-brand.mjs` |
 | `npm run build:icons` | `node scripts/build-icons.mjs` |
+| `npm run build:social` | `node scripts/build-social.mjs` |
 | `npm run build:android` | `node scripts/build-android.mjs` |
 | `npm run pages:build` | `node scripts/build-pages.mjs` |
 | `npm run docs:check` | `node scripts/check-docs.mjs` |
@@ -364,7 +365,7 @@ The table is generated from `package.json`; edit the script there and run
 | `npm run workflows:check` | `node scripts/check-workflows.mjs` |
 | `npm test` | `node --test "test/*.test.mjs"` |
 | `npm run test:browser` | `node scripts/test-suites.mjs browser` |
-| `npm run verify` | `npm run build:brand -- --check && npm run build:icons -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
+| `npm run verify` | `npm run build:brand -- --check && npm run build:icons -- --check && npm run build:social -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
 | `npm run test:unit` | `node scripts/test-suites.mjs unit` |
 | `npm run verify:all` | `npm run verify && npm run test:browser` |
 [//]: # (/generated:scripts)

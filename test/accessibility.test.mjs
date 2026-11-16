@@ -9,7 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { openApp, withPage } from './helpers/browser-page.mjs';
+import { delay, openApp, withPage } from './helpers/browser-page.mjs';
 
 test('the page has one heading, two unique landmarks and a named canvas', async (t) => {
   await withPage(t, async ({ cdp, port }) => {
@@ -102,5 +102,59 @@ test('the compact display:contents sidebar keeps its landmark and name', async (
       .filter((node) => !node.ignored && node.role?.value === 'complementary')
       .map((node) => node.name?.value ?? '');
     assert.deepEqual(landmarks.sort(), ['Elements and layers', 'Properties'], 'both named asides survive');
+  });
+});
+
+test('the header repository link keeps its name and layout at 375 and 1280', async (t) => {
+  await withPage(t, async ({ cdp, port }) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await openApp(cdp, port);
+    await cdp.send('Accessibility.enable');
+
+    for (const [width, height, mobile] of [
+      [375, 667, true],
+      [1280, 900, false],
+    ]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
+      await delay(200);
+
+      const state = await cdp.evaluate(`(() => {
+        const link = document.querySelector('#brandLink');
+        const header = document.querySelector('.topbar');
+        const box = link.getBoundingClientRect();
+        const bar = header.getBoundingClientRect();
+        return {
+          tag: link.tagName,
+          href: link.href,
+          target: link.target,
+          rel: link.rel,
+          title: link.title,
+          text: link.textContent.replace(/\\s+/g, ' ').trim(),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+          insideHeader: box.top >= bar.top - 1 && box.bottom <= bar.bottom + 1 && box.left >= bar.left - 1 && box.right <= bar.right + 1,
+          overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          headingCount: document.querySelectorAll('h1').length,
+        };
+      })()`);
+
+      const label = `${width}x${height}`;
+      assert.equal(state.tag, 'A', `${label}: the brand is the link`);
+      assert.equal(state.href, 'https://github.com/LLM-4-People/drypoint', `${label}: the href is the repository`);
+      assert.equal(state.target, '_blank', `${label}: the link opens a new tab`);
+      assert.equal(state.rel, 'noopener', `${label}: the new tab cannot reach back`);
+      assert.equal(state.title, 'Drypoint on GitHub', `${label}: the tooltip names the destination`);
+      assert.equal(state.text, 'Drypoint on GitHub', `${label}: the hidden suffix supplies the full name`);
+      assert.equal(state.headingCount, 1, `${label}: still one h1`);
+      assert.equal(state.overflowX, 0, `${label}: no horizontal overflow`);
+      assert.ok(state.width >= 22 && state.height >= 14, `${label}: the brand mark keeps its size`);
+      assert.equal(state.insideHeader, true, `${label}: the brand stays inside the header`);
+
+      const tree = await cdp.send('Accessibility.getFullAXTree');
+      const brandLink = (tree.result?.nodes ?? []).find(
+        (node) => !node.ignored && node.role?.value === 'link' && node.name?.value === 'Drypoint on GitHub'
+      );
+      assert.ok(brandLink, `${label}: the brand link has an accessible name`);
+    }
   });
 });

@@ -724,6 +724,10 @@ async function main() {
       ],
       'compiling resources'
     );
+    // The Java shell reads its strings through `R`, so the link must emit the
+    // generated R class for javac. It is a build artifact in the scratch
+    // directory and never ships in the APK.
+    await mkdir(join(staging, 'gen'), { recursive: true });
     run(
       aapt2,
       [
@@ -735,6 +739,7 @@ async function main() {
         // app assets directory can ride along into the package.
         '-A', assetsRoot,
         '-R', join(staging, 'res.zip'),
+        '--java', join(staging, 'gen'),
         '--auto-add-overlay',
       ],
       'linking the APK'
@@ -742,9 +747,10 @@ async function main() {
 
     const sources = await walk(javaDir, '.java');
     if (!sources.length) fail('no Java sources found');
+    const generated = await walk(join(staging, 'gen'), '.java');
     run(
       'javac',
-      ['--release', '11', '-classpath', androidJar, '-d', join(staging, 'classes'), ...sources],
+      ['--release', '11', '-classpath', androidJar, '-d', join(staging, 'classes'), ...generated, ...sources],
       `compiling ${sources.length} Java sources`
     );
 

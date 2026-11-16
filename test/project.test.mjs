@@ -227,6 +227,13 @@ test('history compares documents through one function', () => {
 
 /* ---------------- README contracts ---------------- */
 
+test('the public live-app links are the authored homepage', () => {
+  const homepage = new URL(brand.homepage).href;
+  for (const file of ['README.md', 'SECURITY.md', '.github/ISSUE_TEMPLATE/config.yml']) {
+    assert.ok(read(file).includes(homepage), `${file} names the live app at its one URL`);
+  }
+});
+
 test('the README command table is generated from package.json', () => {
   const { start: markerStart, end: markerEnd } = markers('scripts');
   const start = readme.indexOf(markerStart);

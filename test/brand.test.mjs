@@ -21,6 +21,7 @@ import {
   readThemeColor,
   renderAll,
 } from '../scripts/build-brand.mjs';
+import { SOCIAL_CARD } from '../scripts/build-social.mjs';
 import { projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
 
 const brandJson = JSON.parse(read('brand.json'));
@@ -75,7 +76,10 @@ test('index.html and the README name the product from BRAND', () => {
   assert.equal(index.match(/<title>([^<]+)<\/title>/)?.[1], BRAND.name, 'index.html <title>');
   // The wordmark element is compared as one literal, so a nested element or a
   // second word does not silently pass a tag-stripping comparison.
-  assert.ok(index.includes(`<span class="brand-text">${BRAND.name}</span>`), 'the header wordmark is exactly the brand name');
+  assert.ok(
+    index.includes(`<span class="brand-text">${BRAND.name}<span class="visually-hidden"> on GitHub</span></span>`),
+    'the header wordmark is the brand name plus the link destination'
+  );
   assert.equal(read('README.md').match(/^#\s+(.+)$/m)?.[1].trim(), BRAND.name, 'README H1');
 });
 
@@ -118,6 +122,15 @@ test('a generated file may never ship a placeholder', () => {
   for (const [file, content] of Object.entries(renderAll(BRAND, { background: '#08080a', version: pkg.version }))) {
     assert.doesNotMatch(content, /\{\{/, `${file} is fully rendered`);
   }
+});
+
+test('the generated Android strings carry the app label and repository link', () => {
+  const strings = read(OUTPUTS.strings);
+  assert.ok(strings.includes(`<string name="app_name">${BRAND.name}</string>`), 'the launcher label is the brand name');
+  assert.ok(
+    strings.includes(`<string name="repository_url" translatable="false">${BRAND.repository}</string>`),
+    'Android gets the one external link from the brand owner'
+  );
 });
 
 test('the generated header is present where the format allows', () => {
@@ -166,6 +179,9 @@ test('the product name has no owner outside brand.json and the read-only surface
     file === OUTPUTS.strings ||
     file === OUTPUTS.module ||
     file === OUTPUTS.icon ||
+    // The generated social card is artwork: the name it draws comes from the
+    // same brand owner as the icon, never from a second literal.
+    file === SOCIAL_CARD.svg ||
     file.startsWith(`docs${sep}`) ||
     file.startsWith(`test${sep}`) ||
     file.startsWith(`.github${sep}`) ||

@@ -9,7 +9,7 @@ export const BRAND = Object.freeze({
   description: "Design and print 12 mm labels on a NIIMBOT D110, entirely offline.",
   shortDescription: "Offline label designer for NIIMBOT thermal printers.",
   repository: "https://github.com/LLM-4-People/drypoint",
-  homepage: "https://llm-4-people.github.io/drypoint/",
+  homepage: "https://drypoint.llm4people.dev/",
   license: "MIT",
   author: "LLM-4-People",
   androidSigningCertificateSha256: "fe7ac311e139eddfc1a9b1d5afb9e20b7c95693206351a3368ec88dc1f38aece",

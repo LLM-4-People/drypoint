@@ -4,6 +4,7 @@
  */
 
 import { CONFIG, storageKey } from './core/config.js';
+import { BRAND } from './core/brand.js';
 import { geometry } from './core/geometry.js';
 import { $, on, el, downloadJson, downloadText, captureFocus, restoreFocus, movePreservingFocus, setText } from './core/dom.js';
 import { round1 } from './core/format.js';
@@ -44,6 +45,7 @@ import { documentFilename, parseDocument, serializeDocument, transferTooLargeMes
 const log = createLogger('main');
 
 const ui = {
+  brandLink: $('#brandLink'),
   docName: $('#docName'),
   undo: $('#undoButton'),
   redo: $('#redoButton'),
@@ -1100,6 +1102,7 @@ window.addEventListener('pagehide', () => {
 
 /* ---------------- boot ---------------- */
 
+ui.brandLink.href = BRAND.repository;
 applyTheme();
 placeStage();
 placeInspector();

@@ -13,12 +13,17 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 
 test('the base element goes inside the head, before any relative URL', () => {
   const html = '<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="assets/app.css"></head><body></body></html>';
-  const rewritten = injectBase(html, 'https://host/drypoint/');
-  assert.match(rewritten, /<head><base href="https:\/\/host\/drypoint\/"><meta charset/);
+  const rewritten = injectBase(html, 'https://host/');
+  assert.match(rewritten, /<head><base href="https:\/\/host\/"><meta charset/);
   assert.ok(rewritten.indexOf('<base') < rewritten.indexOf('assets/app.css'), 'the base precedes the stylesheet');
   assert.equal((rewritten.match(/<base\b/gi) ?? []).length, 1);
   // The document is otherwise byte-identical.
-  assert.equal(rewritten.replace('<base href="https://host/drypoint/">', ''), html);
+  assert.equal(rewritten.replace('<base href="https://host/">', ''), html);
+});
+
+test('a subpath scope still resolves under its own directory', () => {
+  const rewritten = injectBase('<html><head></head></html>', 'https://host/drypoint/');
+  assert.match(rewritten, /<base href="https:\/\/host\/drypoint\/">/);
 });
 
 test('a head with attributes is handled and a document that has a base is left alone', () => {

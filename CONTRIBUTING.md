@@ -34,9 +34,9 @@ Chromium is discovered from `D110_CHROME`, then `CHROME_PATH`, then
 browser cache.
 
 [//]: # (generated:suites)
-The browser leg runs **26 tests in 13 files**:
+The browser leg runs **27 tests in 13 files**:
 
-- `accessibility.test.mjs` (2 tests)
+- `accessibility.test.mjs` (3 tests)
 - `actionbar-clearance.test.mjs` (1 test)
 - `content-security.test.mjs` (2 tests)
 - `corrupt-storage.test.mjs` (3 tests)
@@ -62,6 +62,7 @@ npm run test:browser      # only the measured browser suites listed above
 npm run check:precache    # fail when the generated offline files are stale
 npm run build:brand -- --check   # fail when a generated brand file drifted
 npm run build:icons -- --check   # fail when a generated icon drifted
+npm run build:social -- --check  # fail when the generated social card drifted
 npm run docs:generate     # regenerate the marker blocks in README/CONTRIBUTING
 npm run docs:check        # Markdown and issue-template links and anchors
 npm run privacy:check     # private hosts, paths, serials, foreign e-mails
@@ -108,12 +109,13 @@ These are generated and checked byte-for-byte in CI:
 | `src/core/version.js` | `package.json` | `npm run build:brand -- --write` |
 | `assets/icon.svg` | the artwork in `scripts/build-brand.mjs`; the accessible name from `brand.json` | `npm run build:brand -- --write` |
 | `assets/icon-192.png`, `assets/icon-512.png`, `assets/icon-maskable-512.png` | `assets/icon.svg` and `scripts/build-icons.mjs` | `npm run build:icons` |
+| `assets/social-card.svg`, `assets/social-card.png` | `brand.json`, the icon artwork and `scripts/build-social.mjs` | `npm run build:social -- --write` |
 | `android/app/src/main/res/values/strings.xml` | `brand.json` | `npm run build:brand -- --write` |
 | `assets/precache.js` | the real import graph | `npm run build` |
 | the `BUILD` and cache-prefix stamps in `sw.js` | the precache hash and `brand.json` | `npm run build` |
 | the `generated:scripts` block in `README.md` | `package.json` | `npm run docs:generate` |
 | the `generated:suites` block in `CONTRIBUTING.md` | `scripts/test-suites.mjs` | `npm run docs:generate` |
-| `_site/` | `collectFiles()`, `sw.js`, the generated `404.html`, `.nojekyll` and the notices | `npm run pages:build` |
+| `_site/` | `collectFiles()`, `sw.js`, the generated `404.html`, `.nojekyll`, `CNAME`, the social card and the notices | `npm run pages:build` |
 
 Edit the owner and regenerate. If a generated file changed and you did not touch
 its owner, you found a bug: please say so in the pull request.

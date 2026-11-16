@@ -9,15 +9,16 @@
  * enough to pass while the list grew to sixty-four.
  *
  * Usage:
- *   node scripts/smoke-pages.mjs --base https://host/drypoint/ [--cache-bust <id>]
+ *   node scripts/smoke-pages.mjs --base https://host/ [--cache-bust <id>]
  */
 
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { NO_JEKYLL_FILE, SITE_ONLY_FILES } from './build-pages.mjs';
 import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
-import { contentTypeEssence, contentTypeProblem } from './lib/content-types.mjs';
+import { contentTypeEssence, contentTypeFor, contentTypeProblem } from './lib/content-types.mjs';
 import { OUTPUT, parseManifest, readManifest } from './precache.mjs';
 
 export const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
@@ -27,19 +28,15 @@ export const PRECACHE_FILE = OUTPUT;
 export const ROOT_PATH = '/';
 
 /**
- * Files a Pages deployment must serve that the precache manifest cannot name.
+ * The deployment-only files this smoke probes: the canonical staging set minus
+ * the host control marker.
  *
- * `sw.js` is registered from the document, not precached by itself;
- * `assets/precache.js` is the manifest the worker imports; `404.html` is the
- * host's static fallback and is never part of a successful navigation. They
- * ride beside the app, so a deployment can lose one and still pass the
- * precache list. This is a different distribution from `DISTRIBUTION_FILES`,
- * which is the licence/notices list every artifact carries.
- *
- * `.nojekyll` is deliberately absent: it is an empty host control marker, not
- * app content, and a 200 for it proves nothing about the deployment.
+ * `scripts/build-pages.mjs` owns the set; this module owns only the probing
+ * decision, so a file added to the deployment is probed without a second list.
+ * `.nojekyll` stays deliberately absent: it is an empty host control marker,
+ * not app content, and a 200 for it proves nothing about the deployment.
  */
-export const SITE_ONLY_FILES = Object.freeze(['sw.js', 'assets/precache.js', '404.html']);
+export const PROBED_SITE_FILES = Object.freeze(SITE_ONLY_FILES.filter((file) => file !== NO_JEKYLL_FILE));
 
 /**
  * The one file whose content type is part of the contract: a manifest served as
@@ -62,7 +59,7 @@ export async function smokePaths({ root = ROOT } = {}) {
   const files = manifest.files;
   const paths = new Set([ROOT_PATH]);
   for (const file of files) paths.add(file.startsWith('/') ? file : `/${file}`);
-  for (const file of SITE_ONLY_FILES) paths.add(`/${file}`);
+  for (const file of PROBED_SITE_FILES) paths.add(`/${file}`);
   // The licence and notices ride beside the app, not inside the precache
   // manifest, but a deployment that forgets them is incomplete. One list owns
   // both distributions.
@@ -79,10 +76,12 @@ export async function smokePaths({ root = ROOT } = {}) {
  */
 export function probeMethod(path) {
   const noticePath = DISTRIBUTION_FILES.some((file) => path === `/${file}`);
-  const siteFile = SITE_ONLY_FILES.some((file) => path === `/${file}`);
-  // The manifest, the notices and the deployment-only JS/HTML are read for
-  // their body or their type; a binary asset only has to answer.
-  return path === MANIFEST_PATH || noticePath || siteFile ? 'GET' : 'HEAD';
+  const siteFile = PROBED_SITE_FILES.some((file) => path === `/${file}`);
+  // The manifest, the notices and the deployment-only scripts and documents are
+  // read for their body or their type; any binary asset, including a site-only
+  // one such as the social card, only has to answer.
+  const binary = /^(?:image|font|audio|video)\//.test(contentTypeFor(path));
+  return path === MANIFEST_PATH || noticePath || (siteFile && !binary) ? 'GET' : 'HEAD';
 }
 
 /** Why a Content-Type cannot be the manifest, or null. */

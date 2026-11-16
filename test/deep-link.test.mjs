@@ -4,8 +4,8 @@
  * URL resolved under the deep path, so the browser painted unstyled HTML with
  * no layers.
  *
- * The site is served under `/drypoint/` (the Pages layout) because the worker
- * scope is what a deep path has to stay inside. Skips without Chromium.
+ * The site is served from its domain root (the Pages layout) because the
+ * worker scope is what a deep path has to stay inside. Skips without Chromium.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { delay, mountTimeoutMs } from './helpers/browser-page.mjs';
 import { openApp, withPage } from './helpers/browser-page.mjs';
 
-const BASE_PATH = '/drypoint/';
+const BASE_PATH = '/';
 const DEEP = `${BASE_PATH}library/deep/path#/label/abc-123`;
 
 /** Wait until the page is controlled by its worker. */
@@ -77,7 +77,7 @@ test('a deep in-scope navigation boots the real app under its base', async (t) =
           }
         }
         const base = document.querySelector('base');
-        const sheet = [...document.styleSheets].find((entry) => String(entry.href).endsWith('/drypoint/assets/app.css'));
+        const sheet = [...document.styleSheets].find((entry) => String(entry.href).endsWith('/assets/app.css'));
         return {
           href: location.href,
           pathname: location.pathname,
