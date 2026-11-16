@@ -729,6 +729,32 @@ test('v3 hostile geometry is bounded with the current path’s one notice', () =
 });
 
 
+test('hydrateStoredDocument refuses an envelope-shaped value with no element list', () => {
+  for (const value of [
+    { version: 4, data: { elements: [] } },
+    { version: 4, name: 'Hand edited' },
+    { version: 3, payload: {} },
+  ]) {
+    assert.throws(() => hydrateStoredDocument(value), /no valid element list/, JSON.stringify(value));
+  }
+  assert.deepEqual(hydrateStoredDocument({ version: 4, elements: [] }).elements, [], 'a real empty label still loads');
+});
+
+test('v3 rotation uses the fixed portrait head width, not the live printer', () => {
+  setGeometry({ discovered: true, headWidthPx: 384, dpi: 203, maxLengthMm: 200 });
+  try {
+    const migrated = migrateDocument({
+      version: 3,
+      lengthMm: 40,
+      elements: [{ id: 'a', type: 'text', x: 4, y: 4, w: 88, h: 312, rotation: 90, text: 'Hi' }],
+    });
+    assert.equal(migrated.elements[0].x, 4);
+    assert.equal(migrated.elements[0].y, 4, 'the 96-dot portrait head owns the rotation, not the 384-dot live head');
+  } finally {
+    resetGeometry();
+  }
+});
+
 test('v3 rotation is reported once on the storage path and never for the current format', () => {
   const legacy = migrateDocument({
     version: 3,

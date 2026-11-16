@@ -559,6 +559,12 @@ function documentVersionOf(value) {
  */
 export function hydrateStoredDocument(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
+  // Storage is written by this app and always carries an element list. An
+  // envelope-shaped value (`{version, data}`) or a hand-edited object without
+  // one is not a label: loading it as an empty label would let the next edit
+  // replace the only copy. validateDocument stays permissive for imports, so
+  // this stricter boundary is storage-only.
+  if (!Array.isArray(value.elements)) throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
   return migrateDocument(value);
 }
 
@@ -587,7 +593,10 @@ export function migrateDocument(input) {
   if (version === null || version >= CONFIG.app.documentVersion) {
     return validateDocument(input);
   }
-  const headWidthPx = geometry().widthPx;
+  // The v3 model is portrait and its coordinates were authored against the
+  // fixed 96-dot head. Rotating with the live head width would move every
+  // element whenever a wider printer is connected during the import.
+  const headWidthPx = CONFIG.geometry.widthPx;
   // A v3 label with anything but an element list is corrupt, not empty: the
   // same refusal the current format gives, so storage quarantines it and the
   // import refuses it instead of replacing the only copy with a blank label.

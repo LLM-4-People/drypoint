@@ -1119,6 +1119,45 @@ test('a second diagnostic read joins the one in flight and print is refused', as
   await manager.print(raster, { lengthMm: 40 });
 });
 
+test('a reconnect during a diagnostic read never continues on the new link', async () => {
+  const gate = deferred();
+  const fake = harness({
+    override: (cmd, data) => (cmd === 0x40 && data[0] === INFO_KEYS.speed ? gate.promise : undefined),
+    hold: (cmd, data) => cmd === 0x40 && data[0] === INFO_KEYS.speed,
+  });
+  const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });
+  await manager.connect();
+  const first = fake.instances[0];
+
+  const read = manager.readInfoDiagnostics().then(
+    () => null,
+    (error) => error
+  );
+  await waitFor(() => frameCommands(first).includes(0x40) && manager.state.readingInfo);
+  // Wait until the held diagnostic key is the one on the wire.
+  await waitFor(() => first.writes.some((bytes) => frameOf(bytes).cmd === 0x40 && frameOf(bytes).data[0] === INFO_KEYS.speed));
+
+  await manager.disconnect();
+  await manager.connect();
+  const second = fake.instances[1];
+  assert.notEqual(second, first);
+  gate.resolve([{ cmd: 0x42, data: [3] }]);
+
+  const error = await read;
+  assert.ok(error, 'the superseded read settles on its own link instead of continuing');
+  const diagnosticKeys = DIAGNOSTIC_INFO_KEYS;
+  const leaked = frameCommands(second).filter((cmd) => cmd === 0x40);
+  assert.ok(leaked.length > 0, 'the new link ran its own discovery');
+  assert.deepEqual(
+    second.writes
+      .map(frameOf)
+      .filter(({ cmd, data }) => cmd === 0x40 && diagnosticKeys.includes(data[0]))
+      .map(({ data }) => data[0]),
+    [],
+    'no diagnostic probe continued on the replacement link'
+  );
+});
+
 test('cancel settles a job stalled on a row write and clears the printing lock', async () => {
   const fake = harness();
   const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });

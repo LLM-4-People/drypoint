@@ -236,8 +236,9 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     if (diagnostics?.session === session) return diagnostics.promise;
     assertIdle();
     const activeSession = session;
+    const activeClient = client;
     update({ readingInfo: true });
-    const promise = runInfoDiagnostics().finally(() => {
+    const promise = runInfoDiagnostics(activeSession, activeClient).finally(() => {
       if (diagnostics?.promise === promise) diagnostics = null;
       update({ readingInfo: false });
     });
@@ -245,7 +246,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     return promise;
   }
 
-  async function runInfoDiagnostics() {
+  async function runInfoDiagnostics(activeSession, activeClient) {
     const deadlineMs = CONFIG.protocol.timeouts.discovery;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), deadlineMs);
@@ -257,7 +258,13 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
         // Defence in depth: the flag set above already refuses a concurrent
         // print, so this only fires if that lock is ever bypassed.
         if (state.printing) throw new PrinterError('A print job is running; wait for it to finish');
-        const data = await client.tryRequest('getInfo', { key }, { signal: controller.signal });
+        // A reconnect during the read owns a new session and client. The read
+        // must finish (or fail) on the pair it started with, never send its
+        // next probe on the replacement link.
+        if (session !== activeSession || client !== activeClient) {
+          throw new PrinterError('The device info read was superseded by a reconnect', { cancelled: true });
+        }
+        const data = await activeClient.tryRequest('getInfo', { key }, { signal: controller.signal });
         if (controller.signal.aborted) throw expired();
         entries.push({ key, name, decoded: data === null ? null : decodeInfo(key, data) });
       }
