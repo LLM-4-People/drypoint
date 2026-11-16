@@ -11,6 +11,7 @@
 Paste the output of the commands you actually ran. Do not tick a box for a
 command you did not run.
 
+- [ ] `npm ci` — installs the one dev-only dependency (the workflow policy parser)
 - [ ] `npm run verify` — brand, precache, privacy, tests, docs, workflows
 - [ ] `npm run test:browser` — the measured browser suites (needs Chromium)
 - [ ] `npm run build:android` — the APK still builds and signs
@@ -33,7 +34,7 @@ paste the relevant output here
       build stamp, `android/.../strings.xml`); I edited its owner and
       regenerated.
 - [ ] New or renamed files are in the module map in `docs/ARCHITECTURE.md`, and
-      new scripts are documented in the README.
+      new `package.json` scripts are documented in the README.
 - [ ] No secrets, keystores, printer serials, Bluetooth addresses or home
       directory paths are included.
 - [ ] If this touches the print gate, a protocol decoder, the signing path or

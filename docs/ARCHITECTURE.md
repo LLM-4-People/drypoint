@@ -101,11 +101,13 @@ scripts/
   build-android.mjs        APK pipeline: precache → aapt2 → javac → d8 → sign
   build-docs.mjs           renders README/CONTRIBUTING marker blocks from their owners
   build-pages.mjs          Pages staging: runtime list + worker + 404 + .nojekyll + notices
-  check-apk.mjs            artifact check: assets/www, no INTERNET, allowBackup=false
+  check-apk.mjs            artifact check: assets/www, permissions, components, backup, signatures
   check-docs.mjs           Markdown and issue-template links, heading anchors and images
-  check-privacy.mjs        the one deny list for the published tree
-  check-workflows.mjs      pinned actions, permissions, timeouts, one aggregate gate
-  release-notes.mjs        tag ↔ package.json version, CHANGELOG section → notes
+  check-privacy.mjs        the one deny list for the published tree, with required roots
+  check-required.mjs       aggregate gate: reads toJSON(needs), fails any non-success
+  check-workflows.mjs      parsed-YAML policy: pins, permissions, timeouts, gates, publish tag
+  find-chrome.mjs          CI Chromium owner: fails missing/old browsers, writes D110_CHROME
+  release-notes.mjs        tag ↔ package.json version, optional commit binding, CHANGELOG → notes
   smoke-pages.mjs          headless check that every precached URL answers 200
   test-suites.mjs          splits unit and Chromium suites from the real imports
   lib/distribution.mjs     the licence and notices every distribution ships
@@ -566,8 +568,9 @@ leaves the file in place and exits non-zero.
 
 ## Releasing
 
-`package.json` is the one owner of the version. A release is a tag that proves
-itself: `v<version>` on a commit in `main`.
+`package.json` is the one owner of the version. `release.yml` is read from
+`main`, not from the tag: a tag only names a commit that the resolve job
+verifies.
 
 1. Change `package.json` and add the matching `CHANGELOG.md` section in the same
    pull request. The section heading is exactly `## [<version>] - YYYY-MM-DD`.
@@ -575,43 +578,65 @@ itself: `v<version>` on a commit in `main`.
    `src/core/version.js` from the package version.
 2. Merge to `main`. `Checks` runs on the push; its aggregate job `required` is
    the only required status check.
-3. Tag that commit and push the tag:
+3. Before the tag, prove the workflow against the merge commit with a dry run:
+   `gh workflow run release.yml -f tag=<40-hex commit SHA>`. The resolve job
+   accepts a full SHA for a dispatch dry run: it verifies the commit is on
+   `origin/main`, reads that commit's `package.json`, outputs `ref=<sha>` (which
+   the build checks out), `tag=v<version>` for the notes and version binding
+   only, and `publish=false`. `publish=true` with a SHA is refused. A dispatch
+   with a real tag builds and signs, and publishes only when `publish=true`.
+   This is the pre-tag dry-run mode, not a fallback: v1.0.2 predates the tracked
+   lockfile, so its tree cannot satisfy `npm ci`; the merge commit can.
+4. Tag that commit and push the tag:
 
    ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
+   git tag v1.0.3
+   git push origin v1.0.3
    ```
 
-4. `.github/workflows/release.yml` runs on the tag only:
-   - `npm run verify:all` covers brand, precache, privacy, unit tests, generated
-     docs, docs links, workflow policy and the measured browser suites. A pull
-     request also has the Android APK leg and the clean-tree checks, so the
-     release additionally runs the artifact check and those clean-tree steps;
-     a tag cannot publish a red commit;
-   - `node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME"` fails unless the
-     tag is exactly `v<package.json version>` and the changelog has that section;
-   - `ANDROID_KEYSTORE_BASE64` is decoded into `$RUNNER_TEMP`, the password and
-     alias come from secrets, and `CI=true` makes a missing key a hard failure;
-   - the signed APK is copied to `dist/drypoint-<version>.apk`, hashed into
-     `dist/drypoint-<version>.apk.sha256`, attested with
-     `actions/attest-build-provenance`, and uploaded as an artifact;
-   - `git diff --exit-code` and `git status --porcelain` prove the build changed
-     no tracked file and left no untracked one behind;
-   - the `publish` job — the only job with `contents: write` — downloads the
-     artifact and runs `gh release create "$GITHUB_REF_NAME" --verify-tag` with
-     the APK, the checksum and the notes file. Tags are strict
-     `vMAJOR.MINOR.PATCH`, so every release is `--latest`; there is no
-     prerelease branch and never a draft. A re-run verifies the existing
-     release's assets byte-for-byte and exits 0 instead of failing.
+5. `release.yml` triggers on the completed `Checks` run for a push (and on
+   dispatch). Its `resolve` job runs only when that run was a successful
+   `push` (never a pull request, a failure or a cancellation), or for a manual
+   dispatch. The job has no environment and no secret. It derives the tag from
+   `workflow_run.head_sha` with `git tag --points-at` — no `head_branch`
+   dependency, so the branch push and the tag push for one commit agree. It
+   accepts exactly one strict `vMAJOR.MINOR.PATCH` tag, verifies
+   `git merge-base --is-ancestor "$sha" origin/main` and the tag's package
+   version, and records whether a release already exists. No tag means
+   `publish=false` and the run stops after resolve.
+6. The `build` job has no environment and no secret. It checks out
+   `needs.resolve.outputs.ref` (the tag for a release, the commit for a dry
+   run), runs `npm ci` and `npm run verify:all`, generates the notes with
+   `release-notes.mjs --tag "$TAG" --commit "$SHA"`, builds the APK with
+   `ANDROID_ALLOW_TEST_KEY=true`, checks it with `check-apk.mjs`, proves the
+   tree is clean and uploads `drypoint-unsigned`.
+7. The `sign` job is the only job in the `release` environment. It checks
+   nothing out and runs no `npm`, `node` or repository script: every command is
+   workflow-owned. It re-signs the downloaded APK with the pinned `apksigner`
+   (v1 off, v2 and v3 on), compares the signer with the environment-pinned
+   `vars.RELEASE_CERT_SHA256`, `brand.json` and the notes footer, asserts
+   `zipalign` and the binary manifest (allowBackup false, no debuggable, no
+   cleartext, no INTERNET, one exported MAIN/LAUNCHER activity, no provider,
+   service or receiver), attests the signed APK, downloads the bundle and
+   writes the checksum.
+8. The `publish` job is the only job with `contents: write`; it holds no secret
+   and checks nothing out. If the release exists it downloads and `cmp`s every
+   asset and exits 0 only on exact equality. Otherwise it runs
+   `gh release create "$TAG" ... --verify-tag --latest` with the APK, the
+   checksum and the provenance bundle; tags are strict
+   `vMAJOR.MINOR.PATCH`, so there is no prerelease branch and never a draft.
 
-   Before any of that, the workflow proves the tag is on `main`:
-   `git merge-base --is-ancestor "$GITHUB_SHA" origin/main` on a full clone
-   (`fetch-depth: 0`, `fetch-tags: true`). A tag pushed off a side branch cannot
-   publish. The build job runs in the `release` environment, whose policy only
-   admits `v*` tags.
+A concurrent release is serialised by `concurrency: release` with
+`cancel-in-progress: false`.
 
-   A concurrent release is serialised by `concurrency: release` with
-   `cancel-in-progress: false`.
+The split keeps the signing key out of every process started by repository
+code. It does not prove the signed code is benign: a single maintainer who can
+merge to `main` and push a tag can still get a malicious build signed. Only a
+second reviewer or external key custody closes that, and both are unavailable
+for a sole maintainer. `Checks` on a tag runs the tag's own workflow; the
+main-defined release re-runs the gate from the tag source, whose tests are
+attacker-controlled in this model. The org required-workflow rule is what bounds
+it.
 
 The Pages deployment is separate. `.github/workflows/pages.yml` runs when the
 `Checks` workflow completes successfully for `main` — never on a red run and

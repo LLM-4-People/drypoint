@@ -4,15 +4,19 @@
  *
  * The workflow tests the template and the source tree; this checks the bytes a
  * user would install: the bundled `assets/www` surface is exactly the precache
- * manifest plus the distribution notices, no permission grants INTERNET, and
- * `allowBackup` is false.
+ * manifest plus the distribution notices, no permission grants INTERNET
+ * (including the API-23 form), `allowBackup` is false, exactly one exported
+ * MAIN/LAUNCHER activity exists, no provider/service/receiver is declared, and
+ * the package is not debuggable or cleartext-enabled. With `--apksigner` it
+ * also requires the v2 and v3 signatures.
  *
  * The package is a zip and the manifest is binary XML, so the check uses
- * `unzip` and `aapt2` from the Android build-tools the release already
- * installs. The pure rules live here so a test can drive them without an APK.
+ * `unzip`, `aapt2` and `apksigner` from the Android build-tools the release
+ * already installs. The pure rules live here so a test can drive them without
+ * an APK.
  *
  * Usage:
- *   node scripts/check-apk.mjs --apk android/build/drypoint.apk --aapt2 <path>
+ *   node scripts/check-apk.mjs --apk android/build/drypoint.apk --aapt2 <path> [--apksigner <path>]
  */
 
 import { createHash } from 'node:crypto';
@@ -25,6 +29,7 @@ import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
 
 export const ROOT = resolve(import.meta.dirname, '..');
 const WWW = 'assets/www/';
+const INTERNET = /uses-permission(?:-sdk-23)?:\s*name='android\.permission\.INTERNET'/;
 
 /** The generated precache manifest, read without importing the app. */
 export function readPrecache(root = ROOT) {
@@ -60,32 +65,87 @@ export function surfaceFindings({ manifest, distribution = DISTRIBUTION_FILES, e
   return findings;
 }
 
-/** The badging output must not grant INTERNET to an offline app. */
+/**
+ * The badging output must not grant INTERNET to an offline app, and must name
+ * exactly one launcher activity. `uses-permission-sdk-23` applies at minSdk 26
+ * just as `uses-permission` does, so the optional suffix is not a bypass.
+ */
 export function badgingFindings(badging) {
-  return /uses-permission:\s*name='android\.permission\.INTERNET'/.test(String(badging))
-    ? ['the APK requests android.permission.INTERNET']
-    : [];
+  const text = String(badging);
+  const findings = [];
+  if (INTERNET.test(text)) findings.push('the APK requests android.permission.INTERNET');
+  const launchers = text.split('\n').filter((line) => line.startsWith('launchable-activity: name=')).length;
+  if (launchers !== 1) findings.push(`the APK must have exactly one MAIN/LAUNCHER activity, found ${launchers}`);
+  return findings;
 }
 
-/** The binary manifest tree must carry allowBackup=false. */
+/** Whether one xmltree line declares an exported component. */
+const EXPORTED = /android:exported\([^)]*\)=true/;
+
+/**
+ * The binary manifest tree must carry allowBackup=false, exactly one exported
+ * activity with MAIN/LAUNCHER, no provider/service/receiver, no debuggable flag
+ * and no cleartext permission.
+ */
 export function manifestXmlFindings(xmltree) {
+  const text = String(xmltree);
+  const findings = [];
   // aapt2 36 prints `(...)=false`; older builds print the typed scalar
   // `(...)=(type 0x12)0x0`. Both mean the same attribute value.
-  const match = String(xmltree).match(/android:allowBackup\([^)]*\)\s*=\s*([^\r\n]+)/);
+  const match = text.match(/android:allowBackup\([^)]*\)\s*=\s*([^\r\n]+)/);
   const value = match?.[1].trim();
   if (!value || !/^(?:false|\(type 0x12\)0x0)$/.test(value)) {
-    return ['AndroidManifest.xml does not set android:allowBackup="false"'];
+    findings.push('AndroidManifest.xml does not set android:allowBackup="false"');
   }
-  return [];
+  if (text.includes('android:debuggable')) findings.push('AndroidManifest.xml declares android:debuggable');
+  if (text.includes('android:usesCleartextTraffic')) {
+    findings.push('AndroidManifest.xml declares android:usesCleartextTraffic');
+  }
+  if (INTERNET.test(text) || text.includes('android.permission.INTERNET')) {
+    findings.push('AndroidManifest.xml grants android.permission.INTERNET');
+  }
+  const components = text.match(/E: (provider|service|receiver)(?=\s|$)/g) ?? [];
+  if (components.length) findings.push(`AndroidManifest.xml declares ${components.join(', ')}`);
+  const activities = text.match(/E: activity(?=\s|$)/g) ?? [];
+  const exported = text.match(new RegExp(EXPORTED.source, 'g')) ?? [];
+  if (activities.length !== 1) {
+    findings.push(`AndroidManifest.xml must declare exactly one activity, found ${activities.length}`);
+  }
+  if (exported.length !== 1) {
+    findings.push(`AndroidManifest.xml must declare exactly one exported component, found ${exported.length}`);
+  }
+  if (!text.includes('android.intent.action.MAIN')) {
+    findings.push('the launcher activity has no android.intent.action.MAIN filter');
+  }
+  if (!text.includes('android.intent.category.LAUNCHER')) {
+    findings.push('the launcher activity has no android.intent.category.LAUNCHER filter');
+  }
+  return findings;
+}
+
+/**
+ * `apksigner verify --verbose` must prove both modern schemes. v1 may be false:
+ * the APK targets minSdk 26, where v2 is mandatory.
+ */
+export function signatureFindings(apksignerOutput) {
+  const text = String(apksignerOutput);
+  const findings = [];
+  if (!/Verified using v2 scheme \(APK Signature Scheme v2\):\s*true/.test(text)) {
+    findings.push('the APK has no verified v2 signature');
+  }
+  if (!/Verified using v3 scheme \(APK Signature Scheme v3\):\s*true/.test(text)) {
+    findings.push('the APK has no verified v3 signature');
+  }
+  return findings;
 }
 
 /**
  * Check one APK. `exec` is injectable so the rule composition is testable.
  *
- * @param {{apk: string, aapt2: string, root?: string, exec?: Function}} options
+ * @param {{apk: string, aapt2: string, apksigner?: string, root?: string, exec?: Function}} options
  * @returns {{ok: boolean, findings: string[]}}
  */
-export function checkApk({ apk, aapt2, root = ROOT, exec = execFileSync }) {
+export function checkApk({ apk, aapt2, apksigner = '', root = ROOT, exec = execFileSync }) {
   const manifest = readPrecache(root);
   const entries = String(exec('unzip', ['-Z1', apk], { encoding: 'utf8' })).split('\n').filter(Boolean);
   const findings = surfaceFindings({ manifest, entries });
@@ -103,15 +163,19 @@ export function checkApk({ apk, aapt2, root = ROOT, exec = execFileSync }) {
 
   findings.push(...badgingFindings(exec(aapt2, ['dump', 'badging', apk], { encoding: 'utf8' })));
   findings.push(...manifestXmlFindings(exec(aapt2, ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apk], { encoding: 'utf8' })));
+  if (apksigner) {
+    findings.push(...signatureFindings(exec(apksigner, ['verify', '--verbose', apk], { encoding: 'utf8' })));
+  }
   return { ok: findings.length === 0, findings };
 }
 
 function parseArguments(argv) {
-  const options = { apk: '', aapt2: '' };
+  const options = { apk: '', aapt2: '', apksigner: '' };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     if (argument === '--apk') options.apk = argv[++index] ?? '';
     else if (argument === '--aapt2') options.aapt2 = argv[++index] ?? '';
+    else if (argument === '--apksigner') options.apksigner = argv[++index] ?? '';
     else throw new Error(`unknown option ${argument}`);
   }
   if (!options.apk) throw new Error('--apk is required');
@@ -123,7 +187,9 @@ function main(argv) {
   try {
     const result = checkApk(parseArguments(argv));
     if (result.ok) {
-      console.log('apk: assets/www matches the precache manifest, no INTERNET permission, allowBackup=false');
+      console.log(
+        'apk: assets/www matches the precache manifest, no INTERNET, allowBackup=false, one exported launcher, no extra components'
+      );
       return 0;
     }
     for (const finding of result.findings) console.error(`apk: ${finding}`);

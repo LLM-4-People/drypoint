@@ -1,8 +1,8 @@
 # Contributing
 
-Thanks for taking the time. This project has no dependencies, no build step for
-the app and no framework, which keeps contributing unusually small: edit a file,
-run the suite, open a pull request.
+Thanks for taking the time. This project has no npm runtime dependencies, no
+build step for the app and no framework, which keeps contributing unusually
+small: edit a file, run the suite, open a pull request.
 
 ## Setup
 
@@ -10,14 +10,14 @@ run the suite, open a pull request.
 git clone https://github.com/LLM-4-People/drypoint.git
 cd drypoint
 node --version        # 22 or newer; .node-version pins the development version
-npm ci                # installs the one dev-only dependency from the tracked lockfile
+npm ci                # installs the one dev-only YAML parser used by the workflow policy
 npm test              # the unit suite; the browser suites have their own command
 npm start             # http://127.0.0.1:8080
 ```
 
-`npm ci` installs the one dev-only dependency from the tracked
-`package-lock.json`. The app itself ships no npm runtime dependency: only
-`node:` built-ins.
+`npm ci` installs the one dev-only dependency, the ISC `yaml` parser used by
+`npm run workflows:check`, from the tracked `package-lock.json`. The app itself
+ships no npm runtime dependency: only `node:` built-ins.
 
 ## What each test leg needs
 
@@ -108,6 +108,11 @@ These are generated and checked byte-for-byte in CI:
 
 Edit the owner and regenerate. If a generated file changed and you did not touch
 its owner, you found a bug — please say so in the pull request.
+
+`_site/` is not tracked. `npm run pages:build` stages it and a separate
+`node scripts/build-pages.mjs --check` compares it with the sources; on a fresh
+clone there is no staged tree, so the check says to run `pages:build` first.
+CI builds and then checks, in that order.
 
 ## Never commit secrets
 

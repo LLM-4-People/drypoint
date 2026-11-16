@@ -1,6 +1,6 @@
 /**
  * The release checks the built APK, not only its template. These tests drive
- * the pure rules and the composition with an injected unzip/aapt2.
+ * the pure rules and the composition with an injected unzip/aapt2/apksigner.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,6 +13,7 @@ import {
   checkApk,
   manifestXmlFindings,
   readPrecache,
+  signatureFindings,
   surfaceFindings,
 } from '../scripts/check-apk.mjs';
 import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
@@ -22,6 +23,32 @@ const manifest = {
   files: ['index.html', 'assets/app.css'],
   digests: { 'index.html': 'a'.repeat(64), 'assets/app.css': 'b'.repeat(64) },
 };
+
+const BADGING = [
+  "package: name='dev.llm4people.drypoint' versionCode='10002' versionName='1.0.2'",
+  "uses-permission: name='android.permission.BLUETOOTH_CONNECT'",
+  "launchable-activity: name='dev.llm4people.drypoint.MainActivity' label='' icon=''",
+].join('\n');
+
+const XMLTREE = [
+  'E: manifest (line=2)',
+  '  E: application (line=25)',
+  '    A: http://schemas.android.com/apk/res/android:allowBackup(0x01010280)=false',
+  '    E: activity (line=28)',
+  '      A: http://schemas.android.com/apk/res/android:exported(0x01010010)=true',
+  '      E: intent-filter (line=30)',
+  '        E: action (line=31)',
+  '          A: http://schemas.android.com/apk/res/android:name(0x01010003)="android.intent.action.MAIN"',
+  '        E: category (line=32)',
+  '          A: http://schemas.android.com/apk/res/android:name(0x01010003)="android.intent.category.LAUNCHER"',
+].join('\n');
+
+const VERIFIED = [
+  'Verifies',
+  'Verified using v1 scheme (JAR signing): false',
+  'Verified using v2 scheme (APK Signature Scheme v2): true',
+  'Verified using v3 scheme (APK Signature Scheme v3): true',
+].join('\n');
 
 test('the bundled surface is exactly the manifest plus the distribution notices', () => {
   assert.deepEqual(bundledFiles(['assets/www/index.html', 'assets/www/assets/app.css', 'AndroidManifest.xml']), [
@@ -48,24 +75,84 @@ test('the bundled surface is exactly the manifest plus the distribution notices'
   );
 });
 
-test('INTERNET is refused and allowBackup must be false', () => {
-  assert.deepEqual(badgingFindings("uses-permission: name='android.permission.BLUETOOTH_CONNECT'"), []);
-  assert.deepEqual(badgingFindings("uses-permission: name='android.permission.INTERNET'"), ['the APK requests android.permission.INTERNET']);
-
-  const allowBackupFalse = 'E: application (line=25)\n    A: http://schemas.android.com/apk/res/android:allowBackup(0x01010280)=false';
-  assert.deepEqual(manifestXmlFindings(allowBackupFalse), []);
+test('INTERNET in either permission form and the launcher count are checked', () => {
+  assert.deepEqual(badgingFindings(BADGING), []);
+  assert.deepEqual(badgingFindings(BADGING.replace("uses-permission: name='android.permission.BLUETOOTH_CONNECT'", "uses-permission: name='android.permission.INTERNET'")), [
+    'the APK requests android.permission.INTERNET',
+  ]);
   assert.deepEqual(
-    manifestXmlFindings('A: http://schemas.android.com/apk/res/android:allowBackup(0x01010280)=(type 0x12)0x0'),
+    badgingFindings(
+      BADGING.replace(
+        "uses-permission: name='android.permission.BLUETOOTH_CONNECT'",
+        "uses-permission-sdk-23: name='android.permission.INTERNET'"
+      )
+    ),
+    ['the APK requests android.permission.INTERNET'],
+    'the API-23 form applies at minSdk 26'
+  );
+  const twoLaunchers = `${BADGING}\nlaunchable-activity: name='dev.llm4people.drypoint.Second' label='' icon=''`;
+  assert.ok(badgingFindings(twoLaunchers).some((finding) => /exactly one MAIN\/LAUNCHER activity, found 2/.test(finding)));
+  assert.ok(badgingFindings("package: name='x'").some((finding) => /found 0/.test(finding)), 'a launcher is required');
+});
+
+test('the binary manifest enforces every component, debuggable and cleartext rule', () => {
+  assert.deepEqual(manifestXmlFindings(XMLTREE), []);
+  assert.deepEqual(
+    manifestXmlFindings(XMLTREE.replace('allowBackup(0x01010280)=false', 'allowBackup(0x01010280)=(type 0x12)0x0')),
     [],
     'older aapt2 prints the typed scalar'
   );
-  for (const value of ['true', '(type 0x12)0xffffffff']) {
-    assert.ok(manifestXmlFindings(`A: ...allowBackup(0x01010280)=${value}`).length, `${value} is not false`);
+
+  const cases = [
+    ['allowBackup', XMLTREE.replace('allowBackup(0x01010280)=false', 'allowBackup(0x01010280)=true'), /allowBackup="false"/],
+    ['debuggable', XMLTREE.replace('E: application (line=25)', 'E: application (line=25)\n    A: http://schemas.android.com/apk/res/android:debuggable(0x0101000f)=true'), /debuggable/],
+    [
+      'cleartext',
+      XMLTREE.replace('E: application (line=25)', 'E: application (line=25)\n    A: http://schemas.android.com/apk/res/android:usesCleartextTraffic(0x010104ec)=true'),
+      /usesCleartextTraffic/,
+    ],
+    ['provider', XMLTREE.replace('    E: activity', '    E: provider (line=26)\n    E: activity'), /provider/],
+    ['service', XMLTREE.replace('    E: activity', '    E: service (line=26)\n    E: activity'), /service/],
+    ['receiver', XMLTREE.replace('    E: activity', '    E: receiver (line=26)\n    E: activity'), /receiver/],
+    [
+      'second activity',
+      XMLTREE.replace('    E: activity (line=28)', '    E: activity (line=27)\n    E: activity (line=28)'),
+      /exactly one activity, found 2/,
+    ],
+    [
+      'second exported',
+      XMLTREE.replace('=true', '=true\n    A: http://schemas.android.com/apk/res/android:exported(0x01010010)=true'),
+      /exactly one exported component, found 2/,
+    ],
+    [
+      'no MAIN',
+      XMLTREE.replace('android.intent.action.MAIN', 'android.intent.action.VIEW'),
+      /no android.intent.action.MAIN/,
+    ],
+    [
+      'no LAUNCHER',
+      XMLTREE.replace('android.intent.category.LAUNCHER', 'android.intent.category.DEFAULT'),
+      /no android.intent.category.LAUNCHER/,
+    ],
+    [
+      'INTERNET',
+      XMLTREE.replace('E: manifest (line=2)', "E: manifest (line=2)\n  E: uses-permission\n    A: name=\"android.permission.INTERNET\""),
+      /INTERNET/,
+    ],
+  ];
+  for (const [name, text, pattern] of cases) {
+    assert.ok(manifestXmlFindings(text).some((finding) => pattern.test(finding)), `${name} is rejected`);
   }
-  assert.ok(manifestXmlFindings('E: application (line=25)').length, 'an absent attribute is not proof of false');
 });
 
-test('the composed check passes a matching APK and fails a real difference', () => {
+test('v2 and v3 must both be verified; v1 may be false at minSdk 26', () => {
+  assert.deepEqual(signatureFindings(VERIFIED), []);
+  assert.ok(signatureFindings(VERIFIED.replace('v2 scheme (APK Signature Scheme v2): true', 'v2 scheme (APK Signature Scheme v2): false')).some((finding) => /v2/.test(finding)));
+  assert.ok(signatureFindings(VERIFIED.replace('v3 scheme (APK Signature Scheme v3): true', 'v3 scheme (APK Signature Scheme v3): false')).some((finding) => /v3/.test(finding)));
+  assert.deepEqual(signatureFindings(VERIFIED.replace('v1 scheme (JAR signing): false', 'v1 scheme (JAR signing): true')), []);
+});
+
+test('the composed check passes a matching APK and fails each planted rule', () => {
   const generated = readPrecache();
   const files = [...generated.files, ...DISTRIBUTION_FILES];
   const bytes = new Map(files.map((file) => [file, readFileSync(join(projectRoot, file))]));
@@ -73,16 +160,14 @@ test('the composed check passes a matching APK and fails a real difference', () 
   const exec = (command, args) => {
     if (command === 'unzip' && args[0] === '-Z1') return files.map((file) => `assets/www/${file}`).join('\n');
     if (command === 'unzip' && args[0] === '-p') return bytes.get(args[2].replace('assets/www/', ''));
-    if (command === 'aapt2' && args[1] === 'badging') {
-      return "package: name='dev.llm4people.drypoint'\nuses-permission: name='android.permission.BLUETOOTH_CONNECT'";
-    }
-    if (command === 'aapt2' && args[1] === 'xmltree') {
-      return 'A: http://schemas.android.com/apk/res/android:allowBackup(0x01010280)=(type 0x12)0x0';
-    }
+    if (command === 'aapt2' && args[1] === 'badging') return BADGING;
+    if (command === 'aapt2' && args[1] === 'xmltree') return XMLTREE;
+    if (command === 'apksigner' && args[0] === 'verify') return VERIFIED;
     throw new Error(`unexpected command ${command} ${args.join(' ')}`);
   };
 
-  assert.deepEqual(checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec }), { ok: true, findings: [] });
+  assert.deepEqual(checkApk({ apk: 'fake.apk', aapt2: 'aapt2', apksigner: 'apksigner', exec }), { ok: true, findings: [] });
+  assert.deepEqual(checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec }), { ok: true, findings: [] }, 'signatures are checked only when requested');
 
   const tampered = (command, args) =>
     command === 'unzip' && args[0] === '-p' && args[2] === 'assets/www/index.html'
@@ -98,18 +183,24 @@ test('the composed check passes a matching APK and fails a real difference', () 
       : exec(command, args);
   assert.ok(checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec: extra }).findings.some((finding) => /leak\.txt/.test(finding)));
 
-  const internet = (command, args) =>
+  const internet23 = (command, args) =>
     command === 'aapt2' && args[1] === 'badging'
-      ? "uses-permission: name='android.permission.INTERNET'"
+      ? BADGING.replace("uses-permission: name='android.permission.BLUETOOTH_CONNECT'", "uses-permission-sdk-23: name='android.permission.INTERNET'")
       : exec(command, args);
-  assert.ok(checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec: internet }).findings.some((finding) => /INTERNET/.test(finding)));
+  assert.ok(checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec: internet23 }).findings.some((finding) => /INTERNET/.test(finding)));
 
-  const backups = (command, args) =>
+  const debug = (command, args) =>
     command === 'aapt2' && args[1] === 'xmltree'
-      ? 'A: http://schemas.android.com/apk/res/android:allowBackup(0x01010280)=true'
+      ? XMLTREE.replace('E: application (line=25)', 'E: application (line=25)\n    A: http://schemas.android.com/apk/res/android:debuggable(0x0101000f)=true')
+      : exec(command, args);
+  assert.ok(checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec: debug }).findings.some((finding) => /debuggable/.test(finding)));
+
+  const unsigned = (command, args) =>
+    command === 'apksigner' && args[0] === 'verify'
+      ? VERIFIED.replace('v2 scheme (APK Signature Scheme v2): true', 'v2 scheme (APK Signature Scheme v2): false')
       : exec(command, args);
   assert.ok(
-    checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec: backups }).findings.some((finding) => /allowBackup/.test(finding)),
-    'the composed check reads allowBackup, not only the rule function'
+    checkApk({ apk: 'fake.apk', aapt2: 'aapt2', apksigner: 'apksigner', exec: unsigned }).findings.some((finding) => /v2/.test(finding)),
+    'the composed check reads the signature, not only the rule function'
   );
 });

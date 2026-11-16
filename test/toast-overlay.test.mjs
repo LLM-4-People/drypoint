@@ -30,7 +30,13 @@ test('a toast raised from a dialog is painted above the dialog', async (t) => {
       const exportButton = [...backdrop.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Export');
       if (!exportButton) return { failure: 'no Export action' };
       exportButton.click();
-      await wait(150);
+      // Wait for every animation to settle, not at an arbitrary frame: the
+      // toast-in animation runs for 180 ms and the old 150 ms sleep measured
+      // it mid-flight. A cancelled animation is already settled; its finished
+      // promise rejects with AbortError, which must not fail the measurement.
+      await Promise.all(
+        document.getAnimations().map((animation) => animation.finished.catch(() => {}))
+      );
       const toast = document.querySelector('#toasts .toast');
       if (!toast) return { failure: 'no toast raised' };
       const rect = toast.getBoundingClientRect();

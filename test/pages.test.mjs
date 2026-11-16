@@ -222,6 +222,17 @@ test('the command line stages and then verifies the same tree', async (t) => {
   );
 });
 
+test('--check on an absent staged tree says to build first', async (t) => {
+  const out = join(await temporarySite(t), 'missing');
+  await assert.rejects(checkSite({ out }), /no staged tree .*run: npm run pages:build first/);
+  const script = join(projectRoot, 'scripts', 'build-pages.mjs');
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--check', '--out', out], { cwd: projectRoot, encoding: 'utf8', stdio: 'pipe' }),
+    (error) => error.status === 1 && /no staged tree .*run: npm run pages:build first/.test(error.stderr),
+    'a fresh clone has no _site and the message names the fix'
+  );
+});
+
 test('the staged document carries the offline-only Content-Security-Policy', async (t) => {
   const out = await temporarySite(t);
   await buildPages({ out });

@@ -23,6 +23,7 @@ import {
   withStaging,
 } from '../scripts/build-android.mjs';
 import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
+import { parseWorkflow } from '../scripts/check-workflows.mjs';
 import { projectRoot } from './helpers/project-files.mjs';
 
 const root = new URL('../', import.meta.url);
@@ -457,9 +458,14 @@ test('the certificate pin applies to a release key and not to a throwaway', () =
   assert.equal(releaseIdentityRequired({ generated: false, env: { ANDROID_ALLOW_TEST_KEY: '1' } }), false);
   assert.equal(releaseIdentityRequired({ generated: false, env: { ANDROID_ALLOW_TEST_KEY: 'no' } }), true, 'any other value keeps the pin');
 
-  // The release job never opts out; the pull-request gate always says so.
+  // The release build job has no secret and declares the throwaway key; the
+  // privileged sign job re-signs and never opts out of the certificate pin.
   const release = read('.github/workflows/release.yml');
-  assert.doesNotMatch(release, /ANDROID_ALLOW_TEST_KEY/, 'the release never allows a test key');
+  const { workflow } = parseWorkflow(release);
+  const buildKey = workflow.jobs.build.steps.find((step) => step.env?.ANDROID_ALLOW_TEST_KEY != null);
+  assert.equal(buildKey?.env.ANDROID_ALLOW_TEST_KEY, 'true', 'the unprivileged build declares a throwaway key');
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.build), /secrets\./, 'the build cannot read a release secret');
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.sign), /ANDROID_ALLOW_TEST_KEY/, 'the sign job never allows a test key');
   assert.match(read('.github/workflows/checks.yml'), /ANDROID_ALLOW_TEST_KEY: 'true'/, 'the gate declares its throwaway key');
 });
 

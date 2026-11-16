@@ -41,11 +41,12 @@ test('package.json, the app config and the changelog agree on one version', () =
 test('the release workflow reads the version, never a copy of it', () => {
   const release = read('.github/workflows/release.yml');
   assert.equal(release.includes(`v${pkg.version}`), false, 'the workflow hard-codes no version');
-  assert.match(release, /require\('\.\/package\.json'\)\.version/, 'the workflow reads package.json');
-  assert.match(release, /release-notes\.mjs --tag "\$GITHUB_REF_NAME"/, 'the tested script owns the tag comparison');
+  assert.match(release, /git show "\$sha:package\.json" \| jq -r \.version/, 'the resolve step reads the tag commit package.json');
+  assert.match(release, /release-notes\.mjs --tag "\$TAG" --commit "\$SHA"/, 'the tested script owns the tag comparison and the commit binding');
+  assert.doesNotMatch(release, /GITHUB_REF_NAME/, 'the workflow never derives the tag from the ref name');
 });
 
-test('the release notes are the changelog section plus the signing certificate', () => {
+test('the release notes keep the historical body and add one commit binding', () => {
   const notes = releaseNotes({ tag: `v${pkg.version}`, version: pkg.version, changelog });
   assert.equal(notes.version, pkg.version);
   assert.equal(notes.title, `${BRAND.name} ${pkg.version}`);
@@ -54,6 +55,36 @@ test('the release notes are the changelog section plus the signing certificate',
   assert.ok(notes.body.includes(BRAND.androidSigningCertificateSha256), 'the footer is the brand fact');
   assert.ok(notes.body.trim().length > 0, 'the release has notes');
   assert.doesNotMatch(notes.body, /^## /m, 'the body does not repeat the section heading');
+  assert.doesNotMatch(notes.body, /^Built from tag/m, 'without --commit the historical body is unchanged');
+
+  const sha = 'a'.repeat(40);
+  const bound = releaseNotes({ tag: `v${pkg.version}`, version: pkg.version, changelog, commit: sha });
+  assert.equal(
+    bound.body,
+    notes.body.replace(
+      '\n\n---',
+      `\n\nBuilt from tag v${pkg.version} at commit ${sha}; provenance workflow ref refs/heads/main.\n\n---`
+    ),
+    'the commit adds exactly one binding line and changes nothing else'
+  );
+
+  // Historical regeneration without --commit is byte-neutral for every
+  // section, including the two releases that were published before 1.0.3.
+  for (const version of ['1.0.0', '1.0.1', '1.0.2']) {
+    const historical = releaseNotes({ tag: `v${version}`, version, changelog });
+    assert.equal(
+      historical.body,
+      `${changelogSection(changelog, version)}\n\n---\n\nSigning certificate SHA-256 (\`apksigner verify --print-certs\`): \`${BRAND.androidSigningCertificateSha256}\``,
+      `${version} regenerates without the binding`
+    );
+  }
+
+  for (const commit of ['abc', 'A'.repeat(40), 'g'.repeat(40), `${'a'.repeat(39)} `]) {
+    assert.throws(
+      () => releaseNotes({ tag: `v${pkg.version}`, version: pkg.version, changelog, commit }),
+      /commit must be a 40-character lowercase SHA/
+    );
+  }
 });
 
 test('a tag that is not v<version> is refused', () => {
@@ -96,11 +127,25 @@ test('the command line writes the notes and fails on a wrong tag', async (t) => 
   const run = (...args) => execFileSync(process.execPath, [script, ...args], { cwd: projectRoot, encoding: 'utf8', stdio: 'pipe' });
 
   const notes = join(out, 'notes.md');
-  run('--tag', `v${pkg.version}`, '--out', notes);
+  const sha = 'b'.repeat(40);
+  run('--tag', `v${pkg.version}`, '--commit', sha, '--out', notes);
   const written = await readFile(notes, 'utf8');
   assert.ok(written.startsWith(`${changelogSection(changelog, pkg.version)}\n`));
   assert.ok(written.includes(BRAND.androidSigningCertificateSha256), 'the written notes carry the certificate');
+  assert.ok(written.includes(`Built from tag v${pkg.version} at commit ${sha}; provenance workflow ref refs/heads/main.`));
 
+  const historical = join(out, 'historical.md');
+  run('--tag', `v${pkg.version}`, '--out', historical);
+  assert.doesNotMatch(await readFile(historical, 'utf8'), /Built from tag/, 'regeneration without --commit stays unchanged');
+
+  assert.throws(
+    () => run('--tag', `v${pkg.version}`, '--commit', 'abc', '--out', join(out, 'bad.md')),
+    (error) => error.status === 1 && /commit must be a 40-character lowercase SHA/.test(error.stderr)
+  );
+  assert.throws(
+    () => run('--tag', `v${pkg.version}`, '--commit'),
+    (error) => error.status === 2 && /--commit needs a 40-character SHA/.test(error.stderr)
+  );
   assert.throws(
     () => run('--tag', 'v9.9.9', '--out', join(out, 'wrong.md')),
     (error) => error.status === 1 && /does not match package\.json version/.test(error.stderr)

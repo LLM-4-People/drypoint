@@ -17,6 +17,8 @@ import {
   DENY,
   DEVICE_SERIAL,
   PRIVATE_HOST,
+  REQUIRED_ROOTS,
+  assertCoverage,
   formatFinding,
   scanTree,
 } from '../scripts/check-privacy.mjs';
@@ -59,7 +61,7 @@ test('the planted secrets are reported with file and line', async (t) => {
   ];
   for (const [file, line] of cases) await plant(root, file, ['first line', line]);
 
-  const { findings, scanned } = await scanTree({ root });
+  const { findings, scanned } = await scanTree({ root, requireRoots: false });
   assert.equal(scanned, cases.length);
   const expected = cases
     .map(([file, , rule]) => ({ file, line: 2, rule }))
@@ -78,7 +80,7 @@ test('the planted secrets are reported with file and line', async (t) => {
 test('an absolute Playwright path is caught even without a home directory', async (t) => {
   const root = await tempTree(t);
   await plant(root, 'cache.txt', [`open ${BROWSER_CACHE}`]);
-  const { findings } = await scanTree({ root });
+  const { findings } = await scanTree({ root, requireRoots: false });
   assert.deepEqual(findings.map((finding) => finding.rule), ['playwright-cache']);
 });
 
@@ -92,7 +94,7 @@ test('a binary file that would be published is scanned too', async (t) => {
     Buffer.from([0x00, 0x01]),
   ]);
   await writeFile(join(root, 'icon.png'), bytes);
-  const { findings } = await scanTree({ root });
+  const { findings } = await scanTree({ root, requireRoots: false });
   assert.deepEqual(findings.map((finding) => finding.rule), ['device-serial']);
   assert.match(formatFinding(findings[0]), /^icon\.png:1: device-serial/);
 });
@@ -106,7 +108,7 @@ test('the synthetic fixtures and example.com are allowed', async (t) => {
     'host: drypoint.local',
     'path: ~/.cache/ms-playwright/chromium-1/chrome',
   ]);
-  const { findings } = await scanTree({ root });
+  const { findings } = await scanTree({ root, requireRoots: false });
   assert.deepEqual(findings, [], 'fixtures, example.com and relative cache paths pass');
 });
 
@@ -119,7 +121,7 @@ test('ignored files and build directories are never scanned', async (t) => {
   for (const directory of ALWAYS_SKIP) {
     await plant(root, `${directory}/artifact.txt`, [`serial: ${DEVICE_SERIAL}`]);
   }
-  const { findings, scanned } = await scanTree({ root });
+  const { findings, scanned } = await scanTree({ root, requireRoots: false });
   assert.deepEqual(findings, [], 'an ignored path cannot carry a secret into the result');
   assert.equal(scanned, 2, '.gitignore and kept.txt are the only files scanned');
 });
@@ -187,8 +189,17 @@ test('the deny list names every identifier the policy requires', () => {
   assert.deepEqual([...ALLOWED_EMAIL_DOMAINS], ['example.com'], 'only the synthetic fixture domain is allowed');
 });
 
+/** Create the roots a real scan must contain. */
+async function requiredSurface(root) {
+  for (const path of REQUIRED_ROOTS) {
+    if (path.includes('.')) await plant(root, path, ['ok']);
+    else await plant(root, `${path}/example.md`, ['ok']);
+  }
+}
+
 test('the command line fails on a planted tree and passes on a clean one', async (t) => {
   const root = await tempTree(t);
+  await requiredSurface(root);
   await plant(root, 'leak.txt', [`open ${HOME_PATH}/x`]);
   await writeFile(join(root, '.gitignore'), '');
   const script = join(projectRoot, 'scripts', 'check-privacy.mjs');
@@ -201,5 +212,29 @@ test('the command line fails on a planted tree and passes on a clean one', async
   );
 
   await rm(join(root, 'leak.txt'));
-  assert.equal(run('--root', root, '--list').trim(), 'privacy: 1 files scanned');
+  assert.equal(run('--root', root, '--list').trim(), `privacy: ${REQUIRED_ROOTS.length + 1} files scanned`);
+});
+
+test('the scan fails closed on a missing required root or an empty tree', async (t) => {
+  const empty = await tempTree(t);
+  await assert.rejects(scanTree({ root: empty }), /required root missing from .*: src; refusing an incomplete scan/);
+  await assert.rejects(assertCoverage(empty, []), /required root missing/);
+
+  const script = join(projectRoot, 'scripts', 'check-privacy.mjs');
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--root', empty], { cwd: projectRoot, encoding: 'utf8', stdio: 'pipe' }),
+    (error) => error.status === 1 && /required root missing/.test(error.stderr),
+    'the standalone command refuses an incomplete tree'
+  );
+
+  // Required files can be present and still leave nothing scanned when the
+  // walker ignores every one of them.
+  const ignored = await tempTree(t);
+  await requiredSurface(ignored);
+  await writeFile(join(ignored, '.gitignore'), '*\n');
+  await assert.rejects(scanTree({ root: ignored }), /refusing an empty tree/);
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--root', ignored], { cwd: projectRoot, encoding: 'utf8', stdio: 'pipe' }),
+    (error) => error.status === 1 && /refusing an empty tree/.test(error.stderr)
+  );
 });
