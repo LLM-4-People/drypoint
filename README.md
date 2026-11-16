@@ -448,7 +448,7 @@ key. The label library lives in IndexedDB.
 
 | Key | Contents |
 | --- | --- |
-| `drypoint.document` | the legacy single label document (`version: 4`); read once by the migration and removed after a successful import |
+| `drypoint.document` | the legacy single label document (`version: 4`); read once by the migration and removed after a successful migration |
 | `drypoint.settings` | user settings, validated and coerced on load |
 | `drypoint.rolls` | roll profiles keyed by RFID barcode (bounded to 64) |
 | `drypoint.zoom` | the last canvas zoom |
