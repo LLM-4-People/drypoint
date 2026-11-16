@@ -137,6 +137,7 @@ export const RELEASE_STEP_NAMES = Object.freeze({
     'Build the unsigned APK with a throwaway key',
     'Package the unsigned artifact',
     'The built APK matches its manifest and policy',
+    'Write the provenance predicate',
     'The build changed no tracked file',
     'The build left no untracked file',
     'Upload the unsigned artifact',
@@ -1311,6 +1312,7 @@ function buildFindings(workflow, file) {
     CI_KEYSTORE_COMMAND,
     'npm run build:android',
     'node scripts/check-apk.mjs --apk "dist/drypoint-${VERSION}-unsigned.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
+    'node scripts/release-provenance.mjs --sha "$SHA" --tag "$TAG" --version "$VERSION" --out dist/provenance.json',
     'git diff --exit-code',
     'test -z "$(git status --porcelain)"',
   ];
@@ -1464,7 +1466,9 @@ function signFindings(workflow, file) {
     [/aapt2"?\s+dump\s+xmltree/, 'assert the binary manifest'],
     [/gh attestation download/, 'download the provenance bundle'],
     [/expected_package="package: name='\$\{package_id\}' versionCode='\$\{expected_version_code\}' versionName='\$\{VERSION\}'"/, 'assert the exact package, versionCode and versionName'],
-    [/resolvedDependencies\[\]\?\.digest\.gitCommit/, 'prove the provenance resolves the tag commit'],
+    [/resolvedDependencies/, 'attest with a custom predicate'],
+    [/predicate\.buildDefinition\.resolvedDependencies/, 'prove the provenance resolves the tag commit'],
+    [/digest\.gitCommit == \$sha/, 'require the resolved commit exactly'],
   ]) {
     if (!pattern.test(joined)) findings.push(`${file}: job "sign" must ${message}`);
   }
@@ -1479,8 +1483,23 @@ function signFindings(workflow, file) {
   const attest = stepsOf(job).find((step) => step.uses === 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8');
   if (!attest) {
     findings.push(`${file}: job "sign" must use the pinned attest action`);
-  } else if (attest.env?.GITHUB_SHA !== '${{ needs.resolve.outputs.sha }}') {
-    findings.push(`${file}: job "sign" must bind the attestation to needs.resolve.outputs.sha, not the default-branch HEAD`);
+  } else {
+    // The default predicate comes from github.context, where workflow_run sees
+    // the default-branch HEAD. A step-level GITHUB_SHA is overwritten by GitHub
+    // and does not change the action's context; the binding must be a custom
+    // predicate file produced from needs.resolve.outputs.sha.
+    if (attest.env?.GITHUB_SHA != null) {
+      findings.push(`${file}: job "sign" must not override GITHUB_SHA on the attest action; pass predicate-path`);
+    }
+    if (attest.with?.['predicate-type'] !== 'https://slsa.dev/provenance/v1') {
+      findings.push(`${file}: job "sign" attest step must set predicate-type: https://slsa.dev/provenance/v1`);
+    }
+    if (attest.with?.['predicate-path'] !== 'dist/provenance.json') {
+      findings.push(`${file}: job "sign" attest step must pass predicate-path: dist/provenance.json`);
+    }
+    if (attest.with?.predicate != null) {
+      findings.push(`${file}: job "sign" attest step must use predicate-path, not an inline predicate`);
+    }
   }
   return findings;
 }
