@@ -19,7 +19,7 @@ const toastsIn = (node) => node.querySelectorAll('.toast').length;
 test('a persistent toast has no timer and is removed only by its owner', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const node = host();
-  const remove = toast('Changes are not being saved — storage is full or blocked', { tone: 'error', timeout: null, key: 'save' });
+  const remove = toast('Changes are not being saved: storage is full or blocked', { tone: 'error', timeout: null, key: 'save' });
   assert.equal(toastsIn(node), 1);
   t.mock.timers.tick(60_000);
   assert.equal(toastsIn(node), 1, 'a persistent toast never times out');

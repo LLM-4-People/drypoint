@@ -557,7 +557,7 @@ test('Read capabilities keeps the raw TLV, including colour and gray, in diagnos
   assert.match(dialog.textContent, /Raw TLV values/);
   assert.match(dialog.textContent, /grayBuffer: 01/, 'the raw gray byte is inspectable');
   assert.match(dialog.textContent, /Colour reported: Not reported/);
-  assert.match(dialog.textContent, /Speed range: 1–5/);
+  assert.match(dialog.textContent, /Speed range: 1-5/);
 
   const close = [...dialog.querySelectorAll('button')].find((node) => node.textContent.trim() === 'Close');
   close.dispatch('click');
@@ -821,7 +821,7 @@ test('an empty density intersection disables the control and states the wire val
   assert.equal(wire.density, 6, 'the job sends the printer floor');
   assert.match(
     container.textContent,
-    /The printer accepts density 6–8, outside this app's 1–5; the density control is disabled and the next print sends 6\./
+    /The printer accepts density 6-8, outside this app's 1-5; the density control is disabled and the next print sends 6\./
   );
 });
 
@@ -941,7 +941,7 @@ test('the panel names the model, its support state and the behaviour task', () =
     protocolVersion: 301,
   });
   const { container } = mount(fakeDevice({ status: 'connected', caps }).device);
-  assert.match(container.textContent, /D110_M — tested · 0x0910/);
+  assert.match(container.textContent, /D110_M \(tested\) · 0x0910/);
   assert.match(container.textContent, /D110M V4 · build 301/);
   assert.doesNotMatch(container.textContent, /\bV5\b/);
 });
@@ -953,7 +953,7 @@ test('an experimental model and an unsupported model read differently', () => {
       caps: buildCaps({ model: 'D11_H', modelSupport: 'experimental', task: 'd110mv4', deviceType: 0x0210 }),
     }).device
   );
-  assert.match(experimental.container.textContent, /D11_H — experimental · 0x0210/);
+  assert.match(experimental.container.textContent, /D11_H \(experimental\) · 0x0210/);
 
   const unsupported = mount(
     fakeDevice({
@@ -961,7 +961,7 @@ test('an experimental model and an unsupported model read differently', () => {
       caps: buildCaps({ model: 'B1', modelSupport: 'unsupported', task: 'd110mv4', deviceType: 0x1000 }),
     }).device
   );
-  assert.match(unsupported.container.textContent, /B1 — not supported · 0x1000/);
+  assert.match(unsupported.container.textContent, /B1 \(not supported\) · 0x1000/);
 });
 
 /* ---------------- support gate (P1) ---------------- */
@@ -1038,7 +1038,7 @@ test('an unknown model is named Unknown model and exposes no print task', () => 
   const { container } = mount(device);
   const rows = rowsOf(container);
   assert.equal(rows.get('Model'), 'Unknown model · 0x1234');
-  assert.doesNotMatch(container.textContent, /Unknown — unknown/);
+  assert.doesNotMatch(container.textContent, /Unknown: unknown/);
   assert.equal(rows.get('Protocol'), 'Print task not available for this model');
   assert.doesNotMatch(container.textContent, /D110M V4/);
 });
@@ -1050,7 +1050,7 @@ test('an unsupported known model exposes no print task', () => {
   });
   const { container } = mount(device);
   const rows = rowsOf(container);
-  assert.equal(rows.get('Model'), 'B1 — not supported · 0x1000');
+  assert.equal(rows.get('Model'), 'B1 (not supported) · 0x1000');
   assert.equal(rows.get('Protocol'), 'Print task not available for this model');
   assert.doesNotMatch(container.textContent, /D110M V4/);
 });

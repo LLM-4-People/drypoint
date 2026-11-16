@@ -744,7 +744,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
    *
    * The reply's third byte is the only statement of the resulting state. A
    * short or unrecognised reply, and an unsupported/timeout probe, report
-   * `null` — "the printer did not say" — never `false`. Treating absence as
+   * `null` ("the printer did not say"), never `false`. Treating absence as
    * "off" flipped the switch off after a successful write and claimed a state
    * the printer never reported.
    * @returns {Promise<boolean|null>}

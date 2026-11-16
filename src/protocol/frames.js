@@ -27,7 +27,7 @@ export function encodeFrame(cmd, data = []) {
   for (let index = 0; index < bytes.length; index++) {
     const value = bytes[index];
     if (!Number.isInteger(value) || value < 0 || value > 0xff) {
-      throw new RangeError(`Frame payload byte ${index} is ${value}; payload elements must be integers 0–255`);
+      throw new RangeError(`Frame payload byte ${index} is ${value}; payload elements must be integers 0-255`);
     }
   }
   const payload = Uint8Array.from(bytes);

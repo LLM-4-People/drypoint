@@ -15,7 +15,7 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 
 ### Fixed
 
-- **Android label import works again.** The 1.0.2 APK filtered its system file
+- **Android label import now works.** The 1.0.2 APK filtered its system file
   picker to images, so **Document → Import label** could not select a label
   `.json` file. The picker now accepts JSON documents and the imported label is
   validated before it replaces the open one; the 1.0.2 release notes record
@@ -31,8 +31,8 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - **An unreadable stored label is quarantined, not replaced.** A label whose
   stored value cannot be parsed is kept as raw bytes behind a banner; edits
   cannot overwrite it until the operator resets it, and Reset now asks first.
-  The same refusal covers a v3 label with no valid element list and a v3 label
-  whose geometry has to be bounded; both report what changed.
+  A v3 label with no valid element list is quarantined; a v3 label whose
+  geometry has to be bounded loads with a notice. Both report what changed.
 - **A lost link is described honestly.** A disconnect after the page counter
   proved the copies, but before the printer confirmed the end of the job, says
   so instead of "may be incomplete"; a disconnect before that proof still says
@@ -73,7 +73,8 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 ### Changed
 
 - The service worker's content types are generated from one owner and stamped
-  into `sw.js`, so the manifest and the worker cannot disagree.
+  into `sw.js`, keeping the worker, the dev server, the browser harness and the
+  Pages smoke test in agreement.
 - The release workflow creates a throwaway signing key only in CI, signs the
   published APK with the release key in a separate job, binds the attestation to
   the resolved tag commit, and asserts the exact package, version code and

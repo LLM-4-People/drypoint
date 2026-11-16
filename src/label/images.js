@@ -50,7 +50,7 @@ function imageSourceLimitMessage(count, action = 'printing') {
  * repeats a source once per element, so a label that reuses one large image is
  * as large as one that uses many. It is enforced where an image enters the
  * label (the editor and the importer) and where the label leaves it (export),
- * never by rewriting a document that already exists — validation is a
+ * never by rewriting a document that already exists: validation is a
  * normalise pass on every undo, geometry change and print, so dropping sources
  * there silently destroyed a valid label.
  *
@@ -86,7 +86,7 @@ function sourceBudgetRefusalNotice() {
 
 /**
  * The one source-budget decision for a document that is about to cross a
- * boundary — the editor's add/update/duplicate, import, or export.
+ * boundary: the editor's add/update/duplicate, import, or export.
  *
  * Both facts are checked here and nowhere else: the distinct-source cap (the
  * decode cache) and the image-text budget (the serialised file, which repeats a

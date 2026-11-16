@@ -59,7 +59,7 @@ export class Session {
       // the expected reply, and the frame carries no request id. A request
       // that already timed out may still receive that answer: consume it for
       // that request instead of rejecting the next one. Only 0x00 is safe to
-      // reassign — 0xDB is also an unsolicited printer error.
+      // reassign; 0xDB is also an unsolicited printer error.
       const timedOut = this.#unanswered.shift();
       if (timedOut !== undefined) {
         // The current request may have been the one that answered: remember

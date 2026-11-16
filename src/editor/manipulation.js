@@ -33,7 +33,7 @@ export function handleAt(corners, point, radius) {
 }
 
 /**
- * Hit radius for a resize handle. A mouse gets half the 18 px drawn handle —
+ * Hit radius for a resize handle. A mouse gets half the 18 px drawn handle;
  * the hit box is the handle, not a halo. A coarse pointer has no such
  * precision, so a finger gets the larger touch target; the drawing stays 18 px.
  */

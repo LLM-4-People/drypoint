@@ -3,7 +3,7 @@
  *
  * The canvas is the label itself: a screen-reader user cannot see it, so its
  * name has to carry the two facts the visual badge shows (the size) and how
- * much is on the label. The name is short on purpose — it is announced when the
+ * much is on the label. The name is short on purpose: it is announced when the
  * image is reached, not a description of the drawing.
  */
 

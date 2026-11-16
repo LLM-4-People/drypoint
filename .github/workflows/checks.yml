@@ -127,7 +127,7 @@ jobs:
           test -f "$apk"
           badging="$("$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" dump badging "$apk")"
           # The package the phone installs must be the one brand.json names,
-          # with the versionCode the version arithmetic produces — not only the
+          # with the versionCode the version arithmetic produces, not only the
           # human-readable versionName.
           printf '%s\n' "$badging" | grep -F "package: name='${package_id}' versionCode='${version_code}' versionName='${version}'"
           sha256sum "$apk"

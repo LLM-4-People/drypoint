@@ -4,7 +4,7 @@
  * The editor works in landscape: the canvas is `length × headWidthPx`, where
  * the height is the head width the printer reported (96 on the reference
  * D110_M) and never a constant. The head is `canvas.height` dots wide and
- * feeds along the length, so the bitmap is transposed here — the one place
+ * feeds along the length, so the bitmap is transposed here: the one place
  * where the two coordinate systems meet.
  */
 

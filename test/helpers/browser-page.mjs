@@ -28,7 +28,7 @@ export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * `--remote-debugging-port=0` asks the OS for a free port and Chromium records
  * the result in `DevToolsActivePort` inside its profile. Probing a port here and
  * handing the number to Chromium would be a check-then-bind race that two
- * parallel test files can lose — one takes the port in the gap, and the other
+ * parallel test files can lose: one takes the port in the gap, and the other
  * dies with EADDRINUSE. Reading the allocation's own record has no gap.
  */
 /**

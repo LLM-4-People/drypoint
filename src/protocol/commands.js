@@ -52,10 +52,10 @@ export const OP = Object.freeze({
 
 /**
  * Every opcode this codebase knows about is classified exactly once:
- *   request     — this app builds and sends it (a caller names the command)
- *   unused      — the command is registered and builds, but nothing sends it
- *   inbound     — the firmware sends it unsolicited or as a negative reply
- *   unsupported — known from the protocol family, not implemented on this unit
+ *   request:    this app builds and sends it (a caller names the command)
+ *   unused:     the command is registered and builds, but nothing sends it
+ *   inbound:    the firmware sends it unsolicited or as a negative reply
+ *   unsupported: known from the protocol family, not implemented on this unit
  */
 export const OP_ROLE = Object.freeze({
   PRINT_START: 'request',

@@ -96,7 +96,7 @@ test('the manifest declares the exact permission set and no component it does no
  *
  * `allowBackup=false` disables cloud backup, but at targetSdk 31+ some OEMs
  * ignore it for device-to-device migration, so the comment must state the
- * guaranteed half and the manufacturer-controlled half — and must not contain
+ * guaranteed half and the manufacturer-controlled half, and must not contain
  * an absolute ("nothing ever leaves this phone") or a contradiction
  * ("allowBackup=false enables cloud backup"). Returns the problem, or null.
  *

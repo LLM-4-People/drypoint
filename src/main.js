@@ -1,6 +1,6 @@
 /**
  * Composition root: wires the editor, panels, device manager and print flow.
- * No business logic lives here — only orchestration.
+ * No business logic lives here: only orchestration.
  */
 
 import { CONFIG, storageKey } from './core/config.js';
@@ -939,7 +939,7 @@ ui.printButton.addEventListener('click', () => {
 });
 
 /**
- * A test label prints paper, so it asks first — exactly like the printer's
+ * A test label prints paper, so it asks first: exactly like the printer's
  * self-test page in the Print panel.
  */
 ui.testButton.addEventListener('click', async () => {
@@ -1011,7 +1011,7 @@ function openLogViewer() {
   const render = () => {
     view.textContent = '';
     for (const entry of getLogEntries().slice(-CONFIG.diagnostics.maxEntriesInReport)) {
-      view.append(el('div', {}, `${entry.at.slice(11, 19)} [${entry.level}] ${entry.scope}: ${entry.message}${entry.detail ? ` — ${entry.detail}` : ''}`));
+      view.append(el('div', {}, `${entry.at.slice(11, 19)} [${entry.level}] ${entry.scope}: ${entry.message}${entry.detail ? `: ${entry.detail}` : ''}`));
     }
   };
   render();
@@ -1089,7 +1089,7 @@ window.addEventListener('pagehide', () => {
   // Only an owed write is flushed: a tab that never edited the document must
   // not rewrite storage, or the last tab to close would overwrite newer work
   // (two dirty tabs remain last-writer-wins). A failed final write is only
-  // logged — the page is gone, and the persistent toast already reported the
+  // logged: the page is gone, and the persistent toast already reported the
   // write that failed first.
   try {
     documentStore.flush();

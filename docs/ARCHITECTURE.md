@@ -750,7 +750,10 @@ be served as `application/manifest+json`.
 
 `workflow_dispatch` is the deliberate operator override: it checks out the
 constant `refs/heads/main` and deploys the current `main` without a `Checks`
-run. It exists to recover a deployment, not to prove a commit.
+run. It takes no ref input, so a dispatch can only redeploy current `main`,
+never an older commit: an arbitrary ref would bypass the `Checks` validation
+that makes the deployed commit trustworthy. It exists to recover a deployment,
+not to prove a commit.
 
 ### Failed or partial releases
 
@@ -776,10 +779,11 @@ release are immutable; only its title, notes and pre-release flag can change.
   the same SHA (or re-run the Pages workflow); its build asserts that `main` is
   still the validated commit. The documented `workflow_dispatch` override
   deploys the current `main` without a `Checks` run and is only for recovery.
-- **Rollback.** Pages has no per-deploy rollback. Redeploy the previous commit
-  with `workflow_dispatch`, record the commit and the reason, and let the next
-  green `Checks` run deploy forward. A published release is never rolled back;
-  it is superseded by a new patch.
+- **Rollback.** Pages has no per-deploy rollback. Revert the bad commit on
+  `main` with a normal pull request, record the commit and the reason, and let
+  the next green `Checks` run deploy the revert. The workflow takes no ref
+  input, so it cannot redeploy an older commit directly. A published release is
+  never rolled back; it is superseded by a new patch.
 - **Verify the tag/commit binding.** The release body carries the tag, the
   40-character commit and `refs/heads/main`. Check that
   `git rev-list -n 1 "v<version>"` is that commit; if it is not, the body and the

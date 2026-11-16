@@ -264,7 +264,7 @@ export function createInspector({ container, controller, onPickImage }) {
       options: [
         ['auto', 'Use print setting'],
         ['threshold', 'Crisp'],
-        ['floyd', 'Floyd–Steinberg'],
+        ['floyd', 'Floyd-Steinberg'],
         ['atkinson', 'Atkinson'],
       ],
       value: element.dither,

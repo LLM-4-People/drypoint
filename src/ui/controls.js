@@ -327,13 +327,13 @@ export function actionButton(label, { onClick, icon = null, tone = '', disabled 
  * A read-only label/value row. Returns a control so panels can register it and
  * let sync() update the value in place instead of rebuilding the whole panel.
  */
-export function statRow(label, value = '—') {
+export function statRow(label, value = 'n/a') {
   const valueNode = el('span', { class: 'value' }, value);
   const node = el('div', { class: 'stat-row' }, el('span', { class: 'label' }, label), valueNode);
   return {
     node,
     set(next) {
-      const text = next === null || next === undefined || next === '' ? '—' : String(next);
+      const text = next === null || next === undefined || next === '' ? 'n/a' : String(next);
       if (valueNode.textContent !== text) valueNode.textContent = text;
     },
   };

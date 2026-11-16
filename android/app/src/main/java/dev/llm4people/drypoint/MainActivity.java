@@ -33,7 +33,7 @@ import java.util.Map;
  *
  * Assets are served through shouldInterceptRequest on a stable https origin, so
  * ES modules, localStorage and the same code paths as the PWA work unchanged.
- * The only host API the page needs — Bluetooth — is provided by BleBridge.
+ * The only host API the page needs, Bluetooth, is provided by BleBridge.
  */
 public class MainActivity extends Activity {
   private static final String ORIGIN = "https://drypoint.local";

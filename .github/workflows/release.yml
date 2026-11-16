@@ -403,7 +403,7 @@ jobs:
           "$tools/zipalign" -c -v 4 "$signed" > /dev/null
           badging="$("$tools/aapt2" dump badging "$signed")"
           package_id="$(jq -r .appId "$brand")"
-          # The exact package, versionCode and versionName — the same values
+          # The exact package, versionCode and versionName: the same values
           # check-apk asserts against the unsigned artifact. A hard-coded
           # versionCode fails here even when it is positive.
           expected_package="package: name='${package_id}' versionCode='${expected_version_code}' versionName='${VERSION}'"

@@ -1,5 +1,5 @@
 /**
- * Print panel: everything about the job and the hardware — printer settings
+ * Print panel: everything about the job and the hardware: printer settings
  * discovered from the device, maintenance actions and diagnostics.
  *
  * The panel is built once per capability revision and synced in place
@@ -81,18 +81,18 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
 
   function batteryLabel() {
     const battery = device.state.capabilities.battery;
-    if (!battery) return '—';
+    if (!battery) return 'n/a';
     return `${battery.percent}%${Number.isFinite(battery.voltageMv) ? ` · ${(battery.voltageMv / 1000).toFixed(2)} V` : ''}`;
   }
 
   function rollLabel() {
     const roll = device.state.capabilities.roll;
-    return roll ? `${roll.remaining ?? '?'} left · ${roll.barcode ?? 'no tag'}` : '—';
+    return roll ? `${roll.remaining ?? '?'} left · ${roll.barcode ?? 'no tag'}` : 'n/a';
   }
 
   function sensorsLabel() {
     const sensors = device.state.capabilities.sensors;
-    if (!sensors) return '—';
+    if (!sensors) return 'n/a';
     return `${sensors.lidClosed ? 'lid closed' : 'LID OPEN'} · ${sensors.paperPresent ? 'paper ok' : 'NO PAPER'}`;
   }
 
@@ -205,25 +205,25 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
       register(statRow('Status'), () => describeDeviceStatus(device.state).panelLabel),
       // A failed connect leaves the reason in state.error; without this row the
       // panel says "Connection error" and never what happened.
-      device.state.error ? register(statRow('Last error'), () => device.state.error ?? '—') : null,
-      register(statRow('Transport'), () => device.state.transportLabel ?? '—'),
+      device.state.error ? register(statRow('Last error'), () => device.state.error ?? 'n/a') : null,
+      register(statRow('Transport'), () => device.state.transportLabel ?? 'n/a'),
       register(statRow('Model'), () => {
         const live = device.state.capabilities;
         const id = live.deviceType ? ` · 0x${live.deviceType.toString(16).padStart(4, '0').toUpperCase()}` : '';
-        // An unrecognised model is not named "Unknown — unknown": that reads
+        // An unrecognised model is not named "Unknown: unknown": that reads
         // like a model and repeats the support state. Before discovery the
         // row stays empty instead of claiming an unknown printer.
         if (live.modelSupport === 'unknown') return `Unknown model${id}`;
-        if (!live.model) return '—';
+        if (!live.model) return 'n/a';
         // The support state is part of the truth: a resolved name alone would
         // suggest every named model can print.
-        const support = live.modelSupport ? ` — ${supportLabel(live.modelSupport)}` : '';
+        const support = live.modelSupport ? ` (${supportLabel(live.modelSupport)})` : '';
         return `${live.model}${support}${id}`;
       }),
-      register(statRow('Serial'), () => device.state.capabilities.serial ?? '—'),
+      register(statRow('Serial'), () => device.state.capabilities.serial ?? 'n/a'),
       register(statRow('Firmware'), () => {
         const live = device.state.capabilities;
-        return live.firmware ? `${live.firmware} (hw ${live.hardware ?? '?'})` : '—';
+        return live.firmware ? `${live.firmware} (hw ${live.hardware ?? '?'})` : 'n/a';
       }),
       register(statRow('Protocol'), () => {
         const live = device.state.capabilities;
@@ -236,7 +236,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
         // context, never a task name of its own.
         const task = taskName(live.task);
         if (task) return `${task} · build ${live.protocolVersion ?? '?'}`;
-        return live.protocolVersion ? `build ${live.protocolVersion}` : '—';
+        return live.protocolVersion ? `build ${live.protocolVersion}` : 'n/a';
       }),
       register(statRow('Head'), () => {
         const live = device.state.capabilities;
@@ -340,7 +340,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
    * The schema declares what the app can render and the printer reports what it
    * accepts; a write may only use the intersection of the two. An empty
    * intersection (a firmware whose whole range sits outside the schema) keeps
-   * the schema range — the panel cannot render an impossible slider — and the
+   * the schema range (the panel cannot render an impossible slider) and the
    * job group says so instead of silently offering unprintable values.
    */
   function densityBounds(definition, caps) {
@@ -442,7 +442,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
         el(
           'div',
           { class: 'hint' },
-          `The printer accepts density ${bounds.reported.min}–${bounds.reported.max}, outside this app's ${densityDefinition.min}–${densityDefinition.max}; the density control is disabled and the next print sends ${wireValue}.`
+          `The printer accepts density ${bounds.reported.min}-${bounds.reported.max}, outside this app's ${densityDefinition.min}-${densityDefinition.max}; the density control is disabled and the next print sends ${wireValue}.`
         )
       );
     }
@@ -476,7 +476,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
         // The self-test prints paper too, so an experimental model gets the
         // same explicit warning as a normal print, not only the paper prompt.
         const experimentalText = experimental
-          ? `${caps.model ?? 'This printer'} — ${CONFIG.device.printGate.experimental}`
+          ? `${caps.model ?? 'This printer'}. ${CONFIG.device.printGate.experimental}`
           : null;
         const confirmed = await confirm(
           experimental ? 'Print the self-test page on an experimental model?' : 'Print the self-test page?',
@@ -809,7 +809,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
     const connected = device.connected;
     // A print job, a device-info read and this panel's own sound read all own
     // the single link, so every control that sends a command waits for the
-    // same idle state — including Disconnect, which would tear the read down
+    // same idle state, including Disconnect, which would tear the read down
     // mid-exchange. The primary Print button is main's; it never gates on the
     // panel's read state.
     const busy = Boolean(device.state.printing) || Boolean(device.state.readingInfo) || Boolean(device.state.maintaining) || soundState === 'reading';
@@ -898,7 +898,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
   function showCapabilities(decoded) {
     const lines = [];
     const range = (label, value) => {
-      if (value) lines.push(`${label}: ${value.min}–${value.max}`);
+      if (value) lines.push(`${label}: ${value.min}-${value.max}`);
     };
     range('Density range', decoded?.densityRange);
     range('Speed range', decoded?.speedRange);

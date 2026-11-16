@@ -73,7 +73,7 @@ test('SECURITY states the boundary, the supported line and the private channel',
   assert.match(security, /security\/advisories\/new/, 'the reporting channel is the advisory form');
   assert.match(security, /Coordinated disclosure/);
   assert.match(security, /\| 1\.x, except 1\.0\.0 \| Yes/);
-  assert.match(security, /\| 1\.0\.0 \| No — do not install it\./);
+  assert.match(security, /\| 1\.0\.0 \| No: do not install it\./);
   assert.match(security, /retired before any known install/, 'the 1.0.0 install path names the retired key');
   assert.match(security, /uninstalling it deletes every label/);
   assert.match(security, /signing certificate/);
@@ -118,7 +118,7 @@ test('CODE_OF_CONDUCT is Contributor Covenant 2.1 with a real contact', () => {
   assert.doesNotMatch(conduct, /\[INSERT CONTACT METHOD\]/);
   assert.doesNotMatch(conduct, /^\+\+\+/m, 'the TOML front matter is not published');
   assert.doesNotMatch(conduct, /^\[[a-z0-9.]+\]:\s/m, 'the link-reference block is inlined, not kept');
-  for (const heading of ['Our Pledge', 'Our Standards', 'Enforcement Responsibilities', 'Scope', 'Enforcement', 'Enforcement Guidelines', 'Attribution']) {
+  for (const heading of ['Our pledge', 'Our standards', 'Enforcement responsibilities', 'Scope', 'Enforcement', 'Enforcement guidelines', 'Attribution']) {
     assert.ok(conduct.includes(`## ${heading}`), `${heading} is present`);
   }
 });

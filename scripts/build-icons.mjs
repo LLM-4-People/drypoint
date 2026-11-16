@@ -287,7 +287,7 @@ async function main(argv) {
       return 0;
     }
     for (const finding of result.findings) console.error(`icons: ${finding}`);
-    console.error('icons: a generated icon is stale — run: npm run build:icons -- --write');
+    console.error('icons: a generated icon is stale; run: npm run build:icons -- --write');
     return 1;
   } catch (error) {
     console.error(`icons: ${error.message}`);

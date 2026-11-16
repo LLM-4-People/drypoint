@@ -152,7 +152,7 @@ async function main(argv) {
     console.log('docs: generated blocks up to date');
     return 0;
   }
-  console.error(`docs: stale generated block(s): ${result.stale.join(', ')} — run: npm run docs:generate`);
+  console.error(`docs: stale generated block(s): ${result.stale.join(', ')}; run: npm run docs:generate`);
   return 1;
 }
 

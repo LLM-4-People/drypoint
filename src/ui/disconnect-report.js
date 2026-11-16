@@ -3,7 +3,7 @@
  *
  * A link that drops while the print flow is preparing sent no frame, so the
  * label cannot be incomplete. A drop after the job started may have cut the
- * label — unless printEnd was already committed, which is the finishing phase:
+ * label, unless printEnd was already committed, which is the finishing phase:
  * the job is on the printer and only its status refresh was lost. The flow
  * exposes the phase and this owner owns the copy and the single toast; the
  * print flow itself stays silent for a lost link so the operator hears one

@@ -8,11 +8,15 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { checkDocs, headingSlugs, headingText, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
+import { checkDocs, changelogProseText, headingSlugs, headingText, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
 import { dashFindings, doubleDashFindings, titleCaseFindings } from '../scripts/lib/prose.mjs';
+import { listFiles, listTrackedFiles } from '../scripts/lib/tree.mjs';
 import { CONFIG } from '../src/core/config.js';
 import { MODELS } from '../src/protocol/models.js';
+import { ROLL_BARCODE, ROLL_TOTAL, ROLL_USED } from './fixtures/captured-unit.mjs';
 import { listProjectFiles, readProjectFile as read } from './helpers/project-files.mjs';
+
+const pkg = JSON.parse(read('package.json'));
 
 /** The data rows of the first table after one heading. */
 function tableRows(markdown, heading) {
@@ -58,10 +62,10 @@ test('fenced code is not document structure', () => {
 });
 
 test('heading slugs follow GitHub, including duplicates and inline code', () => {
-  const slugs = headingSlugs(['## `0xDE` heartbeat info', '## Same', '## Same', '## Trailing ##', '### Em — dash (test)'].join('\n'));
+  const slugs = headingSlugs(['## `0xDE` heartbeat info', '## Same', '## Same', '## Trailing ##', '### Em: dash (test)'].join('\n'));
   assert.deepEqual(
     [...slugs],
-    ['0xde-heartbeat-info', 'same', 'same-1', 'trailing', 'em--dash-test'],
+    ['0xde-heartbeat-info', 'same', 'same-1', 'trailing', 'em-dash-test'],
     'punctuation is removed, spaces become hyphens and repeats are numbered'
   );
 });
@@ -214,17 +218,17 @@ test('the README support matrix and the SUPPORT scope match the model table', ()
 
 test('the README Web Serial range is the BCD range, not an extra version', () => {
   // BCD: chrome_android version_added 138, version_removed 148, partial RFCOMM,
-  // then full from 148. The partial window is therefore 138–147, not 138–148.
+  // then full from 148. The partial window is therefore 138-147, not 138-148.
   const readme = read('README.md');
-  assert.match(readme, /148\+ \(138–147 partial RFCOMM\)/);
-  assert.doesNotMatch(readme, /138–148/);
+  assert.match(readme, /148\+ \(138-147 partial RFCOMM\)/);
+  assert.doesNotMatch(readme, /138-148/);
 });
 
 test('the ANDROID.md CSP quote is the one policy in index.html', () => {
   const html = read('index.html');
   const policy = html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]+)"/)?.[1];
   assert.ok(policy, 'index.html owns one CSP meta element');
-  const quoted = read('docs/ANDROID.md').match(/Content-Security-Policy meta element —\n`([^`]+)`/)?.[1];
+  const quoted = read('docs/ANDROID.md').match(/Content-Security-Policy meta element\n\(`([^`]+)`\)/)?.[1];
   assert.ok(quoted, 'ANDROID.md quotes the policy');
   assert.equal(quoted.replace(/\s+/g, ' ').trim(), policy, 'the quote is the whole policy, not a four-directive subset');
 });
@@ -250,7 +254,7 @@ test('the APK is described as BLE-only without claiming Android cannot do SPP', 
   const doc = read('docs/ANDROID.md');
   assert.match(doc, /\*\*BLE-only\*\*, because a WebView gives the page no Web Serial/);
   assert.match(doc, /Chrome for Android 148\+ exposes Web Serial, including\s+RFCOMM serial ports/);
-  assert.match(doc, /138–147 exposed it partially/);
+  assert.match(doc, /138-147 exposed it partially/);
   assert.doesNotMatch(doc, /Android's Web Serial cannot reach Bluetooth Classic SPP/);
 });
 
@@ -313,6 +317,8 @@ test('the release runbook covers every failed or partial outcome', () => {
     'signature or an asset digest does not match',
     'Pages failed after a green',
     'Pages has no per-deploy rollback',
+    'Revert the bad commit on',
+    'The workflow takes no ref',
     'provenance workflow ref refs/heads/main',
     'git rev-list -n 1',
   ]) {
@@ -346,7 +352,7 @@ test('the issue templates point at the latest release, not a past version', () =
 test('SECURITY.md does not present 1.0.0 as a supported install', () => {
   const security = read('SECURITY.md');
   const table = security.slice(security.indexOf('## Supported versions'), security.indexOf('## Reporting a vulnerability'));
-  assert.match(table, /\| 1\.0\.0 \| No — do not install it\./);
+  assert.match(table, /\| 1\.0\.0 \| No: do not install it\./);
   assert.match(table, /retired before any known install \(the 1\.0\.0 APK had been downloaded\)/);
   assert.match(table, /uninstalling it deletes every label/);
   assert.doesNotMatch(table, /\| 1\.x \| Yes/);
@@ -418,6 +424,8 @@ test('the 12 mm scope and the protocol-compatible refusals are stated', () => {
     assert.ok(row.join(' ').includes(width), `${model} names its ${width} media`);
     assert.match(row[5], /scope/i, `${model}'s refusal is a scope decision`);
   }
+  assert.match(rows.get('D101')[5], /model gate refuses D101 as a 12 mm scope decision/);
+  assert.doesNotMatch(rows.get('D101')[5], /geometry gate/);
   assert.match(page, /D11_Pro is a 12 mm model, but only one uncorroborated source/);
   assert.match(page, /stays unsupported pending a device capture/);
   assert.match(page, /M2_H/);
@@ -425,6 +433,29 @@ test('the 12 mm scope and the protocol-compatible refusals are stated', () => {
   assert.doesNotMatch(page, /every protocol fact/);
   assert.doesNotMatch(read('README.md'), /every other known/i);
   assert.doesNotMatch(read('SUPPORT.md'), /every other known model/i);
+});
+
+test('the README states when printer settings are mirrored and where copies lives', () => {
+  const readme = read('README.md');
+  const start = readme.indexOf('**Density and tape type come from the printer when');
+  const end = readme.indexOf('- **One document at a time.**');
+  const bullet = readme.slice(start, end);
+  assert.ok(start >= 0 && end > start, 'the settings limitation bullet exists');
+  assert.match(bullet, /`Read printer settings`/);
+  assert.match(bullet, /which is the default/);
+  assert.match(bullet, /setting off, the app's stored values are used/);
+  assert.match(bullet, /Change them while connected/);
+  assert.doesNotMatch(bullet, /always come from the printer/);
+  assert.match(readme, /Copies is a document field, but its only control is in\s+the Print panel/);
+});
+
+test('the reference-unit roll facts match their fixture', () => {
+  const remaining = ROLL_TOTAL - ROLL_USED;
+  assert.match(read('README.md'), new RegExp(`\`${ROLL_BARCODE}\`, ${ROLL_TOTAL}-label capacity`));
+  assert.match(
+    read('docs/PROTOCOL.md'),
+    new RegExp(`\`${ROLL_BARCODE}\` \\(a product EAN\\), ${ROLL_TOTAL} total, ${ROLL_USED} used \\(${remaining} remaining\\)`)
+  );
 });
 
 test('the documentation index links every page in docs/', () => {
@@ -461,4 +492,31 @@ test('the prose gate enforces sentence-case headings', () => {
   assert.deepEqual(titleCaseFindings('x.md', '## GitHub Pages'), [], 'a proper name is not Title Case');
   assert.deepEqual(titleCaseFindings('x.md', '## Drypoint Android app'), []);
   assert.deepEqual(titleCaseFindings('x.md', '## A heading with `Code` inline'), []);
+});
+
+test('the changelog gate checks the current section and leaves archived release bodies alone', () => {
+  const changelog = read('CHANGELOG.md');
+  const version = pkg.version;
+  const scoped = changelogProseText(changelog, version);
+  assert.deepEqual(dashFindings('CHANGELOG.md', scoped), [], 'archived published bodies keep their punctuation');
+  assert.match(scoped, new RegExp(`^## \\[?${version.replaceAll('.', '\\.')}\\]?`, 'm'), 'the current section is in scope');
+
+  const heading = new RegExp(`^(## \\[?${version.replaceAll('.', '\\.')}\\]?.*)$`, 'm');
+  const current = scoped.replace(heading, '$1\n\nCurrent \u2014 injected.');
+  assert.equal(dashFindings('CHANGELOG.md', current).length, 1, 'a dash in the current section is rejected');
+  assert.equal(dashFindings('CHANGELOG.md', `Preamble \u2014 injected.\n${scoped}`).length, 1, 'a dash in the preamble is rejected');
+});
+
+test('the CLI scans the tracked view, not the gitignore-aware walk', async (t) => {
+  const { root } = await tempTree(t, {
+    '.gitignore': 'ignored.txt\n',
+    'ignored.txt': 'tracked anyway\n',
+    'kept.txt': 'kept\n',
+  });
+  assert.deepEqual(await listFiles({ root }), ['.gitignore', 'kept.txt'], 'the walk obeys .gitignore');
+  const git = () => 'ignored.txt\0kept.txt\0';
+  assert.deepEqual(listTrackedFiles({ root, git }), ['ignored.txt', 'kept.txt'], 'a tracked file cannot hide');
+
+  const source = read('scripts/check-docs.mjs');
+  assert.match(source, /async function main\([\s\S]*?checkDocs\(\{ files: listTrackedFiles\(\) \}\)/, 'main passes the tracked list');
 });

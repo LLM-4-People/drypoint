@@ -33,7 +33,7 @@ Chromium is discovered from `D110_CHROME`, then `CHROME_PATH`, then
 `google-chrome`/`chromium`/`chromium-browser` on `PATH`, then the Playwright
 browser cache.
 
-<!-- generated:suites -->
+[//]: # (generated:suites)
 The browser leg runs **26 tests in 13 files**:
 
 - `accessibility.test.mjs` (2 tests)
@@ -49,7 +49,7 @@ The browser leg runs **26 tests in 13 files**:
 - `stage-hint.test.mjs` (1 test)
 - `toast-overlay.test.mjs` (1 test)
 - `ux-round5.test.mjs` (4 tests)
-<!-- /generated:suites -->
+[//]: # (/generated:suites)
 
 `npm run test:browser` runs only that list.
 

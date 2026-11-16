@@ -10,6 +10,8 @@
  * legal. A Markdown rule (`---`) and a table separator stay legal too.
  */
 
+import brand from '../../brand.json' with { type: 'json' };
+
 const DASH = /[\u2012\u2013\u2014\u2015]/g;
 const DASH_NAMES = Object.freeze({
   '\u2012': 'figure dash',
@@ -30,7 +32,7 @@ const FUNCTION_WORDS = new Set([
  * not Title Case, it is a proper name.
  */
 const PROPER_WORDS = new Set([
-  'Drypoint', 'Android', 'Bluetooth', 'Chrome', 'ChromeOS', 'CodeQL', 'Dependabot', 'Edge',
+  brand.name, 'Android', 'Bluetooth', 'Chrome', 'ChromeOS', 'CodeQL', 'Dependabot', 'Edge',
   'Firefox', 'GitHub', 'Java', 'Linux', 'Mac', 'Node', 'Pages', 'Safari', 'Scorecard', 'WebView',
   'Windows', 'iOS', 'APK', 'API', 'BLE', 'CI', 'CLI', 'CSP', 'CSS', 'HTML', 'HTTP', 'HTTPS',
   'JSON', 'JS', 'OIDC', 'PWA', 'SDK', 'SHA', 'SLSA', 'SPP', 'UI', 'URL', 'UTF', 'UX', 'XML',

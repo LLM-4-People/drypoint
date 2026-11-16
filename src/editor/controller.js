@@ -113,7 +113,7 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
   /**
    * Publish one refusal: the toast-class channel and the document notice, once
    * each, bounded by the one notice list. A refusal is the newest fact, so when
-   * the list is full the oldest entry gives way — the operator has already been
+   * the list is full the oldest entry gives way: the operator has already been
    * told it, and the alternative is an invisible refusal.
    *
    * The refusal is a toast-class fact, not a layout hint: with two hundred

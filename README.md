@@ -120,7 +120,8 @@ not install 1.0.0 for new work.
   beside Templates. Import validates the format, bounds and document version,
   applies as one undoable step and reports any content it had to shorten.
 - **Document**: length in millimetres (20-200 mm, clamped to the device
-  maximum), presets, and copies.
+  maximum) and presets. Copies is a document field, but its only control is in
+  the Print panel.
 
 ### Print
 
@@ -346,7 +347,7 @@ Commands:
 The table is generated from `package.json`; edit the script there and run
 `npm run docs:generate`. The prose below the block explains the two gates.
 
-<!-- generated:scripts -->
+[//]: # (generated:scripts)
 | Command | Runs |
 | --- | --- |
 | `npm start` | `node scripts/serve.mjs` |
@@ -366,7 +367,7 @@ The table is generated from `package.json`; edit the script there and run
 | `npm run verify` | `npm run build:brand -- --check && npm run build:icons -- --check && npm run check:precache && npm run privacy:check && npm run test:unit && node scripts/build-docs.mjs --check && npm run docs:check && npm run workflows:check` |
 | `npm run test:unit` | `node scripts/test-suites.mjs unit` |
 | `npm run verify:all` | `npm run verify && npm run test:browser` |
-<!-- /generated:scripts -->
+[//]: # (/generated:scripts)
 
 `npm run verify` is the **unit gate**: brand and precache drift, privacy, the
 unit suite, generated documentation and link checks, and workflow policy.
@@ -460,10 +461,11 @@ memory.
 - **Paper info (`0x69`), print history (`0x62`) and the print area (`0x0F`)
   layouts are unverified.** They are exposed as raw bytes rather than guessed
   fields.
-- **Density and tape type always come from the printer.** Discovery mirrors the
-  values stored in the printer, so an edit made while offline is overwritten on
-  the next connection. Change them while connected (or on the printer itself);
-  the next job uses the printer's stored values.
+- **Density and tape type come from the printer when `Read printer settings`
+  is on**, which is the default: discovery mirrors the printer's stored values,
+  so an edit made while offline is overwritten on the next connection. With the
+  setting off, the app's stored values are used. Change them while connected
+  (or on the printer itself) when the setting is on.
 - **One document at a time.** There is no multi-label library or cloud sync;
   images are embedded as data URLs, which count against the browser's
   localStorage quota.

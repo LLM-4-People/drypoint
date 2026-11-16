@@ -497,7 +497,8 @@ them: the fixtures use the clearly synthetic values owned by
 | Max print height | 1600 px → 203 mm at 200 dpi (the app caps documents at 200 mm) |
 | Auto power-off range | 1-4 |
 | RTC / volume / RFID read | supported |
-| Cutter / colour / grey buffer | not reported |
+| Cutter | reported no in the captured CAPS |
+| Colour / grey buffer | absent from the captured CAPS, not reported |
 | Battery | level 4 → 100 %, 4070 mV in the captured frame |
 | Sensors | lid closed, paper present, RFID ok |
 | Roll tag | barcode `6977031214406` (a product EAN), 192 total, 75 used (117 remaining), type 1 |
