@@ -34,7 +34,7 @@ Chromium is discovered from `D110_CHROME`, then `CHROME_PATH`, then
 browser cache.
 
 <!-- generated:suites -->
-The browser leg runs **22 tests in 12 files**:
+The browser leg runs **26 tests in 13 files**:
 
 - `accessibility.test.mjs` (2 tests)
 - `actionbar-clearance.test.mjs` (1 test)
@@ -48,6 +48,7 @@ The browser leg runs **22 tests in 12 files**:
 - `layout-shift.test.mjs` (4 tests)
 - `stage-hint.test.mjs` (1 test)
 - `toast-overlay.test.mjs` (1 test)
+- `ux-round5.test.mjs` (4 tests)
 <!-- /generated:suites -->
 
 `npm run test:browser` runs only that list.

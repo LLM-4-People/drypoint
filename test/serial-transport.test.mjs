@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { SerialTransport, canonicalSpp } from '../src/device/transports/serial.js';
+import { SERIAL_PERMISSION_HINT, SerialTransport, canonicalSpp } from '../src/device/transports/serial.js';
 import { createDeviceManager } from '../src/device/manager.js';
 import { CONFIG } from '../src/core/config.js';
 import { encodeFrame } from '../src/protocol/frames.js';
@@ -158,6 +158,42 @@ test('a refused serial permission names the concrete next step', async (t) => {
     assert.equal(error.name, 'SecurityError', 'the browser error class survives');
     return true;
   });
+});
+
+test('a blocked granted() read gets the same site-settings hint', async (t) => {
+  const denial = Object.assign(new Error('Permission denied'), { name: 'SecurityError' });
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      serial: {
+        // This is what the header connect button reaches on a blocked site.
+        getPorts: async () => {
+          throw denial;
+        },
+        requestPort: async () => {
+          throw denial;
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+  t.after(() => {
+    if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor);
+    else delete globalThis.navigator;
+  });
+
+  for (const [name, call] of [
+    ['granted', () => SerialTransport.granted()],
+    ['request', () => SerialTransport.request()],
+  ]) {
+    await assert.rejects(call, (error) => {
+      assert.ok(error.message.includes(SERIAL_PERMISSION_HINT), `${name} uses the one hint owner`);
+      assert.match(error.message, /Permission denied/);
+      assert.equal(error.name, 'SecurityError');
+      return true;
+    });
+  }
 });
 
 test('a cancelled picker keeps the quiet cancel path, without the permission hint', async (t) => {

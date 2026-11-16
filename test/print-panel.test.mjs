@@ -60,6 +60,7 @@ function fakeDevice({
   caps = buildCaps(),
   printing = false,
   readingInfo = false,
+  maintaining = false,
   sound = true,
   soundWrite = undefined,
   rejectSoundRead = false,
@@ -68,7 +69,7 @@ function fakeDevice({
 } = {}) {
   const calls = [];
   const device = {
-    state: { status, capabilities: caps, transportLabel: null, printing, readingInfo, error: null },
+    state: { status, capabilities: caps, transportLabel: null, printing, readingInfo, maintaining, error: null },
     get connected() {
       return this.state.status === 'connected';
     },
@@ -255,6 +256,7 @@ test('sound controls follow the capability across connected and disconnected', a
       if (status === 'connected') {
         assert.deepEqual(switches.map((row) => row.getAttribute('data-state')), ['known', 'known'], `${label}: the read resolved`);
         assert.deepEqual(buttons.map((button) => button.getAttribute('aria-checked')), ['true', 'true'], `${label}: the printer's value is applied`);
+        assert.deepEqual(buttons.map((button) => button.getAttribute('role')), ['switch', 'switch'], `${label}: a known value is a switch`);
       } else {
         assert.deepEqual(switches.map((row) => row.getAttribute('data-state')), ['unknown', 'unknown'], `${label}: offline is unknown`);
         assert.deepEqual(
@@ -262,6 +264,7 @@ test('sound controls follow the capability across connected and disconnected', a
           [null, null],
           `${label}: an unread value is never announced as off`
         );
+        assert.deepEqual(buttons.map((button) => button.getAttribute('role')), [null, null], `${label}: an unknown value is not a switch`);
       }
     }
   }
@@ -742,6 +745,22 @@ test('a device-info read disables every command that would use the link', () => 
   assert.equal(container.querySelector('select[aria-label="Auto power-off"]').disabled, true);
   for (const row of switchRows(container)) assert.equal(row.querySelector('button').disabled, true);
   assert.equal(container.querySelector('input[aria-label="Copies"]').disabled, false, 'a document field is not link-bound');
+});
+
+test('an in-flight maintenance command disables every command that would use the link', () => {
+  const { device } = fakeDevice({
+    status: 'connected',
+    caps: buildCaps({ hasVolume: true, autoShutdown: 2 }),
+    maintaining: true,
+  });
+  const { container } = mount(device);
+
+  for (const label of ['Disconnect', 'Refresh', 'Feed / align paper', 'Self-test page', 'Sync clock', 'Reset settings']) {
+    assert.equal(buttonByText(container, label)?.disabled, true, `${label} waits for the maintenance command`);
+  }
+  assert.equal(container.querySelector('input[aria-label="Density"]').disabled, true);
+  assert.equal(container.querySelector('select[aria-label="Auto power-off"]').disabled, true);
+  for (const row of switchRows(container)) assert.equal(row.querySelector('button').disabled, true);
 });
 
 test('a device-info read that loses the link logs debug instead of toasting an error', async () => {

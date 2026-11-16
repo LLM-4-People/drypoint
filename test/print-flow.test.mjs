@@ -464,6 +464,13 @@ test('one pure function owns the Print and Test button state', () => {
     testTitle: 'Wait for the device info read to finish',
     supportBlocked: '',
   });
+  assert.deepEqual(printButtonState({ ...base, maintaining: true }), {
+    disabled: true,
+    title: 'Wait for the printer command to finish',
+    testDisabled: true,
+    testTitle: 'Wait for the printer command to finish',
+    supportBlocked: '',
+  });
   assert.deepEqual(printButtonState({ ...base, oversized: true }), {
     disabled: false,
     title: 'The label is larger than the printer; it will be shortened to fit',
@@ -687,6 +694,35 @@ test('a dismissed notice never reaches the print confirmation again', async () =
 });
 
 /* ---------------- a test print is not the live label (O2) ---------------- */
+
+test('only the live label records a roll profile', async () => {
+  const seen = [];
+  const live = createDocument({ lengthMm: 60, elements: [{ type: 'text', text: 'LIVE' }] });
+  const testPage = createDocument({ lengthMm: 40, elements: [{ type: 'text', text: 'TEST' }] });
+  const flow = createPrintFlow({
+    device: {
+      connected: true,
+      async print(_raster, options) {
+        seen.push(options.rememberRoll);
+        return { copies: 1 };
+      },
+      async cancel() {},
+    },
+    getDocument: () => live,
+    getSettings: () => ({}),
+    notify: () => {},
+    confirm: async () => true,
+    hydrate: async () => {},
+    render: () => ({ canvas: {}, warnings: [] }),
+    rasterize: () => ({ width: 96, height: 320, rows: [] }),
+    setStatus: () => {},
+    setProgress: () => {},
+  });
+
+  await flow.run();
+  await flow.run(testPage);
+  assert.deepEqual(seen, [true, false], 'the live document records the roll, the fixed test page never does');
+});
 
 test('an over-long test document is clamped, never replaced by the live label', async () => {
   // Authored while the default 200 mm tape was assumed.
@@ -934,8 +970,14 @@ test('a committed job lost before the PrintEnd ack is not "may be incomplete"', 
 test('a connection refresh does not overwrite a job status', () => {
   // The post-print discovery publishes the same event as a plain connect.
   assert.equal(connectionStatus({ jobBusy: true, remaining: 117 }), null, 'a busy job owns #status');
-  assert.equal(connectionStatus({ jobBusy: false, remaining: 117 }), 'Connected · 117 labels left');
-  assert.equal(connectionStatus({ jobBusy: false, remaining: 0 }), 'Connected · 0 labels left', 'zero is a value, not absence');
+  for (const [remaining, expected] of [
+    [0, 'Connected · 0 labels left'],
+    [1, 'Connected · 1 label left'],
+    [2, 'Connected · 2 labels left'],
+    [117, 'Connected · 117 labels left'],
+  ]) {
+    assert.equal(connectionStatus({ jobBusy: false, remaining }), expected, `${remaining} labels`);
+  }
   assert.equal(connectionStatus({ jobBusy: false, remaining: null }), 'Connected');
   assert.equal(connectionStatus(), 'Connected');
 });

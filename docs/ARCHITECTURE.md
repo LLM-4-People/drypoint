@@ -507,7 +507,11 @@ regenerates both, each file replaced atomically on its own. The pair is not
 written as one transaction: if a crash lands between the two renames the files
 disagree, and the worker rejects that install (`MANIFEST.version !== BUILD`)
 instead of serving a half-updated list. `scripts/serve.mjs` runs `--write`
-before listening, so development never serves a stale list.
+before listening, so development never serves a stale list. If a crash leaves
+the pair disagreeing, restarting the dev server or running `npm run build`
+rewrites both from the same source; the previous cache stays active until a
+matching pair installs, so this is a development/precache recovery step, not
+application-data loss.
 
 The stamp is what makes an asset-only deploy install a new worker: the browser
 fetches `sw.js` on every update check, sees a changed `BUILD` line, installs the

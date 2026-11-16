@@ -9,6 +9,14 @@ export function round1(value) {
   return Math.round(value * 10) / 10;
 }
 
+/**
+ * One plural owner for operator-facing counts: 1 is singular, every other
+ * count (including 0) is plural. Callers supply only the two nouns.
+ */
+export function plural(count, singular, pluralForm = `${singular}s`) {
+  return count === 1 ? singular : pluralForm;
+}
+
 export function toHex(bytes) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join(' ');
 }

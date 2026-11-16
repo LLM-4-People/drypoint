@@ -37,7 +37,7 @@ const SPP_SHORT_ID = Number.parseInt(SPP_SERVICE_ID, 16);
  * whose message is only "Permission denied". The operator cannot act on that:
  * the fix is a site setting, not a retry.
  */
-const SERIAL_PERMISSION_HINT = 'Allow serial access for this site in the browser’s site settings, then reconnect.';
+export const SERIAL_PERMISSION_HINT = 'Allow serial access for this site in the browser’s site settings, then reconnect.';
 
 /**
  * Add the concrete next step to a permission refusal, and leave every other
@@ -72,7 +72,15 @@ export class SerialTransport {
 
   static async granted() {
     if (!SerialTransport.available()) return null;
-    const ports = await navigator.serial.getPorts();
+    let ports;
+    try {
+      // This is the connect path from the header pill. A blocked site
+      // permission surfaces here, before any picker, so it needs the same
+      // actionable wording request() and open() add.
+      ports = await navigator.serial.getPorts();
+    } catch (error) {
+      throw withPermissionHint(error);
+    }
     // Only a port that reports the SPP service is this printer. Falling back to
     // an arbitrary authorised port would retry an unusable one forever and
     // never offer the picker; null makes the caller ask instead.

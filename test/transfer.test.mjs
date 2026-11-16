@@ -42,8 +42,19 @@ test('the transfer envelope names the app and the document version', () => {
   assert.equal(JSON.parse(json(document)).format, CONFIG.app.id);
 });
 
-test('a round trip preserves every element type and the label length', () => {
-  const source = everyTypeDocument();
+test('an over-long element id is capped, exports and re-imports', () => {
+  const longId = 'x'.repeat(1_000_000);
+  const document = validateDocument({ lengthMm: 40, elements: [{ id: longId, type: 'text', text: 'Hi' }] });
+  assert.equal(document.elements[0].id.length, CONFIG.bounds.maxIdChars, 'the id is bounded at the schema owner');
+  assert.match(document.notices.join(' '), /element id was shortened/, 'the change is reported, not silent');
+
+  const file = json(document);
+  assert.ok(file.length < TRANSFER_MAX_BYTES, 'the accepted document exports within the transfer cap');
+  const reimported = parseDocument(file).document;
+  assert.equal(reimported.elements[0].id, document.elements[0].id, 'an exported label re-imports unchanged');
+});
+
+test('a round trip preserves every element type and the label length', () => {  const source = everyTypeDocument();
   const { document, notices } = parseDocument(json(source));
   assert.deepEqual(notices, []);
   assert.equal(document.lengthMm, source.lengthMm);

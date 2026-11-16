@@ -407,7 +407,7 @@ export function createInspector({ container, controller, onPickImage }) {
           { class: 'empty' },
           el('span', { class: 'icon' }, icon('layers', { size: 20 })),
           el('span', {}, 'Select an element to edit it'),
-          el('span', { class: 'hint' }, 'Or add one from the toolbar on the left')
+          el('span', { class: 'hint' }, 'Or add one from the toolbar')
         )
       );
     }

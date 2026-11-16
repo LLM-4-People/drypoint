@@ -6,7 +6,7 @@ import { CONFIG } from '../src/core/config.js';
 import { clearLog, subscribeLog } from '../src/core/log.js';
 import { emptyCapabilities } from '../src/device/capabilities.js';
 import { INFO_KEYS } from '../src/protocol/commands.js';
-import { getRollProfile } from '../src/device/roll-profiles.js';
+import { getRollProfile, rememberRoll } from '../src/device/roll-profiles.js';
 import { geometry, resetGeometry } from '../src/core/geometry.js';
 import { documentHeightPx } from '../src/label/schema.js';
 import { encodeFrame } from '../src/protocol/frames.js';
@@ -754,6 +754,172 @@ test('disconnect during open() cancels the attempt instead of reconnecting', asy
   assert.deepEqual(frameCommands(fake.instances[0]), [], 'discovery never ran');
 });
 
+test('a disconnect during the first candidate never constructs the second', async () => {
+  const openGate = deferred();
+  const events = [];
+  class FirstTransport {
+    kind = 'first';
+    static available() {
+      return true;
+    }
+    static async granted() {
+      events.push('first.granted');
+      return { id: 'first' };
+    }
+    static async request() {
+      events.push('first.request');
+      return null;
+    }
+    constructor() {
+      events.push('first.constructed');
+    }
+    onData() {}
+    onClose() {}
+    async open() {
+      events.push('first.open');
+      await openGate.promise;
+    }
+    async write() {}
+    async close() {
+      events.push('first.close');
+    }
+    describe() {
+      return 'First transport';
+    }
+  }
+  class SecondTransport {
+    kind = 'second';
+    static available() {
+      return true;
+    }
+    static async granted() {
+      events.push('second.granted');
+      return { id: 'second' };
+    }
+    static async request() {
+      events.push('second.request');
+      return null;
+    }
+    constructor() {
+      events.push('second.constructed');
+    }
+    onData() {}
+    onClose() {}
+    async open() {
+      events.push('second.open');
+    }
+    async write() {}
+    async close() {
+      events.push('second.close');
+    }
+    describe() {
+      return 'Second transport';
+    }
+  }
+  const manager = createDeviceManager({ candidates: () => [FirstTransport, SecondTransport] });
+  const connecting = manager.connect().then(
+    () => null,
+    (error) => error
+  );
+  await waitFor(() => events.includes('first.open'));
+  await manager.disconnect();
+  openGate.resolve();
+  const error = await connecting;
+  assert.equal(error.cancelled, true);
+  assert.equal(events.includes('second.constructed'), false, 'the next candidate was never built');
+  assert.deepEqual(
+    events.filter((event) => event.startsWith('second.')),
+    [],
+    'granted, request and open were never called on the second candidate'
+  );
+  assert.equal(manager.state.status, 'idle');
+});
+
+test('a cancelled picker does not solicit the next transport', async () => {
+  const events = [];
+  class PickerTransport {
+    kind = 'first';
+    static available() {
+      return true;
+    }
+    static async granted() {
+      events.push('first.granted');
+      return null;
+    }
+    static async request() {
+      events.push('first.request');
+      const error = new Error('The user aborted a request.');
+      error.name = 'NotFoundError';
+      throw error;
+    }
+    onData() {}
+    onClose() {}
+    async open() {}
+    async write() {}
+    async close() {}
+  }
+  class NextTransport {
+    kind = 'second';
+    static available() {
+      return true;
+    }
+    static async granted() {
+      events.push('second.granted');
+      return { id: 'second' };
+    }
+    static async request() {
+      events.push('second.request');
+      return null;
+    }
+    onData() {}
+    onClose() {}
+    async open() {}
+    async write() {}
+    async close() {}
+  }
+  const manager = createDeviceManager({ candidates: () => [PickerTransport, NextTransport] });
+  await assert.rejects(manager.connect(), (error) => error.cancelled === true && /No printer selected/.test(error.message));
+  assert.deepEqual(events, ['first.granted', 'first.request'], 'the cancel stopped the candidate loop');
+});
+
+test('a test print does not overwrite the live roll profile', async () => {
+  const fake = harness();
+  const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });
+  await manager.connect();
+  rememberRoll(ROLL_BARCODE, { lengthMm: 60, labelType: 1 });
+  assert.equal(getRollProfile(ROLL_BARCODE).lengthMm, 60);
+
+  // The action-bar test label is the fixed 40 mm document and never records.
+  await manager.print(raster, { lengthMm: 40, rememberRoll: false });
+  assert.equal(getRollProfile(ROLL_BARCODE).lengthMm, 60, 'the test page left the saved roll alone');
+
+  // A real label still owns the profile.
+  await manager.print(raster, { lengthMm: 45 });
+  assert.equal(getRollProfile(ROLL_BARCODE).lengthMm, 45);
+});
+
+test('a maintenance command owns the link until it completes', async () => {
+  const gate = deferred();
+  const fake = harness({ override: (cmd) => (cmd === 0x5a ? gate.promise : undefined) });
+  const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });
+  await manager.connect();
+  const instance = fake.instances[0];
+
+  const selfTest = manager.testPage();
+  await waitFor(() => frameCommands(instance).includes(0x5a));
+  assert.equal(manager.state.maintaining, true, 'the busy flag is published');
+
+  await assert.rejects(manager.testPage(), /printer command is running/);
+  await assert.rejects(manager.print(raster, { lengthMm: 40 }), /printer command is running/);
+  assert.equal(frameCommands(instance).filter((cmd) => cmd === 0x5a).length, 1, 'no second self-test frame');
+  assert.equal(frameCommands(instance).filter((cmd) => cmd === 0x01).length, 0, 'no print frame');
+
+  gate.resolve([{ cmd: 0x6a, data: [1] }]);
+  await selfTest;
+  assert.equal(manager.state.maintaining, false);
+  await manager.print(raster, { lengthMm: 40 });
+});
+
 test('the manager publishes its printing lock and clears it after the job', async () => {
   const gate = deferred();
   const fake = harness({ override: (cmd) => (cmd === 0xf3 ? gate.promise : undefined) });
@@ -951,6 +1117,45 @@ test('a second diagnostic read joins the one in flight and print is refused', as
 
   // The link is free again: the same job now runs.
   await manager.print(raster, { lengthMm: 40 });
+});
+
+test('a reconnect during a diagnostic read never continues on the new link', async () => {
+  const gate = deferred();
+  const fake = harness({
+    override: (cmd, data) => (cmd === 0x40 && data[0] === INFO_KEYS.speed ? gate.promise : undefined),
+    hold: (cmd, data) => cmd === 0x40 && data[0] === INFO_KEYS.speed,
+  });
+  const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });
+  await manager.connect();
+  const first = fake.instances[0];
+
+  const read = manager.readInfoDiagnostics().then(
+    () => null,
+    (error) => error
+  );
+  await waitFor(() => frameCommands(first).includes(0x40) && manager.state.readingInfo);
+  // Wait until the held diagnostic key is the one on the wire.
+  await waitFor(() => first.writes.some((bytes) => frameOf(bytes).cmd === 0x40 && frameOf(bytes).data[0] === INFO_KEYS.speed));
+
+  await manager.disconnect();
+  await manager.connect();
+  const second = fake.instances[1];
+  assert.notEqual(second, first);
+  gate.resolve([{ cmd: 0x42, data: [3] }]);
+
+  const error = await read;
+  assert.ok(error, 'the superseded read settles on its own link instead of continuing');
+  const diagnosticKeys = DIAGNOSTIC_INFO_KEYS;
+  const leaked = frameCommands(second).filter((cmd) => cmd === 0x40);
+  assert.ok(leaked.length > 0, 'the new link ran its own discovery');
+  assert.deepEqual(
+    second.writes
+      .map(frameOf)
+      .filter(({ cmd, data }) => cmd === 0x40 && diagnosticKeys.includes(data[0]))
+      .map(({ data }) => data[0]),
+    [],
+    'no diagnostic probe continued on the replacement link'
+  );
 });
 
 test('cancel settles a job stalled on a row write and clears the printing lock', async () => {

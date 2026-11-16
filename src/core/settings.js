@@ -268,7 +268,14 @@ function settingsLoadIssue() {
   };
 }
 
-function hydrateSettings(data) {
+function hydrateSettings(data, version) {
+  // A settings envelope from another schema version is not this app's data:
+  // coercing it key by key was harmless only because the current schema has
+  // no incompatible keys. Report the reset like any other unreadable payload.
+  if (version !== CONFIG.app.documentVersion) {
+    settingsLoadIssue();
+    return defaultSettings();
+  }
   // `data` is untrusted: a string, number, null or array is a corrupt payload,
   // not an empty settings object. The store writes clean defaults after this
   // module reports the issue.

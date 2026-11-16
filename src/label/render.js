@@ -242,6 +242,14 @@ export function rectGeometry(element, boxW, boxH) {
 function drawRect(ctx, element, boxW, boxH, warnings) {
   const geometry = rectGeometry(element, boxW, boxH);
   if (geometry.collapsed) warnings.add('Frame stroke is wider than the box, so it prints as a solid block');
+  // A stroke at least half the smaller box leaves a degenerate inset path.
+  // Stroking it paints nothing while the warning promises a solid block: fill
+  // the whole box instead, exactly what the operator reads.
+  if (geometry.collapsed) {
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, boxW, boxH);
+    return;
+  }
   ctx.beginPath();
   if (geometry.radius > 0) ctx.roundRect(geometry.x, geometry.y, geometry.w, geometry.h, geometry.radius);
   else ctx.rect(geometry.x, geometry.y, geometry.w, geometry.h);
