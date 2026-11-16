@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import {
   GATE_COMMANDS,
+  INJECTION_KEYS,
   PINNED_ACTIONS,
   RELEASE_FILE,
   WORKFLOW_DIR,
@@ -542,6 +543,172 @@ test('both unprivileged jobs create the one throwaway key before the build', asy
   assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': hardcoded }), 0);
 });
 
+test('trusted wiring, injection, permissions and release authority reject every planted mutation', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  const release = files[RELEASE_FILE];
+  const cases = [
+    // A2-V1: job-level continue-on-error.
+    ['required continue-on-error', 'checks.yml', checks.replace('  required:\n', '  required:\n    continue-on-error: true\n'), /job "required" must not set continue-on-error/],
+    ['web continue-on-error', 'checks.yml', checks.replace('  web:\n', '  web:\n    continue-on-error: true\n'), /job "web" must not set continue-on-error/],
+    ['build continue-on-error', RELEASE_FILE, release.replace('  build:\n', '  build:\n    continue-on-error: true\n'), /job "build" must not set continue-on-error/],
+    // A2-V2/F9: trusted checkout refs and paths.
+    [
+      'policy checkout pr head',
+      'checks.yml',
+      checks.replace('          ref: main\n          persist-credentials: false\n      - name: Use the pinned Node', '          ref: ${{ github.event.pull_request.head.sha }}\n          persist-credentials: false\n      - name: Use the pinned Node'),
+      /with: must be exactly/,
+    ],
+    [
+      'required checkout pr head',
+      'checks.yml',
+      checks.replace('          ref: main\n          persist-credentials: false\n          fetch-depth: 1', '          ref: ${{ github.event.pull_request.head.sha }}\n          persist-credentials: false\n          fetch-depth: 1'),
+      /with: must be exactly/,
+    ],
+    [
+      'policy checkout fork repository',
+      'checks.yml',
+      checks.replace('          ref: main\n          persist-credentials: false\n      - name: Use the pinned Node', '          repository: ${{ github.event.pull_request.head.repo.full_name }}\n          ref: main\n          persist-credentials: false\n      - name: Use the pinned Node'),
+      /with: must be exactly/,
+    ],
+    [
+      'required checkout moved path',
+      'checks.yml',
+      checks.replace('          ref: main\n          persist-credentials: false\n          fetch-depth: 1', '          ref: main\n          path: trusted\n          persist-credentials: false\n          fetch-depth: 1'),
+      /with: must be exactly/,
+    ],
+    ['PR_TREE workspace', 'checks.yml', checks.replace(/          PR_TREE: .*\n/, '          PR_TREE: ${{ github.workspace }}\n'), /env: must be exactly/],
+    [
+      'gate step condition',
+      'checks.yml',
+      checks.replace('      - name: Workflow policy and privacy on the candidate tree\n        env:', "      - name: Workflow policy and privacy on the candidate tree\n        if: false\n        env:"),
+      /condition must be|must not set if/,
+    ],
+    // A2-V3/F6: env injection at every level.
+    ['workflow NODE_OPTIONS', 'checks.yml', checks.replace('permissions:\n', 'env:\n  NODE_OPTIONS: --require ./pr/scripts/evil.cjs\npermissions:\n'), /workflow env must not set NODE_OPTIONS/],
+    ['job BASH_ENV', 'checks.yml', checks.replace('  policy:\n', '  policy:\n    env:\n      BASH_ENV: ./pr/scripts/evil.sh\n'), /job "policy" env must not set BASH_ENV/],
+    [
+      'step GITHUB_OUTPUT',
+      'checks.yml',
+      checks.replace('        env:\n          PR_TREE:', '        env:\n          GITHUB_OUTPUT: ./pr/out\n          PR_TREE:'),
+      /step env must not set GITHUB_OUTPUT/,
+    ],
+    // A2-V4/V5: the worktree and the upload path.
+    ['materialize main', RELEASE_FILE, release.replace('git worktree add --detach "$worktree" "$REF"', 'git worktree add --detach "$worktree" main'), /must materialize "\$REF"/],
+    [
+      'HEAD step removed',
+      RELEASE_FILE,
+      release.replace(/- name: Prove the worktree is the resolved commit[\s\S]*?run: test "\$\(git rev-parse HEAD\)" = "\$SHA"\n/, ''),
+      /must run exactly these commands|must have exactly/,
+    ],
+    [
+      'HEAD step moved out of the worktree',
+      RELEASE_FILE,
+      release.replace(
+        '        working-directory: ${{ env.RELEASE_TREE }}\n        run: test "$(git rev-parse HEAD)" = "$SHA"',
+        '        run: test "$(git rev-parse HEAD)" = "$SHA"'
+      ),
+      /must run .*git rev-parse HEAD.* in the resolved worktree/,
+    ],
+    ['upload dist/*', RELEASE_FILE, release.replace('          path: ${{ env.RELEASE_TREE }}/dist/*', '          path: dist/*'), /upload path must be exactly/],
+    // A2-V6: source in sign and publish.
+    ['sign source', RELEASE_FILE, release.replace("          trap 'rm -f", '          . dist/notes.md\n          trap \'rm -f'), /must not source a file/],
+    [
+      'publish source',
+      RELEASE_FILE,
+      release.replace('          for file in "$apk" "$checksum" "$bundle" "$notes"; do test -f "$file"; done', '          . "$notes"\n          for file in "$apk" "$checksum" "$bundle" "$notes"; do test -f "$file"; done'),
+      /must not source a file/,
+    ],
+    // F5: trusted step shape.
+    [
+      'policy extra step',
+      'checks.yml',
+      checks.replace(
+        '      - name: Workflow policy and privacy on the candidate tree',
+        '      - name: Replace the parser\n        run: cp pr/scripts/check-workflows.mjs scripts/check-workflows.mjs\n      - name: Workflow policy and privacy on the candidate tree'
+      ),
+      /must have exactly 6 steps/,
+    ],
+    [
+      'policy working-directory',
+      'checks.yml',
+      checks.replace('      - name: Workflow policy and privacy on the candidate tree\n        env:', '      - name: Workflow policy and privacy on the candidate tree\n        working-directory: pr\n        env:'),
+      /must not set working-directory/,
+    ],
+    ['policy defaults', 'checks.yml', checks.replace('  policy:\n', "  policy:\n    defaults:\n      run:\n        shell: bash -c 'exit 0' {0}\n"), /must not declare defaults/],
+    ['policy container', 'checks.yml', checks.replace('  policy:\n', '  policy:\n    container: node:22\n'), /must not declare container/],
+    ['workflow defaults', 'checks.yml', checks.replace('permissions:\n', "defaults:\n  run:\n    shell: bash -c 'exit 0' {0}\npermissions:\n"), /workflow-level defaults/],
+    // F10: exact conditions.
+    [
+      'resolve if or true',
+      RELEASE_FILE,
+      release.replace("       github.event.workflow_run.conclusion == 'success')", "       github.event.workflow_run.conclusion == 'success') || true"),
+      /job "resolve" if: must be exactly/,
+    ],
+    [
+      'publish if dispatch',
+      RELEASE_FILE,
+      release.replace("    if: needs.resolve.outputs.publish == 'true'\n    runs-on: ubuntu-24.04", "    if: needs.resolve.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'\n    runs-on: ubuntu-24.04"),
+      /job "publish" if: must be exactly/,
+    ],
+    // F11: the tag source.
+    ['publish tag ref_name', RELEASE_FILE, release.replace('      TAG: ${{ needs.resolve.outputs.tag }}\n      VERSION:', '      TAG: ${{ github.ref_name }}\n      VERSION:'), /env TAG must be exactly/],
+    ['publish tag literal', RELEASE_FILE, release.replace('      TAG: ${{ needs.resolve.outputs.tag }}\n      VERSION:', '      TAG: v1.0.2\n      VERSION:'), /env TAG must be exactly/],
+    // F12: permissions.
+    ['checks contents write', 'checks.yml', checks.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'), /top-level permissions must be exactly/],
+    ['required permissions write', 'checks.yml', checks.replace('  required:\n', '  required:\n    permissions:\n      contents: write\n'), /job "required" permissions must be exactly/],
+    [
+      'web github token',
+      'checks.yml',
+      checks.replace('      - name: Privacy gate\n        run: npm run privacy:check', '      - name: Privacy gate\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: npm run privacy:check'),
+      /must not read github.token/,
+    ],
+    // F13: publish command allowlist.
+    [
+      'publish upload clobber',
+      RELEASE_FILE,
+      release.replace('          gh release create "$TAG" \\', '          gh release upload "$TAG" dist/x --clobber\n          gh release create "$TAG" \\'),
+      /must not run gh release upload/,
+    ],
+    [
+      'publish gh api',
+      RELEASE_FILE,
+      release.replace('          gh release create "$TAG" \\', '          gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/1"\n          gh release create "$TAG" \\'),
+      /may only run gh release/,
+    ],
+    // F14: concurrency.
+    ['checks release group', 'checks.yml', checks.replace('  group: checks-${{ github.workflow }}-${{ github.ref }}', '  group: release'), /concurrency group must be exactly/],
+    // N8: the runner image.
+    ['required windows', 'checks.yml', checks.replace('  required:\n    name: required\n    if: always()', '  required:\n    name: required\n    runs-on: windows-latest\n    if: always()').replace('    runs-on: ubuntu-24.04\n    timeout-minutes: 5', '    timeout-minutes: 5'), /must run on ubuntu-24.04/],
+    ['policy macos', 'checks.yml', checks.replace('  policy:\n    name: policy (trusted gate)\n    runs-on: ubuntu-24.04', '  policy:\n    name: policy (trusted gate)\n    runs-on: macos-latest'), /must run on ubuntu-24.04/],
+  ];
+  for (const [name, file, text, pattern] of cases) {
+    assert.notEqual(text, file === 'checks.yml' ? checks : release, `${name}: the mutation applies`);
+    const findings = checkWorkflow(text, { file });
+    const releaseFindings = file === RELEASE_FILE ? checkReleaseWorkflow(text, { file }) : [];
+    assert.ok(
+      [...findings, ...releaseFindings].some((finding) => pattern.test(finding)),
+      `${name}: ${[...findings, ...releaseFindings].join(' | ')}`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, [file]: text }), 0, `${name}: the CLI exits nonzero`);
+  }
+  assert.equal(await runPolicy(t, files), 0, 'the real tree passes');
+});
+
+test('every injection variable is rejected at job level', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  for (const key of INJECTION_KEYS) {
+    const text = checks.replace('  policy:\n', `  policy:\n    env:\n      ${key}: /tmp/evil\n`);
+    assert.ok(
+      checkWorkflow(text, { file: 'checks.yml' }).some((finding) => finding.includes(`must not set ${key}`)),
+      `${key} is rejected`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': text }), 0, `${key}: the CLI exits nonzero`);
+  }
+  assert.equal(await runPolicy(t, files), 0, 'the real tree sets none of them');
+});
+
 test('the release parser reads one real publish command and rejects decoys', async () => {
   const files = await real();
   const release = files[RELEASE_FILE];
@@ -604,7 +771,7 @@ test('the release authority is main-defined, split and tag-derived', async () =>
     release.replace("github.event.workflow_run.event == 'push'", "github.event.workflow_run.event != 'never'"),
   ]) {
     assert.ok(
-      checkReleaseWorkflow(mutated, { file: RELEASE_FILE }).some((finding) => /job "resolve" must only run|must handle a manual dispatch|must require the push/.test(finding)),
+      checkReleaseWorkflow(mutated, { file: RELEASE_FILE }).some((finding) => /job "resolve" must only run|must handle a manual dispatch|must require the push|job "resolve" if: must be exactly/.test(finding)),
       'the resolve trigger guard is mandatory'
     );
   }

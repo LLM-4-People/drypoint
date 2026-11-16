@@ -189,6 +189,13 @@ jobs:
           worktree="$RUNNER_TEMP/release"
           git worktree add --detach "$worktree" "$REF"
           printf 'RELEASE_TREE=%s\n' "$worktree" >> "$GITHUB_ENV"
+      - name: Prove the worktree is the resolved commit
+        # A2-V8: the dynamic actions/checkout sink is gone; this runtime
+        # assertion is the integrity property CodeQL's dismissal relies on.
+        # `$REF` is a tag or a full SHA, and `$SHA` is the commit resolve
+        # verified; a moved tag or a stale worktree fails here.
+        working-directory: ${{ env.RELEASE_TREE }}
+        run: test "$(git rev-parse HEAD)" = "$SHA"
       - name: Use the pinned Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

@@ -117,7 +117,7 @@ scripts/
   lib/js-scan.mjs          shared comment/string/template/regex lexer
   lib/png.mjs              RGBA PNG codec and flattening for the generated icons
   lib/server-state.mjs     pid file, liveness, command verification
-  lib/tree.mjs             gitignore-aware walker shared by the repository gates
+  lib/tree.mjs             gitignore walker plus the trusted `git ls-files` view
 test/                      node:test suites (measured probes need Chromium)
 docs/
   README.md                documentation index: task → page

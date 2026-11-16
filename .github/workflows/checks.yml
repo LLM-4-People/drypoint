@@ -196,7 +196,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/check-workflows.mjs --workflows "$PR_TREE/.github/workflows"
-          node scripts/check-privacy.mjs --root "$PR_TREE"
+          node scripts/check-privacy.mjs --root "$PR_TREE" --tracked
           bash scripts/actionlint.sh "$PR_TREE/.github/workflows"
 
   required:
