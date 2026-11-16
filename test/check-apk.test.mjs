@@ -25,10 +25,13 @@ const manifest = {
   digests: { 'index.html': 'a'.repeat(64), 'assets/app.css': 'b'.repeat(64) },
 };
 
+/** The identity the release must carry, read from its two owners. */
+const IDENTITY = expectedIdentity();
+
 const BADGING = [
-  "package: name='dev.llm4people.drypoint' versionCode='10002' versionName='1.0.2'",
+  `package: name='${IDENTITY.package}' versionCode='${IDENTITY.versionCode}' versionName='${IDENTITY.versionName}'`,
   "uses-permission: name='android.permission.BLUETOOTH_CONNECT'",
-  "launchable-activity: name='dev.llm4people.drypoint.MainActivity' label='' icon=''",
+  `launchable-activity: name='${IDENTITY.package}.MainActivity' label='' icon=''`,
 ].join('\n');
 
 const XMLTREE = [
@@ -98,12 +101,15 @@ test('INTERNET in either permission form and the launcher count are checked', ()
 
 test('the badging must carry the exact package, versionCode and versionName', () => {
   const expected = expectedIdentity();
-  assert.deepEqual(expected, { package: 'dev.llm4people.drypoint', versionCode: 10002, versionName: '1.0.2' });
+  const pkg = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'));
+  assert.equal(expected.package, 'dev.llm4people.drypoint', 'the package comes from brand.json');
+  assert.equal(expected.versionName, pkg.version, 'the version name comes from package.json');
+  assert.equal(expected.versionCode, 10000 + Number(pkg.version.split('.')[1]) * 10 + Number(pkg.version.split('.')[2]), 'the version code is the one formula');
   assert.deepEqual(badgingFindings(BADGING, expected), []);
   const cases = [
-    ['versionCode 1', BADGING.replace("versionCode='10002'", "versionCode='1'"), /versionCode 10002/],
-    ['wrong package', BADGING.replace('dev.llm4people.drypoint', 'dev.example.other'), /not dev\.llm4people\.drypoint/],
-    ['wrong versionName', BADGING.replace("versionName='1.0.2'", "versionName='9.9.9'"), /not dev\.llm4people\.drypoint 1\.0\.2/],
+    ['versionCode 1', BADGING.replace(`versionCode='${expected.versionCode}'`, "versionCode='1'"), new RegExp(`versionCode ${expected.versionCode}`)],
+    ['wrong package', BADGING.replace(expected.package, 'dev.example.other'), /not dev\.llm4people\.drypoint/],
+    ['wrong versionName', BADGING.replace(`versionName='${expected.versionName}'`, "versionName='9.9.9'"), new RegExp(`not dev\\.llm4people\\.drypoint ${expected.versionName.replaceAll('.', '\\.')}`)],
   ];
   for (const [name, text, pattern] of cases) {
     assert.ok(badgingFindings(text, expected).some((finding) => pattern.test(finding)), `${name} is rejected`);
@@ -115,13 +121,13 @@ test('the badging must carry the exact package, versionCode and versionName', ()
   const exec = (command, args) => {
     if (command === 'unzip' && args[0] === '-Z1') return files.map((file) => `assets/www/${file}`).join('\n');
     if (command === 'unzip' && args[0] === '-p') return bytes.get(args[2].replace('assets/www/', ''));
-    if (command === 'aapt2' && args[1] === 'badging') return BADGING.replace("versionCode='10002'", "versionCode='1'");
+    if (command === 'aapt2' && args[1] === 'badging') return BADGING.replace(`versionCode='${expected.versionCode}'`, "versionCode='1'");
     if (command === 'aapt2' && args[1] === 'xmltree') return XMLTREE;
     throw new Error(`unexpected command ${command} ${args.join(' ')}`);
   };
   const result = checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec });
   assert.equal(result.ok, false);
-  assert.ok(result.findings.some((finding) => /versionCode 10002/.test(finding)));
+  assert.ok(result.findings.some((finding) => finding.includes(`versionCode ${expected.versionCode}`)));
 });
 
 test('the binary manifest enforces every component, debuggable and cleartext rule', () => {

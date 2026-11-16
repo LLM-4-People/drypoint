@@ -11,6 +11,80 @@ change or a user-visible redesign is a minor release. `package.json` is the one
 owner of that number: a release tag must be exactly `v<version>` and its notes
 are copied from the matching section below by `scripts/release-notes.mjs`.
 
+## [1.0.3] - 2026-11-16
+
+### Fixed
+
+- **Android label import works again.** The 1.0.2 APK filtered its system file
+  picker to images, so **Document → Import label** could not select a label
+  `.json` file. The picker now accepts JSON documents and the imported label is
+  validated before it replaces the open one; the 1.0.2 APK limitation note
+  above stays as the record for that build.
+- **A deep in-scope navigation loads its assets.** The document now carries the
+  deployment base, so opening a deep path serves the app shell with its modules
+  and styles instead of 404s. The Android shell and the Pages deployment share
+  the same base rule.
+- **The desktop layout keeps the action bar on screen.** The top bar, storage
+  alert, workspace and action bar each own a grid row, so hiding the alert no
+  longer pushes the workspace into the flexible row and the Print button below
+  the viewport. The compact phone layout is unchanged.
+- **An unreadable stored label is quarantined, not replaced.** A label whose
+  stored value cannot be parsed is kept as raw bytes behind a banner; edits
+  cannot overwrite it until the operator resets it, and Reset now asks first.
+  The same refusal covers a v3 label with no valid element list and a v3 label
+  whose geometry has to be bounded; both report what changed.
+- **A lost link is described honestly.** A disconnect after the page counter
+  proved the copies, but before the printer confirmed the end of the job, says
+  so instead of "may be incomplete"; a disconnect before that proof still says
+  the label may be incomplete.
+- **Malformed settings are reported and reset once.** A stored settings value
+  that cannot be read as an object shows one notice and is replaced with clean
+  defaults; a failed save still leaves the stored value untouched.
+- **A deliberately chosen zoom survives a reload** up to the manual cap, while
+  an automatic fit still clamps to the viewport.
+- **Imported v3 labels say they were rotated.** A portrait v3 label converted
+  to the landscape frame reports the rotation instead of silently moving its
+  elements.
+- **A hostile or oversized import is bounded before it is echoed.** The format
+  name in an import error is a bounded, escaped excerpt, so a one-megabyte
+  value cannot become a one-megabyte message.
+- **The printer gate names the missing fact.** A printer that reports a
+  resolution but no head width says the head width is missing, a printer that
+  reports a head width but no usable resolution says the resolution is missing,
+  and only a printer missing both gets the generic message.
+- **Six more printer ids are named and refused.** B18, B18S, N1, H1, H1S and
+  D101 are now in the model table with their scope, so an owned but unsupported
+  printer is refused by name instead of falling through to an unknown id.
+- **The raster width follows the head.** Rendering uses the printer's reported
+  head width instead of assuming one 384-dot head, so a 192-dot or 576-dot head
+  gets a correctly sized frame.
+- **The compact shell paints in its final order.** The phone layout no longer
+  shifts when the first script runs, and the sidebar keeps its landmark and
+  accessible name in the accessibility tree.
+- **The hidden page heading is inside the banner landmark**, so the page has one
+  heading and no orphaned region.
+- **The image source budget is one decision at every boundary.** Import,
+  hydration and replacement all consult the same 16-source limit, and the undo
+  history is bounded by an escape-exact byte estimate.
+- **A file the deploy can lose now fails the smoke test.** The deployment smoke
+  test requests every precached file, checks its content type against its
+  extension, and fails when a `.js` file is served as HTML.
+
+### Changed
+
+- The service worker's content types are generated from one owner and stamped
+  into `sw.js`, so the manifest and the worker cannot disagree.
+- The release workflow creates a throwaway signing key only in CI, signs the
+  published APK with the release key in a separate job, binds the attestation to
+  the resolved tag commit, and asserts the exact package, version code and
+  version name before publishing.
+- The workflow policy is now the one trusted gate: it rejects a release
+  environment or secret outside the signing job, a masked aggregate command, a
+  local action inside the trusted jobs, and any workflow file it does not own.
+- Documentation and release notes are generated from their owners, and the
+  public tables for printers, storage and browser support are contract-tested
+  against the code.
+
 ## [1.0.2] - 2026-11-16
 
 <!-- release-notes: the blockquote below is the top of the corrected v1.0.2 release body -->

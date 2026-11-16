@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: 'c424c54bc2fdce76',
+  version: 'ad313fb0a95e90a2',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -103,7 +103,7 @@ self.__PRECACHE = {
     'src/core/precache-status.js': 'ab921331cc719570efe2f590375d70256dc550ac8fd4972bc31c68feb37808d2',
     'src/core/settings.js': '3e548364b0e19b75ac2507b9c404369839ffe843a5de877cf4ba7d8e541d1c0d',
     'src/core/store.js': 'e07819a744f52f79779a58e4c9ef00e2a4b4ba97982114569604bf011d54f124',
-    'src/core/version.js': '2a274f8204e18b1e7e3ffbdc67bb76f471af3579cdff6a387d8437b5242ecc01',
+    'src/core/version.js': 'a1d28c290d12ec28a1f6538e7e818957b6f09661fb55b3b99149acca888da0c9',
     'src/device/capabilities.js': '2ffd376cd6574f9d8afc83a55fff7a846ea0ac11a373ceab57c72778a800f519',
     'src/device/manager.js': '8a1dc78d4e13e780023b3604231293f50ebb9bc439d47733186638be4d249063',
     'src/device/print-job.js': '92a8f14fa3e21f1ea6ccf2c39357eccfb037eaea6119ada34125b53f73b4f90d',
