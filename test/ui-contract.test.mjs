@@ -453,8 +453,13 @@ test('a warning hint can shrink and wrap instead of widening the page', () => {
 test('zoom paths: quantized buttons, an unquantized wheel, and no persisted boot fit', () => {
   assert.match(main, /applyZoom\(wheelZoom\(zoom, event\.deltaY/);
   assert.doesNotMatch(main, /setZoom\(zoom - event\.deltaY/);
-  assert.match(main, /autoZoom = initialFit/);
-  assert.doesNotMatch(main, /zoom = initialFit;\s*\n\s*saveZoom\(\)/, 'the boot fit must not overwrite the shared zoom key');
+  // N4: the boot decision is the shared owner. A stored deliberate scale is
+  // kept; only a first visit takes the fit, and the boot never writes the key.
+  assert.match(main, /const boot = initialZoom\(\{ stored: storedZoom, fit: stageFitZoom\(\)/, 'the shared boot owner decides');
+  assert.match(main, /autoZoom = boot\.auto \? boot\.value : null/);
+  const bootBlock = main.match(/const boot = initialZoom\(\{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.ok(bootBlock, 'the boot block exists');
+  assert.doesNotMatch(bootBlock, /saveZoom\(/, 'the boot fit must not overwrite the shared zoom key');
   assert.match(main, /shouldClampZoom\(\{ zoom, autoZoom, breakpointChanged \}\)/);
 });
 

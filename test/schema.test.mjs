@@ -451,6 +451,11 @@ test('v3 migration never writes into the caller’s notices array', () => {
   assert.deepEqual(notices, [], 'the input array is untouched');
   assert.equal(migrated.elements.length, 1, 'the valid element survives');
   assert.match(migrated.notices.join(' '), /1 legacy element was dropped/);
+  assert.equal(
+    migrated.notices.filter((notice) => /older portrait layout and was rotated/.test(notice)).length,
+    1,
+    'the rotation is reported once, alongside the drop'
+  );
 });
 
 /* ---------------- hostile rotation and legacy numerics (R5B-1/R5H-1) ---------------- */
@@ -641,7 +646,11 @@ test('a v3 label without an element list is invalid, not an empty label', () => 
   const empty = migrateDocument({ version: 3, lengthMm: 40, elements: [] });
   assert.deepEqual(empty.elements, []);
   assert.equal(empty.version, CONFIG.app.documentVersion);
-  assert.equal(empty.notices, undefined, 'an empty list is not a notice');
+  assert.deepEqual(
+    empty.notices,
+    ['This label was saved in the older portrait layout and was rotated to fit the current label format.'],
+    'the rotation notice is the only one; an empty list is not a drop'
+  );
 });
 
 test('a label saved by a newer version says so instead of being coerced silently', () => {
@@ -701,14 +710,40 @@ test('v3 hostile geometry is bounded with the current path’s one notice', () =
     lengthMm: 40,
     elements: [{ type: 'text', x: Number.NaN, y: Number.POSITIVE_INFINITY, w: -5, h: 0, text: 'Hi' }],
   });
-  assert.equal(migrated.notices.length, 1, 'exactly one geometry notice');
-  assert.match(migrated.notices[0], /position or size values were not usable numbers and were replaced/);
-  assert.match(migrated.notices[0], /\(x, y\)/);
+  const geometry = migrated.notices.filter((notice) => /position or size values/.test(notice));
+  assert.equal(geometry.length, 1, 'exactly one geometry notice');
+  assert.match(geometry[0], /position or size values were not usable numbers and were replaced/);
+  assert.match(geometry[0], /\(x, y\)/);
+  assert.equal(
+    migrated.notices.filter((notice) => /older portrait layout and was rotated/.test(notice)).length,
+    1,
+    'and the rotation notice'
+  );
   for (const field of ['x', 'y', 'w', 'h']) {
     assert.ok(Number.isFinite(migrated.elements[0][field]), `${field} is bounded`);
     assert.ok(migrated.elements[0][field] >= 0, `${field} is not negative`);
   }
   // The current-format path is unchanged: same notice, same boundary.
   const current = validateDocument({ lengthMm: 40, elements: [{ type: 'text', x: Number.NaN, y: Number.POSITIVE_INFINITY }] });
-  assert.deepEqual(current.notices, migrated.notices, 'one notice owner for both paths');
+  assert.deepEqual(current.notices, geometry, 'one geometry-notice owner for both paths');
+});
+
+
+test('v3 rotation is reported once on the storage path and never for the current format', () => {
+  const legacy = migrateDocument({
+    version: 3,
+    lengthMm: 40,
+    elements: [{ type: 'text', x: 4, y: 4, w: 88, h: 312, rotation: 90, text: 'Hi' }],
+  });
+  assert.equal(
+    legacy.notices.filter((notice) => /older portrait layout and was rotated to fit the current label format/.test(notice)).length,
+    1,
+    'one rotation notice'
+  );
+  assert.equal(legacy.elements[0].rotation, 0, 'the element really was rotated');
+
+  const current = validateDocument({ lengthMm: 40, elements: [{ type: 'text', text: 'Hi' }] });
+  assert.equal(current.notices, undefined, 'a current-version document gets no migration notice');
+  const unversioned = migrateDocument({ lengthMm: 40, elements: [{ type: 'text', text: 'Hi' }] });
+  assert.equal(unversioned.notices, undefined, 'an unversioned current document is not called legacy');
 });

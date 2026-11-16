@@ -187,6 +187,11 @@ test('an imported v3 document rotates exactly like the stored one and says so', 
   assert.equal(document.elements[0].w, 312, 'the portrait box was rotated');
   assert.equal(document.elements[0].rotation, 0);
   assert.deepEqual(notices, stored.notices ?? [], 'the import reports exactly the storage path’s notices');
+  assert.equal(
+    notices.filter((notice) => /older portrait layout and was rotated to fit the current label format/.test(notice)).length,
+    1,
+    'the import carries the rotation notice'
+  );
 
   // A legacy document that loses an element says so on import too: the notice
   // is produced by the one migration owner, not by the importer.
@@ -194,6 +199,10 @@ test('an imported v3 document rotates exactly like the stored one and says so', 
   const lossyText = JSON.stringify({ format: TRANSFER_FORMAT, version: CONFIG.app.documentVersion, document: lossy });
   const parsed = parseDocument(lossyText);
   assert.ok(parsed.notices.some((notice) => /2 legacy elements were dropped/.test(notice)));
+  assert.ok(
+    parsed.notices.some((notice) => /older portrait layout and was rotated/.test(notice)),
+    'the rotation notice survives beside the drop notice'
+  );
   assert.deepEqual(parsed.notices, migrateDocument(lossy).notices);
 });
 

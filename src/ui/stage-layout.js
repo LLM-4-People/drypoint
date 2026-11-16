@@ -65,11 +65,12 @@ export function fitZoom({ docWidth, docHeight, availableWidth, availableHeight, 
  * scale or a 0×0 canvas: a missing or non-finite value falls back to the
  * default and any other finite value is clamped.
  */
-export function clampZoom(value) {
+export function clampZoom(value, { compact = false } = {}) {
   if (value === null || value === undefined || value === '') return CONFIG.ui.zoom.default;
   const number = Number(value);
   if (!Number.isFinite(number)) return CONFIG.ui.zoom.default;
-  return Math.min(CONFIG.ui.zoom.max, Math.max(CONFIG.ui.zoom.min, number));
+  const limits = zoomLimits({ compact });
+  return Math.min(limits.max, Math.max(limits.min, number));
 }
 
 /**
@@ -83,6 +84,28 @@ export function zoomLimits({ compact = false } = {}) {
     max: CONFIG.ui.zoom.max,
     step: CONFIG.ui.zoom.step,
   };
+}
+
+/**
+ * The scale painted first.
+ *
+ * A stored value is the operator's deliberate choice: keep it inside this
+ * layout's manual bounds (the compact floor is lower than the desktop one) and
+ * never replace it with this viewport's automatic fit. With nothing stored, the
+ * automatic fit is the first view, bounded by the default so a fresh desktop
+ * session is not enlarged past it; `auto` marks a value that must not be
+ * persisted.
+ *
+ * @param {{stored?: number|null, fit?: number|null, compact?: boolean}} [options]
+ * @returns {{value: number, auto: boolean}}
+ */
+export function initialZoom({ stored = null, fit = null, compact = false } = {}) {
+  if (Number.isFinite(stored)) return { value: clampZoom(stored, { compact }), auto: false };
+  const fresh = CONFIG.ui.zoom.default;
+  // The fit owns its own floor (a 200 mm label may fit below the manual floor),
+  // so it is not clamped here; only a stored value takes the manual bounds.
+  if (Number.isFinite(fit) && fit > 0 && fit < fresh) return { value: fit, auto: true };
+  return { value: fresh, auto: false };
 }
 
 /**

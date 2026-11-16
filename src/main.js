@@ -20,7 +20,7 @@ import { createCanvasEditor } from './editor/canvas.js';
 import { pickImageFile } from './editor/image-import.js';
 import { createLayersPanel } from './ui/layers.js';
 import { createInspector } from './ui/inspector.js';
-import { clampZoom, fitZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
+import { fitZoom, initialZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
 import { createPrintPanel } from './ui/print-panel.js';
 import { connectionStatus, createPrintFlow, printButtonState } from './ui/print-flow.js';
 import { createStatusLine } from './ui/status-line.js';
@@ -100,6 +100,10 @@ const storageAlert = createStorageAlert({
     documentStore.replace(controller.documentForDisplay());
     toast('The unreadable label was reset', { tone: 'ok' });
   },
+  // The one confirmation owner and tone; the alert owns the wording of the
+  // loss, this adapter maps it to the shared dialog.
+  confirm: (request) =>
+    confirmDialog(request.title, request.message, { confirmLabel: request.confirmLabel, tone: 'danger' }),
   toast,
 });
 /**
@@ -124,12 +128,16 @@ const documentStore = createStore(createDocument(), {
 
 const device = createDeviceManager();
 /** Zoom is a view preference: a storage failure must not stop the app. */
+/** The stored deliberate scale, or null when the key is absent or unreadable. */
 function loadZoom() {
   try {
-    return clampZoom(localStorage.getItem(storageKey('zoom')));
+    const raw = localStorage.getItem(storageKey('zoom'));
+    if (raw === null || raw === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
   } catch (error) {
     log.warn('stored zoom could not be read', { message: error.message });
-    return CONFIG.ui.zoom.default;
+    return null;
   }
 }
 function saveZoom() {
@@ -139,7 +147,8 @@ function saveZoom() {
     log.warn('could not persist zoom', { message: error.message });
   }
 }
-let zoom = loadZoom();
+const storedZoom = loadZoom();
+let zoom = storedZoom ?? CONFIG.ui.zoom.default;
 /**
  * The last scale an automatic fit chose (boot, Fit, stage clamp, document
  * change). A user zoom is anything else: the stage must not silently replace
@@ -1097,16 +1106,15 @@ placeDocName();
 // now that the toast host exists, instead of logging a warning nobody sees.
 const settingsIssue = takeSettingsLoadIssue();
 if (settingsIssue) toast(settingsIssue.message, { tone: 'error' });
-// Choose the first compact zoom before painting: rendering at a desktop zoom
-// and then clamping would resize the canvas after the first frame. An
-// automatic boot fit is not persisted: the shared zoom key belongs to the
-// user's last deliberate choice, not to this viewport.
-const initialFit = stageFitZoom();
-if (initialFit !== null && zoom > initialFit) {
-  zoom = initialFit;
-  autoZoom = initialFit;
-  updateZoomLabel();
-}
+// Choose the first scale before painting: rendering at a desktop zoom and then
+// clamping would resize the canvas after the first frame. A stored value is the
+// operator's deliberate choice and survives the boot fit (bounded only by this
+// layout's manual limits); only a first visit takes the automatic fit, and that
+// value is never persisted.
+const boot = initialZoom({ stored: storedZoom, fit: stageFitZoom(), compact: compactQuery.matches });
+zoom = boot.value;
+autoZoom = boot.auto ? boot.value : null;
+updateZoomLabel();
 rerender();
 printPanel.render();
 setDeviceState();

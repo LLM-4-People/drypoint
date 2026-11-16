@@ -147,3 +147,31 @@ test('the compact stage keeps its height when the label zoom changes', async (t)
     assert.equal(after.stage, before.stage, `the reserved stage did not collapse (${before.stage} -> ${after.stage})`);
   });
 });
+
+
+test('a stored deliberate zoom survives a reload above the boot fit', async (t) => {
+  // N4: the boot used to shrink a stored 220% to the 200% fit while the stored
+  // key stayed 2.2, so the screen and the next session disagreed.
+  await withPage(t, async ({ cdp, port }) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await openApp(cdp, port);
+    await cdp.evaluate("localStorage.setItem('drypoint.zoom', '2.2')");
+    await openApp(cdp, port);
+    const state = await cdp.evaluate(`(() => ({
+      shown: document.querySelector('.zoom-value')?.textContent,
+      stored: localStorage.getItem('drypoint.zoom'),
+    }))()`);
+    assert.equal(state.shown, '220%', 'the deliberate scale is painted');
+    assert.equal(state.stored, '2.2', 'and stays the stored value');
+
+    // A first visit takes the automatic fit and does not write the shared key.
+    await cdp.evaluate("localStorage.removeItem('drypoint.zoom')");
+    await openApp(cdp, port);
+    const fresh = await cdp.evaluate(`(() => ({
+      shown: document.querySelector('.zoom-value')?.textContent,
+      stored: localStorage.getItem('drypoint.zoom'),
+    }))()`);
+    assert.equal(fresh.stored, null, 'an automatic boot fit is never persisted');
+    assert.match(fresh.shown, /^\d+%$/, 'the first view still has a scale');
+  });
+});

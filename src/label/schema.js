@@ -563,6 +563,12 @@ export function migrateDocument(input) {
   const knownType = (element) => Object.values(ELEMENT_TYPES).includes(element.type);
   const source = input.elements;
   const notices = Array.isArray(input.notices) ? [...input.notices] : [];
+  // The portrait→landscape rotation is intended, but it moves every element and
+  // changes the label's coordinate system. Say so once, on storage and import
+  // alike, instead of presenting a silently repositioned label.
+  notices.push(
+    'This label was saved in the older portrait layout and was rotated to fit the current label format.'
+  );
   const valid = source.filter((element) => element && typeof element === 'object' && !Array.isArray(element) && knownType(element));
   const dropped = source.length - valid.length;
   const elements = valid.map((element) => {

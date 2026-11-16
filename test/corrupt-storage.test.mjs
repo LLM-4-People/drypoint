@@ -83,10 +83,42 @@ test('an invalid stored label is kept until the operator resets it', async (t) =
     assert.match(exported.toasts, /Raw stored label exported/, 'the export reaches the one toast channel');
     assert.equal(exported.raw, INVALID, 'exporting does not modify the stored value');
 
+    // Reset asks first. A cancel keeps the raw value, the banner and the veto.
+    const cancelled = await cdp.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      document.querySelector('#storageReset').click();
+      await wait(100);
+      const dialog = document.querySelector('.modal');
+      const cancel = [...document.querySelectorAll('.modal-foot button')].find((button) => button.textContent.trim() === 'Cancel');
+      cancel?.click();
+      await wait(200);
+      const name = document.querySelector('#docName');
+      name.value = 'Edited after a cancelled reset';
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(300);
+      const alert = document.querySelector('#storageAlert');
+      return {
+        raw: localStorage.getItem(${JSON.stringify(KEY)}),
+        visible: Boolean(alert) && !alert.hidden,
+        dialogWasOpen: Boolean(dialog),
+        dialogClosed: !document.querySelector('.modal'),
+      };
+    })()`);
+    assert.equal(cancelled.dialogWasOpen, true, 'the reset opened the shared confirmation');
+    assert.equal(cancelled.dialogClosed, true, 'Cancel closes it');
+    assert.equal(cancelled.raw, INVALID, 'a cancelled reset keeps the raw value');
+    assert.equal(cancelled.visible, true, 'and the quarantine banner');
+    assert.equal(cancelled.dialogClosed && cancelled.raw === INVALID, true, 'the write veto still holds');
+
     // Reset is the only path that replaces it.
     const reset = await cdp.evaluate(`(async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       document.querySelector('#storageReset').click();
+      await wait(100);
+      const confirm = [...document.querySelectorAll('.modal-foot button')].find(
+        (button) => button.textContent.trim() === 'Reset the label'
+      );
+      confirm?.click();
       await wait(500);
       const alert = document.querySelector('#storageAlert');
       return {

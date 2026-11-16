@@ -47,7 +47,14 @@ export function createStore(initialState, options = {}) {
       if (!raw) return initialState;
       const parsed = JSON.parse(raw);
       if (!envelope) return hydrate ? hydrate(parsed, version) : parsed;
-      if (!parsed || typeof parsed !== 'object') return initialState;
+      // A scalar, null or array payload is not an envelope. It is a load
+      // failure like a parse error, not a silent reset: the caller keeps the
+      // raw text (the document store quarantines it) or reports the notice
+      // (settings), and the next write replaces it only through that owner.
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        onError?.(new Error('the stored value is not a JSON object'), 'load', { raw });
+        return initialState;
+      }
       // A version-matching payload is still untrusted: a hand-edited or
       // partially written value must be normalised, never merged raw.
       if (hydrate) return { ...initialState, ...hydrate(parsed.data ?? {}, parsed.version) };

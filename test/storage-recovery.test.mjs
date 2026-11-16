@@ -42,7 +42,7 @@ function alertNodes() {
   return { container, textNode, exportButton, resetButton };
 }
 
-function alertHarness({ initial = {} } = {}) {
+function alertHarness({ initial = {}, confirm = async () => true } = {}) {
   const storage = fakeStorage(initial);
   globalThis.localStorage = storage;
   const nodes = alertNodes();
@@ -56,6 +56,7 @@ function alertHarness({ initial = {} } = {}) {
       return true;
     },
     onReset: () => resets.push('reset'),
+    confirm,
     toast: (message, options) => toasts.push({ message, options }),
   });
   const errors = [];
@@ -91,6 +92,53 @@ test('an invalid stored element list is quarantined with its raw text', (t) => {
   assert.match(nodes.textNode.textContent, /until you reset the label/);
   assert.doesNotMatch(nodes.textNode.textContent, /until you export/, 'export is a backup, never the acknowledgement');
   assert.equal(storage.writes.length, 0, 'loading writes nothing');
+});
+
+test('the reset button asks before it destroys the only copy', async (t) => {
+  t.after(() => delete globalThis.localStorage);
+  const asks = [];
+  const { alert, nodes, resets, storage } = alertHarness({
+    initial: { 'drypoint.document': INVALID },
+    confirm: async (request) => {
+      asks.push(request);
+      return false;
+    },
+  });
+
+  nodes.resetButton.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(asks.length, 1, 'one confirmation request');
+  assert.match(asks[0].title, /Reset the unreadable label/);
+  assert.match(asks[0].message, /replaced by the label currently in the editor/);
+  assert.match(asks[0].message, /Export the raw value first/);
+  assert.match(asks[0].message, /cannot be undone/);
+  assert.equal(asks[0].confirmLabel, 'Reset the label');
+  assert.deepEqual(resets, [], 'a refusal resets nothing');
+  assert.equal(alert.active, true, 'the write veto holds');
+  assert.equal(alert.raw, INVALID, 'the raw value is untouched');
+  assert.equal(nodes.container.hidden, false, 'the banner stays');
+  assert.equal(storage.writes.length, 0, 'nothing was written');
+});
+
+test('confirming replaces the value exactly once', async (t) => {
+  t.after(() => delete globalThis.localStorage);
+  let allowed = true;
+  const { alert, nodes, resets } = alertHarness({
+    initial: { 'drypoint.document': INVALID },
+    confirm: async () => allowed,
+  });
+
+  nodes.resetButton.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(resets, ['reset']);
+  assert.equal(alert.active, false);
+  assert.equal(nodes.container.hidden, true);
+
+  // A second click cannot answer again, and a later refusal changes nothing.
+  allowed = false;
+  nodes.resetButton.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(resets, ['reset'], 'the quarantine is answered once');
 });
 
 test('a truncated stored value is quarantined too', (t) => {

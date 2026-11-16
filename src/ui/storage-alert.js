@@ -30,6 +30,9 @@ export const STORAGE_ALERT_MESSAGE =
  * @param {HTMLElement} options.resetButton "reset the label"
  * @param {(raw: string) => boolean} options.exportRaw writes the raw text
  * @param {() => void} options.onReset called after the quarantine is cleared
+ * @param {(request: {title: string, message: string, confirmLabel: string}) => Promise<boolean>} [options.confirm]
+ *        the shared confirmation owner; the default accepts, so `answer()` and
+ *        programmatic resets stay usable
  * @param {Function} [options.toast] injected for tests
  * @returns {{active: boolean, raw: string|null, capture: Function, answer: Function,
  *            exportQuarantined: Function}}
@@ -41,6 +44,7 @@ export function createStorageAlert({
   resetButton,
   exportRaw,
   onReset,
+  confirm = async () => true,
   toast = defaultToast,
 }) {
   /** The unreadable value, exactly as storage held it. */
@@ -120,8 +124,25 @@ export function createStorageAlert({
     return true;
   }
 
+  /**
+   * The reset button asks first. The wording names the irreversible loss and
+   * the backup step; a refusal leaves the raw value, the banner and the write
+   * veto exactly as they were.
+   */
+  async function requestReset() {
+    if (raw === null) return false;
+    const proceed = await confirm({
+      title: 'Reset the unreadable label?',
+      message:
+        'The stored value that could not be read will be replaced by the label currently in the editor. Export the raw value first if you may need it. This cannot be undone.',
+      confirmLabel: 'Reset the label',
+    });
+    if (!proceed) return false;
+    return answer();
+  }
+
   exportButton.addEventListener('click', exportQuarantined);
-  resetButton.addEventListener('click', answer);
+  resetButton.addEventListener('click', requestReset);
   if (container.hidden === false) hide();
 
   return {
@@ -138,6 +159,7 @@ export function createStorageAlert({
     },
     capture,
     answer,
+    requestReset,
     exportQuarantined,
   };
 }

@@ -57,6 +57,26 @@ test('the page has one heading, two unique landmarks and a named canvas', async 
     assert.match(state.canvasName, /^Label design, \d+(?:\.\d)? × \d+ mm, \d+ element/, 'the name carries the size and content');
     assert.equal(state.overlayHidden, 'true', 'the interaction layer is decorative');
     assert.equal(state.gateRole, 'status', 'a new gate refusal is announced without a focus change');
+
+    // N7: the one h1 must live inside a landmark. The AX tree is the check: a
+    // body-level h1 is outside every region, which axe reports as `region`.
+    await cdp.send('Accessibility.enable');
+    const tree = await cdp.send('Accessibility.getFullAXTree');
+    const nodes = tree.result?.nodes ?? [];
+    const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+    const headingNode = nodes.find((node) => node.role?.value === 'heading');
+    assert.ok(headingNode, 'the heading is in the accessibility tree');
+    const chain = [];
+    for (let node = headingNode; node; node = byId.get(node.parentId)) {
+      chain.push(node.role?.value ?? node.nodeId);
+      if (chain.length > 20) break;
+    }
+    assert.ok(chain.includes('banner'), `the h1 is inside the banner landmark (${chain.join(' > ')})`);
+    assert.equal(
+      nodes.filter((node) => node.role?.value === 'heading' && node.name?.value === 'Drypoint label designer').length,
+      1,
+      'still one h1'
+    );
   });
 });
 
