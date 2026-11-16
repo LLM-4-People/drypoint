@@ -72,7 +72,10 @@ test('SECURITY states the boundary, the supported line and the private channel',
   assert.match(security, /no analytics, no\s+telemetry/i);
   assert.match(security, /security\/advisories\/new/, 'the reporting channel is the advisory form');
   assert.match(security, /Coordinated disclosure/);
-  assert.match(security, /\| 1\.x \| Yes/);
+  assert.match(security, /\| 1\.x, except 1\.0\.0 \| Yes/);
+  assert.match(security, /\| 1\.0\.0 \| No — do not install it\./);
+  assert.match(security, /retired before any known install/, 'the 1.0.0 install path names the retired key');
+  assert.match(security, /uninstalling it deletes every label/);
   assert.match(security, /signing certificate/);
   assert.match(security, /Out of scope/);
   assert.doesNotMatch(security, /\[INSERT CONTACT METHOD\]/);

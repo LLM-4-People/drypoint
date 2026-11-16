@@ -27,7 +27,7 @@ body:
     attributes:
       label: Setup
       description: Build (web app or APK), version, OS/browser and printer model.
-      placeholder: Web app 1.0.0, Windows 11, Chrome 141, D110_M
+      placeholder: Web app 1.0.2, Windows 11, Chrome 141, D110_M
     validations:
       required: false
   - type: checkboxes

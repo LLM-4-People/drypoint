@@ -14,13 +14,21 @@ WebView (https://drypoint.local)
 
 ## Why a shell is needed
 
-Android WebView does not implement Web Bluetooth. The shell provides the one
-connectivity API WebView lacks — a GATT client — plus two small host helpers:
-`saveFile` for the diagnostics export and `setSystemBars` for the native theme
-bars. It leaves every protocol decision (ports, frames, rasterisation, retries)
-in the web code. The transport lives in `src/device/transports/android.js` and
-implements the same contract as the serial and BLE transports, so the device
-manager, session and print job are unchanged.
+Android WebView does not implement Web Bluetooth, and it exposes no Web Serial
+either. The shell provides the one connectivity API the WebView lacks — a BLE
+GATT client — plus two small host helpers: `saveFile` for the label export, the
+diagnostics report and the raw copy of an unreadable stored label, and
+`setSystemBars` for the native theme bars. It leaves every protocol decision
+(ports, frames, rasterisation, retries) in the web code. The transport lives in
+`src/device/transports/android.js` and implements the same contract as the
+serial and BLE transports, so the device manager, session and print job are
+unchanged.
+
+This shell is **BLE-only**, because a WebView gives the page no Web Serial to
+reach a Bluetooth Classic SPP port. That is the shell's limit, not Android's:
+Chrome for Android 148+ exposes Web Serial, including RFCOMM serial ports, and
+138–147 exposed it partially (MDN browser compatibility data). The web app can
+therefore use that path on Android in Chrome; the APK cannot.
 
 ## Build
 
@@ -136,11 +144,13 @@ scratch directory and is never hand-edited; nothing is copied into the source
 tree. Each manifest entry carries a SHA-256 digest of the file
 bytes; `sw.js` verifies every staged body before caching, `npm run
 check:precache` recomputes the digests and fails when a listed file changed, and
-`test/precache.test.mjs` re-hashes every file on disk. The APK bundles exactly
-that list; run `npm run check:precache` and `npm test` before packaging to catch
-a stale or tampered asset. The build also re-asserts the app-surface allowlist
-for every entry (`index.html`, `manifest.webmanifest`, `assets/**`, `src/**`), so
-keystore, docs, tests and scripts cannot enter the APK.
+`test/precache.test.mjs` re-hashes every file on disk. The APK bundles that list
+plus the two distribution notices (`LICENSE` and `THIRD_PARTY_NOTICES.md`); run
+`npm run check:precache` and `npm test` before packaging to catch a stale or
+tampered asset. The build also re-asserts the app-surface allowlist for every
+manifest entry (`index.html`, `manifest.webmanifest`, `assets/**`, `src/**`), so
+keystore, docs, tests and scripts cannot enter the APK. The notices are staged
+from `scripts/lib/distribution.mjs`, the same list the site uses.
 
 ## Install
 
@@ -170,7 +180,7 @@ sides own half of every rule, and neither guesses:
 
 | Concern | Web side | Java side |
 | --- | --- | --- |
-| A call that never answers | every call has `CONFIG.transport.androidCallTimeoutMs` (15 s) and rejects | a destroyed bridge answers `{ok:false}` immediately |
+| A call that never answers | every non-interactive call is bounded by `CONFIG.transport.androidCallTimeoutMs` (15 s) and rejects; the interactive picker is bounded by `CONFIG.transport.androidPickerTimeoutMs` (120 s) | a destroyed bridge answers `{ok:false}` immediately |
 | Closing | `close()` rejects every pending call and clears its timer | `disconnect()` drops the GATT link |
 | Connect handshake | `open()` awaits the `connect` reply | resolves after the notification descriptor is written **and** the MTU exchange finished, or after a 300 ms fallback |
 | Write pacing | the session serialises requests | each chunk waits for its ack; a 2 s missing ack closes the link with "Printer stopped acknowledging writes" |
@@ -212,9 +222,11 @@ this order:
 
 The manifest declares no `INTERNET` permission, no `provider`, `service` or
 `receiver`, and `android:exported="true"` only on the launcher activity.
-`android:allowBackup="false"`: the label documents, the layout state and the
-paired printer's Bluetooth address are never copied into a cloud or
-device-to-device backup.
+`android:allowBackup="false"` disables cloud backup for the label documents,
+the layout state and the paired printer's Bluetooth address; device-to-device
+migration is controlled by the manufacturer and cannot be disabled by the app on
+every device targeting Android 12+ (API 31). Some device makers still copy app
+files during a device transfer.
 
 **On-device check for the scheme policy.** The native WebView path cannot run in
 CI, so verify it once on a phone:
@@ -230,15 +242,19 @@ CI, so verify it once on a phone:
 
 `index.html` carries a Content-Security-Policy meta element —
 `default-src 'self'; img-src 'self' data: blob:; style-src 'self'
-'unsafe-inline'; script-src 'self'` — with no inline script. It applies equally
-to the Pages deployment and to the WebView, because both serve the same
-document. `data:` and `blob:` are allowed for images only: the editor renders
-canvas and object URLs it creates itself.
+'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self';
+form-action 'none'` — with no inline script. It applies equally to the Pages
+deployment and to the WebView, because both serve the same document. `data:` and
+`blob:` are allowed for images only: the editor renders canvas and object URLs
+it creates itself.
 
 ## Platform notes
 
-- **BLE only.** Android's Web Serial cannot reach Bluetooth Classic SPP, so the
-  printer must be the BLE model path (D110_M exposes the GATT service used here).
+- **BLE only in the APK.** The shell exposes a BLE GATT bridge and no Web
+  Serial, so the APK cannot reach a Bluetooth Classic SPP port. The web app is
+  not limited that way: Chrome for Android 148+ exposes Web Serial, including
+  RFCOMM serial ports, and 138–147 exposed it partially (MDN BCD). The D110_M
+  exposes the GATT service used here.
 - **Android 12+**: scanning asks for Nearby devices (`BLUETOOTH_SCAN` with
   `neverForLocation`); older versions ask for location, which Android requires
   for BLE scans.
@@ -256,7 +272,10 @@ canvas and object URLs it creates itself.
   timestamp because the bridge refuses a display name Downloads already holds.
 - **Document → Import label** opens the system file picker, checks the file size
   before reading it, and applies the validated document to the editor as one
-  undoable step.
+  undoable step. The picker is built from the page input's `accept` list, so
+  **Import label** offers JSON/`.json` and an image input offers images; the
+  shell does not hard-code `image/*` (`MainActivity.onShowFileChooser` →
+  `acceptTypes`).
 - Diagnostics export uses the same bridge. The bridge accepts only a single filename segment (no empty
   name, separators, NUL, `.` or `..`) and canonicalises the legacy target under the Downloads
   directory before writing.
@@ -271,6 +290,11 @@ canvas and object URLs it creates itself.
 - Image import uses the system file picker exposed by the shell. The picked file
   becomes a data URL, which the interceptor releases to the WebView (see the
   scheme policy above).
+
+A maximum-size label crosses the bridge as one string — the transfer bound is
+`CONFIG.document.transfer.maxBytes`, about 65 MB of JSON. That is memory-heavy
+on a low-RAM phone and can fail the save or exhaust the WebView. Export a
+smaller label or remove an image first; 1.0.3 has no chunked write.
 
 `LICENSE` and `THIRD_PARTY_NOTICES.md` are staged into `assets/www` from the same
 list the site uses (`scripts/lib/distribution.mjs`), so both distributions carry
@@ -314,7 +338,8 @@ behaviour is a source contract verified by `javac` in
 ### On-device import check
 
 The system picker is the one path a static test cannot prove. On a phone, with
-the release APK installed:
+the release APK installed (1.0.3 or newer; the 1.0.2 picker is filtered to
+images):
 
 1. **Image import** — add an image element; the picker lists pictures and the
    chosen image appears on the label.

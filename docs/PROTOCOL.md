@@ -103,7 +103,7 @@ whose reply depends on its key (`0x40 + key`).
 | `setLanguage` | `0x26` | value | `0x36` | control | required byte |
 | `setPrintMode` | `0x2C` | value | `0x3C` | control | required byte |
 | `reset` | `0x28` | `01` | `0x38` | control | destructive |
-| `calibrate` | `0x8E` | `01` | `0x8F` | 20 s | feed / align one label |
+| `calibrate` | `0x8E` | `01` | `0x8F` | 20 s | feed / align paper |
 | `testPage` | `0x5A` | `01` | `0x6A` | 20 s | printer self-test |
 | `printerFree` | `0xC3` | `01` | `0xC4` | control | |
 | `printStart` | `0x01` | pages u16, `00 00 00 00`, colour, speed, `00` | `0x02` | control | speed 0 = quality, 1 = normal |

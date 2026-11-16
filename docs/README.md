@@ -26,11 +26,18 @@ issue-template link into this repository and every heading anchor resolves.
   tables in `PROTOCOL.md` are parsed by `test/protocol-doc.test.mjs`, so a
   flipped bit or a renamed field fails the suite.
 - The module map in `ARCHITECTURE.md` is compared with the real tree by
-  `test/project.test.mjs`; a new script, source module or document that is not
-  listed fails the build.
+  `test/project.test.mjs`: every script, source module and Markdown document
+  (the root `*.md` files and every page under `docs/`) must be listed, so a new
+  document cannot appear without a map entry.
 - The printer table in `PRINTERS.md` is compared with the one model table in
   `src/protocol/models.js`; an invented model name or a mismatched support state
-  fails the build.
+  fails the build. The README support matrix and its id count, and SUPPORT's
+  printer scope, are compared with the same table.
+- `PROTOCOL.md` links the printer table instead of copying it;
+  `test/docs.test.mjs` refuses a second model-id table on that page.
+- The README storage-key table and the ARCHITECTURE storage-key table are
+  compared with every `storageKey()` call under `src/`, so a key cannot be
+  invented or left undocumented.
 - The npm command table in `README.md` and the browser-suite list/count in
   `CONTRIBUTING.md` are rendered by `scripts/build-docs.mjs` from `package.json`
   and `scripts/test-suites.mjs`. A hand edit inside a
@@ -47,8 +54,9 @@ manifest and the worker's build and cache stamps; `scripts/build-docs.mjs`
 renders the two marker blocks above. Contract tests pin the remaining repeated
 facts: `test/project.test.mjs` compares the module map with the tree and the
 documented `GetInfo` keys with the projection table, `test/docs.test.mjs`
-compares the printer table with `src/protocol/models.js`, and
-`test/protocol-doc.test.mjs` parses the five reply field tables it names and
-asserts every field against its decoder. A pinned fact that drifts from its
-owner fails `npm run verify`. Prose that is neither generated nor contract-tested
-is still authored text, not a generated claim.
+compares the printer and support tables with `src/protocol/models.js` and the
+storage tables with `storageKey()`, and `test/protocol-doc.test.mjs` parses the
+five reply field tables it names and asserts every field against its decoder. A
+pinned fact that drifts from its owner fails `npm run verify`. Prose that is
+neither generated nor contract-tested is still authored text, not a generated
+claim.

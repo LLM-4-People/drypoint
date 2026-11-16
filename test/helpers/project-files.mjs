@@ -27,3 +27,11 @@ export function listProjectFiles(directory) {
   walk(join(projectRoot, directory), directory);
   return files.sort();
 }
+
+/** Every regular file directly in the project root, sorted. */
+export function listRootFiles() {
+  return readdirSync(projectRoot, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
+}

@@ -1,7 +1,9 @@
 # Architecture
 
-A static PWA: no runtime server, no bundler or compile step, no dependencies.
-Its outputs are generated from owned sources: `scripts/build-brand.mjs`
+A static PWA: no runtime server, no bundler or compile step, no runtime npm
+dependencies. The repository's one dev-only dependency, the ISC `yaml` parser,
+backs the workflow policy gate. Its outputs are generated from owned sources:
+`scripts/build-brand.mjs`
 renders `manifest.webmanifest`, the Android strings, `src/core/brand.js`,
 `src/core/version.js` and the icon's accessible name;
 `scripts/build-icons.mjs` rasterises that artwork into the manifest PNGs;
@@ -16,6 +18,13 @@ through Web Serial or Web Bluetooth. `sw.js` plus the generated
 ## Module map
 
 ```
+README.md                  quick start, support matrix, browser support, backup and limits
+CONTRIBUTING.md            setup, test legs, branch model, generated files
+SECURITY.md                threat model, supported versions, private reporting
+SUPPORT.md                 where to ask, what to include, printer scope
+CHANGELOG.md               release history and the source of every release body
+CODE_OF_CONDUCT.md         community standard
+THIRD_PARTY_NOTICES.md     vendored work and attribution
 brand.json                 the authored product identity: name, slug, app id, prefixes
 index.html                 shell markup, module entry, classic vendor script
 manifest.webmanifest       PWA metadata and icons
@@ -330,7 +339,10 @@ namespace is new, so no old key is read and no compatibility shim exists.
 `label/transfer.js` is the one owner of the transfer file. It renders
 `{ format, version, document }`, where `format` is `CONFIG.app.id` and `version`
 is `CONFIG.app.documentVersion`; `downloadJson` writes it with two-space
-indentation. Import applies the same bounds as storage and in the same order:
+indentation. Import applies the same document bounds and migration as storage,
+with one deliberate difference: the source budget is refused at the two
+authoring boundaries (import and export), while validation keeps an existing
+over-budget label intact. In order:
 
 1. the byte length is bounded by `CONFIG.document.transfer.maxBytes` **before**
    `JSON.parse`. The bound is `bounds.maxSourceChars` (itself
@@ -559,6 +571,11 @@ Three facts are recorded as accepted for this release rather than fixed:
   explicit id was removed because it collided across origins; do not re-add one
   without a regression test for that collision, and record the reason here if a
   future release does.
+- **Scorecard keeps two known limits.** The pinned action SHA still pulls the
+  `ghcr.io/ossf/scorecard-action:v2.5.0` container tag rather than a digest, and
+  Signed-Releases averages the last five releases, so v1.0.0 and v1.0.1 (which
+  have no provenance assets) hold that score down until three more provenance
+  releases exist. Both are recorded, not gamed with a second workflow.
 
 ## Logging
 
@@ -582,8 +599,9 @@ page logs and shows (see Offline strategy). No other module calls `console`.
 
 ## Dev server and operations
 
-`scripts/serve.mjs` serves exactly the app surface with no dependencies: the
-files listed by `assets/precache.js` plus `sw.js`. It binds to `127.0.0.1` by
+`scripts/serve.mjs` serves exactly the app surface with Node's standard library
+only: the files listed by `assets/precache.js` plus `sw.js`. It binds to
+`127.0.0.1` by
 default; `--host 0.0.0.0` is an explicit LAN opt-in, useful for viewing only —
 a LAN origin is plain HTTP and not a secure context, so Web Serial, Web
 Bluetooth and the service worker do not work there. Printing or offline work on
@@ -623,11 +641,13 @@ verifies.
    with a real tag builds and signs, and publishes only when `publish=true`.
    This is the pre-tag dry-run mode, not a fallback: v1.0.2 predates the tracked
    lockfile, so its tree cannot satisfy `npm ci`; the merge commit can.
-4. Tag that commit and push the tag:
+4. Tag that commit and push the tag. The tag is `v<package.json version>` and
+   must not already exist; a release tag is never moved, reused or recreated:
 
    ```bash
-   git tag v1.0.3
-   git push origin v1.0.3
+   version="$(node -p "require('./package.json').version")"
+   git tag "v${version}"
+   git push origin "v${version}"
    ```
 
 5. `release.yml` triggers on the completed `Checks` run for a push (and on
@@ -689,6 +709,63 @@ be served as `application/manifest+json`.
 `workflow_dispatch` is the deliberate operator override: it checks out the
 constant `refs/heads/main` and deploys the current `main` without a `Checks`
 run. It exists to recover a deployment, not to prove a commit.
+
+### Failed or partial releases
+
+The release authority is the `main`-defined workflow: a tag push only triggers
+it, and a published body names the commit it built (`Built from tag … at commit
+…; provenance workflow ref refs/heads/main.`). The tag and assets of a published
+release are immutable; only its title, notes and pre-release flag can change.
+
+- **The tag exists but the release workflow failed.** Re-run the failed job
+  (`gh run rerun <run-id> --failed`). Do not delete or recreate the tag: an
+  immutable release locks its tag, and the tag ruleset blocks a rewrite. If the
+  tag itself is wrong, bump `package.json`, add the changelog section and cut a
+  new tag.
+- **The release exists but an asset is missing or wrong.** Immutable releases
+  cannot have assets replaced or deleted. Do not attach a second asset to the
+  same tag: cut a new patch version, publish it, and mark the bad release with a
+  note (and as a pre-release when it must not be "latest").
+- **The signature or an asset digest does not match.** Stop; do not publish.
+  Treat the signing key as suspect until the certificate pin in `brand.json`,
+  the environment `RELEASE_CERT_SHA256` and the checksum agree. A mismatch is a
+  security incident, not a retry.
+- **Pages failed after a green `Checks` run.** Re-run the failed Pages job for
+  the same SHA (or re-run the Pages workflow); its build asserts that `main` is
+  still the validated commit. The documented `workflow_dispatch` override
+  deploys the current `main` without a `Checks` run and is only for recovery.
+- **Rollback.** Pages has no per-deploy rollback. Redeploy the previous commit
+  with `workflow_dispatch`, record the commit and the reason, and let the next
+  green `Checks` run deploy forward. A published release is never rolled back;
+  it is superseded by a new patch.
+- **Verify the tag/commit binding.** The release body carries the tag, the
+  40-character commit and `refs/heads/main`. Check that
+  `git rev-list -n 1 "v<version>"` is that commit; if it is not, the body and the
+  tag disagree and the release must not be trusted.
+
+### Historical release bodies
+
+`CHANGELOG.md` is the one owner of each release body. A published body can be
+regenerated for comparison from the current changelog:
+
+```bash
+gh api repos/LLM-4-People/drypoint/releases/tags/v1.0.0 --jq .body > /tmp/v1.0.0.published.md
+node scripts/release-notes.mjs --tag v1.0.0 --historical --out /tmp/v1.0.0.md
+diff -u /tmp/v1.0.0.published.md /tmp/v1.0.0.md
+```
+
+v1.0.0 matches byte-for-byte, including its release-page banner. v1.0.1
+regenerates with the two published claims superseded by the historical note in
+its section; the published body is left as published. v1.0.2 regenerates the
+corrected body after the dated Android note and the narrowed banner claim are
+applied to the release page. A section whose body predates the generated
+certificate footer carries `<!-- release-notes: no signing footer -->`; the
+directive is consumed by the generator and never published. Tags and assets are
+never edited, and a historical section is never used by the release workflow.
+
+A body correction is published with `gh release edit <tag> --notes-file <file>`.
+Only the title, notes and pre-release flag are editable on an immutable release;
+never re-upload or replace an asset, and never move the tag.
 
 Every workflow pins each action to a commit SHA, declares explicit
 `permissions`, a `concurrency` group and a job `timeout-minutes`, and sets

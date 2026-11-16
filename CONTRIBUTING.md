@@ -11,7 +11,8 @@ git clone https://github.com/LLM-4-People/drypoint.git
 cd drypoint
 node --version        # 22 or newer; .node-version pins the development version
 npm ci                # installs the one dev-only YAML parser used by the workflow policy
-npm test              # the unit suite; the browser suites have their own command
+npm test              # every test file, including the Chromium suites
+npm run test:unit     # the unit suite only
 npm start             # http://127.0.0.1:8080
 ```
 
@@ -103,13 +104,15 @@ These are generated and checked byte-for-byte in CI:
 | --- | --- | --- |
 | `manifest.webmanifest` | `brand.json` | `npm run build:brand -- --write` |
 | `src/core/brand.js` | `brand.json` | `npm run build:brand -- --write` |
-| `assets/icon.svg` | `brand.json` | `npm run build:brand -- --write` |
+| `src/core/version.js` | `package.json` | `npm run build:brand -- --write` |
+| `assets/icon.svg` | the artwork in `scripts/build-brand.mjs`; the accessible name from `brand.json` | `npm run build:brand -- --write` |
+| `assets/icon-192.png`, `assets/icon-512.png`, `assets/icon-maskable-512.png` | `assets/icon.svg` and `scripts/build-icons.mjs` | `npm run build:icons` |
 | `android/app/src/main/res/values/strings.xml` | `brand.json` | `npm run build:brand -- --write` |
 | `assets/precache.js` | the real import graph | `npm run build` |
 | the `BUILD` and cache-prefix stamps in `sw.js` | the precache hash and `brand.json` | `npm run build` |
 | the `generated:scripts` block in `README.md` | `package.json` | `npm run docs:generate` |
 | the `generated:suites` block in `CONTRIBUTING.md` | `scripts/test-suites.mjs` | `npm run docs:generate` |
-| `_site/` | `collectFiles()` | `npm run pages:build` |
+| `_site/` | `collectFiles()`, `sw.js`, the generated `404.html`, `.nojekyll` and the notices | `npm run pages:build` |
 
 Edit the owner and regenerate. If a generated file changed and you did not touch
 its owner, you found a bug — please say so in the pull request.
@@ -162,11 +165,15 @@ declined: a wrong print task can feed the wrong rows to a head.
 
 ## Documentation
 
-Documentation is part of the change. If you add a script, a source module or a
-document, add it to the module map in
+Documentation is part of the change. If you add a script, a source module, a
+root Markdown file or a page under `docs/`, add it to the module map in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — that map is contract-tested. If
 you add an `npm` script, document it in the README — that list is contract-tested
-too. `npm run docs:check` catches a broken relative link or anchor.
+too. The README support matrix and storage-key table, SUPPORT's printer scope
+and the PROTOCOL page's link to the one model table are pinned to
+`src/protocol/models.js`, `storageKey()` and `docs/PRINTERS.md`; a second model
+table in PROTOCOL is refused. `npm run docs:check` catches a broken relative
+link or anchor.
 
 ## Pull requests
 
