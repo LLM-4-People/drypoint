@@ -60,6 +60,16 @@ jobs:
           java-version: '21'
       - name: Install the pinned SDK packages
         run: bash scripts/android-sdk.sh
+      - name: Locate a Chromium binary
+        run: |
+          set -euo pipefail
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [ -z "$chrome" ]; then
+            echo "::error::no Chromium on this runner; the measured layout suites cannot run"
+            exit 1
+          fi
+          "$chrome" --version
+          echo "D110_CHROME=$chrome" >> "$GITHUB_ENV"
       - name: The tagged commit passes every gate
         run: |
           set -euo pipefail
@@ -124,9 +134,14 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           (
             cd dist
-            # `download` writes sha256-<digest>.jsonl; there is no --bundle flag.
+            # Linux writes sha256:<digest>.jsonl; Windows uses a dash. There is
+            # no --bundle flag, so find the one file either spelling wrote.
             gh attestation download "drypoint-${version}.apk" -R "$GITHUB_REPOSITORY"
-            bundle="$(ls sha256-*.jsonl)"
+            bundle="$(find . -maxdepth 1 -type f -name 'sha256*.jsonl' -print -quit)"
+            if [ -z "$bundle" ]; then
+              echo "::error::gh attestation download wrote no bundle"
+              exit 1
+            fi
             mv "$bundle" "drypoint-${version}.apk.intoto.jsonl"
           )
           test -f "dist/drypoint-${version}.apk.intoto.jsonl"
