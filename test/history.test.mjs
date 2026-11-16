@@ -145,3 +145,48 @@ test('a 250 kB unknown-field import keeps the snapshot budget and the entries', 
   assert.equal(history.retainedEntries, 81, 'the count keeps all eighty edits, because the snapshots are small');
   assert.equal(history.undo().elements[0].text, 'x79');
 });
+
+/* ---------------- escapes and the injected byte budget (B-core-F3/F7) ---------------- */
+
+test('the estimate counts JSON escapes, so it never undercounts a snapshot', () => {
+  const withNewlines = validateDocument({
+    lengthMm: 40,
+    elements: Array.from({ length: 200 }, () => ({ type: 'text', text: '\n'.repeat(2000) })),
+  });
+  const control = validateDocument({
+    lengthMm: 40,
+    elements: [
+      { type: 'text', text: '\u0001\u0002'.repeat(500) },
+      { type: 'text', text: 'quote " backslash \\ tab\t' },
+      { type: 'text', name: 'a\nb', text: 'emoji 😀 and a lone \ud800 surrogate' },
+    ],
+  });
+  const documents = [
+    withNewlines,
+    control,
+    { elements: [{ type: 'text', text: '\ud800\ud800' }] },
+    { elements: [{ type: 'text', text: '😀😀' }] },
+  ];
+  for (const document of documents) {
+    const estimate = estimateDocumentBytes(document);
+    const serialised = JSON.stringify(document).length;
+    assert.ok(estimate >= serialised, `estimate ${estimate} covers the escaped ${serialised}`);
+    assert.ok(estimate <= serialised + 4096, `estimate ${estimate} is not wildly over ${serialised}`);
+  }
+  // The specific undercount the review measured: 2000 newlines are 4002 JSON
+  // characters, not 2002.
+  const one = { elements: [{ type: 'text', text: '\n'.repeat(2000) }] };
+  assert.ok(estimateDocumentBytes(one) >= JSON.stringify(one).length);
+});
+
+test('the byte budget is the injected value, not the configured default', () => {
+  const budget = 4096;
+  const history = createHistory({ initial: doc('x'.repeat(1000)), maxBytes: budget });
+  for (let index = 0; index < 40; index++) history.commit(doc(`${'x'.repeat(1000)}${index}`));
+  assert.ok(history.retainedBytes <= budget, `retained ${history.retainedBytes} exceeds the injected ${budget}`);
+  assert.ok(history.retainedEntries < 41, 'old snapshots were dropped at the injected budget');
+  assert.ok(history.retainedEntries >= 2, 'at least one undo step survives');
+  // A hard-coded 32 MiB would keep every snapshot, so the count proves the
+  // parameter is read.
+  assert.ok(history.retainedEntries < 10, `the injected budget is the one enforced (${history.retainedEntries} entries)`);
+});

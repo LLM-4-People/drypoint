@@ -664,3 +664,16 @@ test('exceedsPrinterLimits reports an over-long tape or an element past the labe
     resetGeometry();
   }
 });
+
+test('the migration owner refuses a non-object root instead of inventing a label', () => {
+  // B-core-F9: returning a fresh document for a scalar hid a corrupt stored
+  // value from the quarantine that is meant to keep it.
+  for (const root of [0, 7, '', 'label', true, null, undefined, []]) {
+    assert.throws(() => migrateDocument(root), /no valid element list/, JSON.stringify(root));
+  }
+  // Object roots keep their tolerance: a legacy document, a newer one and an
+  // unversioned one all migrate.
+  assert.equal(migrateDocument({ lengthMm: 40, elements: [] }).elements.length, 0);
+  assert.equal(migrateDocument({ version: 3, lengthMm: 40, elements: [] }).version, CONFIG.app.documentVersion);
+  assert.equal(migrateDocument({ version: CONFIG.app.documentVersion + 1, lengthMm: 40, elements: [] }).elements.length, 0);
+});

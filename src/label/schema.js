@@ -262,18 +262,6 @@ export function droppedSourceNotice() {
 }
 
 /**
- * One wording for the per-document image budget. An element may be within the
- * per-source cap and still push the label past what one transfer file can
- * carry, because every element repeats its own source in the serialised
- * document. The budget is enforced where images enter the label (editor and
- * import) and where the label leaves it (export) — never by rewriting a
- * document that already exists.
- */
-export function sourceBudgetRefusalNotice() {
-  return `Adding this image would give the label more than ${CONFIG.bounds.maxSourceChars} characters of image data. Remove or reuse an image first.`;
-}
-
-/**
  * One wording for text shortened by the input bounds, shared by the storage
  * validation and the editor's add/update paths so an edit-path truncation is
  * never silent.
@@ -544,7 +532,10 @@ export function hydrateStoredDocument(value) {
  * existing +270° rotation the position pair is x' = y, y' = headWidth - x - w.
  */
 export function migrateDocument(input) {
-  if (!input || typeof input !== 'object') return createDocument();
+  // The migration owner is a trust boundary as well: a scalar, null or array
+  // root is not a label, and turning it into a fresh document would hide a
+  // corrupt stored value from the quarantine that is meant to keep it.
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
   const version = documentVersionOf(input.version);
   // A document from the future is loaded as far as this version understands it,
   // and says so: coercing it silently lost every type this build does not know.

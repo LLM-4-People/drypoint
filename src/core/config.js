@@ -46,8 +46,14 @@ const TRANSFER_OVERHEAD_BYTES = 4 * 1024 * 1024;
  * The image text one label may carry. Serialised documents repeat an image
  * source once per element, so the distinct-source cache limit alone does not
  * bound the file: a label that reuses one large source still grows with every
- * copy. The editor, validation and the transfer envelope share this budget, so
- * a label the app can produce always fits the file it can import.
+ * copy.
+ *
+ * This is an authoring budget, not a normalise rule. `label/images.js`
+ * (`sourceBudgetProblem`) enforces it where an image enters the label (editor
+ * add/update/duplicate) and where the label crosses a file boundary (import,
+ * export). Validation preserves an over-budget document intact: it runs on
+ * every undo, geometry change and print, so rewriting there would silently
+ * destroy a label that already exists.
  */
 const MAX_SOURCE_CHARS = IMAGE_CACHE_LIMIT * MAX_SRC_CHARS;
 
@@ -187,7 +193,10 @@ export const CONFIG = deepFreeze({
     printGate: {
       unsupported: 'This app prints 12 mm labels on the NIIMBOT D110 family; no frame was sent.',
       unknownModel: 'Unknown model: the printer did not report a model this app knows; no frame was sent and printing is disabled.',
-      guessedGeometry: 'The printer did not report its head width, so the label size is a guess; no frame was sent and printing is disabled.',
+      // Both facts make a label width real: the head width and the dots per mm
+      // that turn millimetres into dots. Either one missing leaves the size a
+      // guess, so the message names both rather than blaming the head alone.
+      guessedGeometry: 'The printer did not report its head width and resolution, so the label size is a guess; no frame was sent and printing is disabled.',
       experimental: 'This model is experimental: the D110M V4 sequence is verified on the D110_M, not on this printer.',
     },
   },

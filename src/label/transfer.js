@@ -10,7 +10,7 @@
  */
 
 import { CONFIG } from '../core/config.js';
-import { documentSourceChars, documentSourceBudgetMessage, imageSourceLimitMessage, imageSources, IMAGE_SOURCE_LIMIT } from './images.js';
+import { sourceBudgetProblem } from './images.js';
 import { migrateDocument } from './schema.js';
 
 /** The one format token a transfer file must carry. */
@@ -118,15 +118,12 @@ export function parseDocument(text) {
   // stored label uses. A file that this build cannot read as a label is refused
   // by the shape owner with one message.
   const document = migrateDocument(envelope.document);
-  const sources = imageSources(document);
-  if (sources.length > IMAGE_SOURCE_LIMIT) {
-    // The same distinct-source cap the editor and the print path enforce.
-    throw new Error(imageSourceLimitMessage(sources.length, 'importing this label'));
-  }
-  // The document budget is an authoring boundary, not a normalise step: the
-  // importer refuses the file whole instead of silently emptying a source.
-  const chars = documentSourceChars(document);
-  if (chars > CONFIG.bounds.maxSourceChars) throw new Error(documentSourceBudgetMessage(chars));
+  // Both source budgets are an authoring boundary, not a normalise step: the
+  // importer refuses the file whole instead of silently emptying a source. The
+  // same decision guards export, so a label this app can save is a label it can
+  // import.
+  const problem = sourceBudgetProblem(document, { action: 'importing this label' });
+  if (problem) throw new Error(problem);
   return {
     document,
     notices: Array.isArray(document.notices) ? [...document.notices] : [],

@@ -193,11 +193,17 @@ export function mergeCapabilities({ heartbeat, advanced, capabilities, statusDat
 
   const source = {
     model: reported(info.model) ? 'reported' : prior.source.model,
-    // The gate's "reported" fact is the head width plus a usable resolution:
-    // a known dpi with a fallback 96-dot head is still a guessed label width,
-    // and a hostile dpi leaves the pitch unknown even when the head width was
-    // reported.
-    geometry: invalidDpi ? 'default' : reportedHeadWidth !== null ? 'reported' : prior.source.geometry,
+    // The gate's "reported" fact is the head width *and* a usable resolution.
+    // A head-only frame has no pitch: the label size would be a guess, so it
+    // must not claim to be reported and the gate must refuse to print. A
+    // previously reported dpi counts (it is the same session's printer), and a
+    // hostile dpi stays a default even with a usable head.
+    geometry:
+      invalidDpi || dpi === null
+        ? 'default'
+        : reportedHeadWidth !== null
+          ? 'reported'
+          : prior.source.geometry,
     density: reported(capabilities?.densityRange) || reported(info.density) ? 'reported' : prior.source.density,
     labelType: capabilities?.labelTypes?.length || reported(info.labelType) ? 'reported' : prior.source.labelType,
     battery: battery ? 'reported' : prior.source.battery,

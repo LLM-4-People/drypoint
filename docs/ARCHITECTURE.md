@@ -333,16 +333,18 @@ indentation. Import applies the same bounds as storage and in the same order:
 1. the byte length is bounded by `CONFIG.document.transfer.maxBytes` **before**
    `JSON.parse`. The bound is `bounds.maxSourceChars` (itself
    `image.cacheLimit × bounds.maxSrcChars`) plus a bounded envelope overhead;
-   `validateDocument` enforces the same source budget, because the serialised
-   document repeats a source once per element, so a label the app can produce
-   can always be imported;
 2. the JSON reviver drops `__proto__` and `constructor`, so a hostile file
    cannot reach an object prototype;
 3. the exact `format` token and a readable, not-newer transfer version are
    required, each with one specific message;
-4. `validateDocument` — the same owner storage uses — normalises every element
-   and returns its notices; the distinct-image cap is checked with the same
-   wording the editor and print path use.
+4. `migrateDocument` (the storage path) normalises the label and returns its
+   notices, so an older document rotates on import exactly as it does on load;
+5. `sourceBudgetProblem` in `label/images.js` is the one source-budget decision,
+   and it is the boundary that refuses a file: the distinct-image cap and the
+   image-text budget, with the same wording export uses. Validation deliberately
+   *preserves* an over-budget document — it runs on every undo, geometry change
+   and print, so dropping a source there would destroy a label that already
+   exists. Import and export are the two authoring boundaries that refuse.
 
 The UI applies the result through `controller.replaceDocument`, so an import is
 exactly one undo step. There is no second reader, validation path, download path

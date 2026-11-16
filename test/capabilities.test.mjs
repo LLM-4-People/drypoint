@@ -99,7 +99,7 @@ test('heartbeat advanced wins over GetInfo for battery and sensors', () => {
 });
 
 test('defaulted capability groups are marked as guesses', () => {
-  const merged = mergeCapabilities({ capabilities: { headWidthPx: 96 } });
+  const merged = mergeCapabilities({ capabilities: { dpi: 203, headWidthPx: 96 } });
   assert.equal(merged.source.geometry, 'reported');
   assert.equal(merged.source.density, 'default');
   assert.equal(merged.source.battery, 'default');
@@ -109,7 +109,7 @@ test('defaulted capability groups are marked as guesses', () => {
   assert.ok(Object.values(empty.source).every((source) => source === 'default'));
 });
 
-test('geometry is "reported" only when the head width itself was reported', () => {
+test('geometry is "reported" only when the head width and a usable resolution are', () => {
   // A zero dpi, a truncated TLV, a lone max-print-height or a dpi without a
   // head width are not a head measurement: the gate must still call the 96-dot
   // fallback a guess.
@@ -118,12 +118,41 @@ test('geometry is "reported" only when the head width itself was reported', () =
     assert.equal(merged.source.geometry, 'default', `${JSON.stringify(caps)} is not reported geometry`);
   }
   assert.equal(mergeCapabilities({ capabilities: { dpi: 200, headWidthPx: 96 } }).source.geometry, 'reported');
-  assert.equal(mergeCapabilities({ capabilities: { headWidthPx: 96 } }).source.geometry, 'reported');
-  assert.equal(mergeCapabilities({ heartbeat: { headWidthPx: 96 } }).source.geometry, 'reported');
 
-  // A silent discovery keeps the same session's earlier report.
-  const prior = mergeCapabilities({ capabilities: { headWidthPx: 96 } });
+  // B-core-F8: a head-only frame has no pitch. Reporting geometry from the head
+  // alone let the app print at the assumed 8 dots/mm while claiming a report.
+  const headOnly = mergeCapabilities({ capabilities: { headWidthPx: 96 } });
+  assert.equal(headOnly.dpi, null, 'nothing reported a resolution');
+  assert.equal(headOnly.source.geometry, 'default');
+  const headOnlyReason = printBlockReason({ ...headOnly, model: 'D110_M', modelSupport: 'confirmed' });
+  assert.equal(headOnlyReason, CONFIG.device.printGate.guessedGeometry);
+  // B-core-F8 wording: the head *was* reported here, so the message must name
+  // the missing resolution too; blaming only the head is a false statement the
+  // operator would chase instead of the printer's capability frame.
+  assert.match(headOnlyReason, /did not report its head width and resolution/);
+  assert.doesNotMatch(headOnlyReason, /did not report its head width, so/);
+  const headOnlyHeartbeat = mergeCapabilities({ heartbeat: { headWidthPx: 96 } });
+  assert.equal(headOnlyHeartbeat.source.geometry, 'default', 'a heartbeat head alone is still a guess');
+
+  // A hostile resolution with a usable head is a default, not a report.
+  const hostile = mergeCapabilities({ capabilities: { headWidthPx: 96, dpi: 65535 } });
+  assert.equal(hostile.dpi, null);
+  assert.equal(hostile.source.geometry, 'default');
+
+  // A silent discovery keeps the same session's earlier report: the dpi came
+  // from this printer, and a later head-only frame does not unlearn it.
+  const prior = mergeCapabilities({ capabilities: { dpi: 300, headWidthPx: 96 } });
+  assert.equal(prior.source.geometry, 'reported');
+  assert.equal(mergeCapabilities({ previous: prior, heartbeat: { headWidthPx: 96 } }).source.geometry, 'reported');
   assert.equal(mergeCapabilities({ previous: prior, advanced: {} }).source.geometry, 'reported');
+
+  // The D110_M reference path (head + dpi) is untouched.
+  const reference = mergeCapabilities({
+    capabilities: { dpi: 200, headWidthPx: 96 },
+    info: { deviceType: 0x0910, model: 'D110_M', modelSupport: 'confirmed' },
+  });
+  assert.equal(reference.source.geometry, 'reported');
+  assert.equal(printBlockReason(reference), null);
 });
 
 test('a truncated max-print-height TLV never shortens the label limit', () => {

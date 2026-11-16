@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/core/config.js';
 import {
   IMAGE_SOURCE_LIMIT,
+  sourceBudgetProblem,
   createVisibleImageHydrator,
   documentSourceChars,
   documentSourceBudgetMessage,
-  exceedsSourceBudget,
   forgetImage,
   getImage,
   hydrateImages,
@@ -235,7 +235,28 @@ test('documentSourceChars counts every occurrence, not distinct sources', () => 
   assert.equal(documentSourceChars(document), 6, 'the serialised label repeats the source');
   assert.equal(documentSourceChars({ elements: [] }), 0);
   assert.equal(documentSourceChars(null), 0);
-  assert.equal(exceedsSourceBudget(document), false);
   assert.match(documentSourceBudgetMessage(64_000_001), /64000001 characters of image data/);
   assert.match(documentSourceBudgetMessage(64_000_001), /import or save/);
+});
+
+/* ---------------- the one source-budget decision (B-core-F2/F6) ---------------- */
+
+test('one decision covers the distinct count and the image-text budget', () => {
+  const seventeen = { elements: Array.from({ length: 17 }, (_, index) => ({ type: 'image', src: `decision-${index}.png` })) };
+  const problem = sourceBudgetProblem(seventeen, { action: 'importing this label' });
+  assert.match(problem, /this one uses 17/);
+  assert.match(problem, /importing this label/);
+
+  const sixteen = { elements: seventeen.elements.slice(0, 16) };
+  assert.equal(sourceBudgetProblem(sixteen, { action: 'importing this label' }), null, '16 is legal');
+
+  // The character budget is the second fact, with the boundary's wording.
+  const src = 'a'.repeat(CONFIG.bounds.maxSrcChars);
+  // Sixteen distinct sources plus one repeated occurrence: inside the distinct
+  // cap, over the character budget.
+  const chars = { elements: Array.from({ length: CONFIG.image.cacheLimit + 1 }, (_, index) => ({ type: 'image', src: index < CONFIG.image.cacheLimit ? `${src}${index}` : `${src}0` })) };
+  assert.equal(imageSources(chars).length, CONFIG.image.cacheLimit, 'the fixture is inside the distinct cap');
+  assert.match(sourceBudgetProblem(chars, { action: 'exporting this label' }), /characters of image data/);
+  assert.match(sourceBudgetProblem(chars, { refusal: true }), /Adding this image would give the label/);
+  assert.match(sourceBudgetProblem(chars, { action: 'exporting this label' }), /import or save/);
 });

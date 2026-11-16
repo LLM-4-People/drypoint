@@ -522,10 +522,19 @@ test('the Document panel has one export action, one import action and one hidden
   // importer's own wording, before any file is written (A-F1).
   const exportBody = main.slice(main.indexOf('function exportDocument()'), main.indexOf('ui.exportDocument.addEventListener'));
   assert.ok(
-    exportBody.indexOf('documentSourceChars(controller.document)') < exportBody.indexOf('downloadJson('),
+    exportBody.indexOf('sourceBudgetProblem(controller.document') < exportBody.indexOf('downloadJson('),
     'the budget runs before the download'
   );
-  assert.match(exportBody, /documentSourceBudgetMessage\(chars\)/);
+  assert.match(
+    exportBody,
+    /sourceBudgetProblem\(controller\.document, \{ action: 'exporting this label' \}\)/,
+    'the shared budget owner decides, with the boundary named'
+  );
+  assert.doesNotMatch(
+    exportBody,
+    /documentSourceChars\(|documentSourceBudgetMessage\(/,
+    'no second budget measurement or wording'
+  );
   const importBody = main.slice(main.indexOf('async function importDocumentFile'), main.indexOf('ui.exportDocument.addEventListener'));
   assert.ok(importBody.indexOf('file.text()') > importBody.indexOf('TRANSFER_MAX_BYTES'), 'the size check runs before the file is read');
   assert.match(importBody, /transferTooLargeMessage\(size\)/, 'the same size wording as the parser');

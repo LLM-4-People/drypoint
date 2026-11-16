@@ -623,3 +623,30 @@ test('a refused add reaches the refusal channel even when the stage summary is s
   assert.equal(editor.addElement('rect', { w: 10, h: 10 }), null);
   assert.equal(refusals.length, 1, 'a duplicate refusal is not re-announced');
 });
+
+/* ---------------- the refusal notice list is bounded (B-core-F5) ---------------- */
+
+test('a refused 201st add keeps the cap message inside the notice bound', () => {
+  const refusals = [];
+  const full = Array.from({ length: CONFIG.bounds.maxNotices }, (_, index) => `existing notice ${index}`);
+  const editor = createEditor({
+    document: {
+      version: 4,
+      lengthMm: 200,
+      copies: 1,
+      name: 'Full',
+      notices: full,
+      elements: Array.from({ length: CONFIG.bounds.maxElements }, () => ({ type: 'rect', w: 10, h: 10 })),
+    },
+    onRefusal: (message) => refusals.push(message),
+  });
+  assert.equal(editor.document.notices.length, CONFIG.bounds.maxNotices, 'the fixture starts full');
+
+  assert.equal(editor.addElement('rect', { w: 10, h: 10 }), null);
+  assert.equal(editor.document.notices.length, CONFIG.bounds.maxNotices, 'the list never grows past the bound');
+  assert.equal(editor.document.notices.at(-1), 'A label holds at most 200 elements.', 'the refusal is kept');
+  assert.deepEqual(refusals, ['A label holds at most 200 elements.'], 'and announced once');
+  // The oldest entry gives way; the rest of the recent history is intact.
+  assert.equal(editor.document.notices.includes('existing notice 0'), false);
+  assert.equal(editor.document.notices.includes('existing notice 1'), true);
+});

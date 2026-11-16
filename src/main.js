@@ -37,7 +37,7 @@ import { createDocument, createElement, documentHeightPx, documentWidthPx, excee
 import { summariseWarnings } from './label/render.js';
 import { TEMPLATES, testDocument } from './label/templates.js';
 import { barcodeFitMessage, barcodeFrame } from './label/barcode.js';
-import { createVisibleImageHydrator, hydrateImages, documentSourceChars, documentSourceBudgetMessage } from './label/images.js';
+import { createVisibleImageHydrator, hydrateImages, sourceBudgetProblem } from './label/images.js';
 import { documentFilename, parseDocument, serializeDocument, transferTooLargeMessage, TRANSFER_MAX_BYTES } from './label/transfer.js';
 
 const log = createLogger('main');
@@ -572,13 +572,13 @@ function applyTemplate(template) {
  * already holds.
  */
 function exportDocument() {
-  // The budget is an authoring boundary, not a normalise step: a document that
-  // already exists in memory (a legacy label, a test fixture) is exported or
-  // refused whole, never silently emptied on the way out.
-  const chars = documentSourceChars(controller.document);
-  if (chars > CONFIG.bounds.maxSourceChars) {
-    log.warn('label export refused an over-budget document', { chars, limit: CONFIG.bounds.maxSourceChars });
-    toast(documentSourceBudgetMessage(chars), { tone: 'error' });
+  // Both source budgets are authoring boundaries, not normalise steps: a
+  // document that already exists in memory is exported or refused whole, with
+  // the importer's own decision and wording, so an export always re-imports.
+  const problem = sourceBudgetProblem(controller.document, { action: 'exporting this label' });
+  if (problem) {
+    log.warn('label export refused an over-budget document', { message: problem });
+    toast(problem, { tone: 'error' });
     return;
   }
   try {

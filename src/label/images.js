@@ -66,11 +66,6 @@ export function documentSourceChars(labelDocument) {
   return chars;
 }
 
-/** Whether the document is over the one image-text budget. */
-export function exceedsSourceBudget(labelDocument) {
-  return documentSourceChars(labelDocument) > CONFIG.bounds.maxSourceChars;
-}
-
 /**
  * The one wording for a document over the image-text budget at a transfer
  * boundary. Import and export quote it: a label either side can produce must be
@@ -78,6 +73,38 @@ export function exceedsSourceBudget(labelDocument) {
  */
 export function documentSourceBudgetMessage(chars) {
   return `This label carries ${chars} characters of image data, more than the ${CONFIG.bounds.maxSourceChars} this app can import or save. Remove or reuse an image.`;
+}
+
+/**
+ * The refusal the editor shows when one more image would pass the document
+ * budget. Same limit and the same measurement as the transfer boundary, a
+ * different action.
+ */
+export function sourceBudgetRefusalNotice() {
+  return `Adding this image would give the label more than ${CONFIG.bounds.maxSourceChars} characters of image data. Remove or reuse an image first.`;
+}
+
+/**
+ * The one source-budget decision for a document that is about to cross a
+ * boundary — the editor's add/update/duplicate, import, or export.
+ *
+ * Both facts are checked here and nowhere else: the distinct-source cap (the
+ * decode cache) and the image-text budget (the serialised file, which repeats a
+ * source once per element). `labelDocument` must be the document as it *would*
+ * be after the change, so a replacement is judged by what it produces rather
+ * than by what it removes. The action names the boundary in the message.
+ *
+ * @param {object|null} labelDocument the resulting document
+ * @param {{action?: string, refusal?: boolean}} [options] `refusal` selects the
+ *        editor's wording; transfer boundaries use the import/save wording
+ * @returns {string|null} one message, or null when the document fits
+ */
+export function sourceBudgetProblem(labelDocument, { action = 'printing', refusal = false } = {}) {
+  const distinct = imageSources(labelDocument).length;
+  if (distinct > IMAGE_SOURCE_LIMIT) return imageSourceLimitMessage(distinct, action);
+  const chars = documentSourceChars(labelDocument);
+  if (chars <= CONFIG.bounds.maxSourceChars) return null;
+  return refusal ? sourceBudgetRefusalNotice() : documentSourceBudgetMessage(chars);
 }
 
 /** Mark a source as recently used so eviction drops the coldest entry first. */

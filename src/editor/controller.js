@@ -13,14 +13,13 @@ import {
   documentHeightPx,
   documentWidthPx,
   droppedSourceNotice,
-  sourceBudgetRefusalNotice,
   truncatedNotice,
   validateDocument,
 } from '../label/schema.js';
 import { CONFIG } from '../core/config.js';
 import { clamp, createId, deepClone } from '../core/format.js';
 import { geometry } from '../core/geometry.js';
-import { IMAGE_SOURCE_LIMIT, documentSourceChars, imageSourceLimitMessage, imageSources } from '../label/images.js';
+import { sourceBudgetProblem } from '../label/images.js';
 
 /**
  * @param {object} options
@@ -107,58 +106,54 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
    */
   function refuseElementCap() {
     if (document.elements.length < CONFIG.bounds.maxElements) return false;
-    const notice = `A label holds at most ${CONFIG.bounds.maxElements} elements.`;
-    // The refusal is a toast-class fact, not a layout hint: with two hundred
-    // overlapping elements the stage summary is saturated, so the operator
-    // would otherwise see nothing at all when Add is refused. One announcement
-    // per distinct refusal, exactly like every other editor refusal.
-    if (!document.notices?.includes(notice)) {
-      onRefusal(notice);
-      document = { ...document, notices: [...(document.notices ?? []), notice] };
-      emit({ commit: false, keepNotices: true });
-    }
+    publishRefusal(`A label holds at most ${CONFIG.bounds.maxElements} elements.`);
     return true;
   }
 
-  /** Publish one refusal as a non-committed notice, without duplicating it. */
+  /**
+   * Publish one refusal: the toast-class channel and the document notice, once
+   * each, bounded by the one notice list. A refusal is the newest fact, so when
+   * the list is full the oldest entry gives way — the operator has already been
+   * told it, and the alternative is an invisible refusal.
+   *
+   * The refusal is a toast-class fact, not a layout hint: with two hundred
+   * overlapping elements the stage summary is saturated, so the operator would
+   * otherwise see nothing at all when Add is refused.
+   */
   function publishRefusal(notice) {
-    if (document.notices?.includes(notice)) return;
+    if (document.notices?.includes(notice)) return false;
     onRefusal(notice);
-    document = { ...document, notices: [...(document.notices ?? []), notice].slice(0, CONFIG.bounds.maxNotices) };
+    const notices = [...(document.notices ?? []), notice].slice(-CONFIG.bounds.maxNotices);
+    document = { ...document, notices };
     emit({ commit: false, keepNotices: true });
+    return true;
   }
 
   /**
    * The one source policy for every mutation that can add image text.
    *
-   * `replacing` is the element an edit overwrites. Both budgets are computed
-   * for the document the edit *would* produce: `imageSources` excludes the
-   * replaced element, then the new source is added, so a source that another
-   * element still uses keeps its slot. The old source string is never
-   * subtracted on its own — two elements sharing it mean the result really does
-   * use one more distinct image.
-   *
-   * The distinct-source cap bounds the decode cache; the character budget
-   * bounds the serialised document, which repeats a source once per element and
-   * therefore grows even when the source is reused.
+   * `replacing` is the element an edit overwrites, so the decision is made on
+   * the document the edit *would* produce. `sourceBudgetProblem` owns both
+   * budgets: the distinct-source cap (the decode cache) and the image-text
+   * budget (the serialised document, which repeats a source once per element and
+   * therefore grows even when the source is reused). A source that another
+   * element still uses keeps its slot.
    */
   function refuseImageSourceCap(element, replacing = null) {
     if (element?.type !== ELEMENT_TYPES.IMAGE || !element.src) return false;
-    const sources = new Set(imageSources(document, { excludeId: replacing?.id ?? null }));
-    sources.add(element.src);
-    if (sources.size > IMAGE_SOURCE_LIMIT) {
-      publishRefusal(imageSourceLimitMessage(sources.size, replacing ? 'replacing this image' : 'adding another image'));
-      return true;
-    }
-    // The character budget counts occurrences, so only the replaced element's
-    // own contribution leaves the total.
-    const replacedChars = replacing?.type === ELEMENT_TYPES.IMAGE && typeof replacing.src === 'string' ? replacing.src.length : 0;
-    const chars = element.src.length + Math.max(0, documentSourceChars(document) - replacedChars);
-    if (chars > CONFIG.bounds.maxSourceChars) {
-      publishRefusal(sourceBudgetRefusalNotice());
-      return true;
-    }
-    return false;
+    // The shared owner decides on the document this change would produce: the
+    // replaced element is swapped for its new version, an add appends. Both
+    // budgets and both messages live there, never here.
+    const elements = replacing
+      ? document.elements.map((each) => (each.id === replacing.id ? element : each))
+      : [...document.elements, element];
+    const problem = sourceBudgetProblem(
+      { ...document, elements },
+      { action: replacing ? 'replacing this image' : 'adding another image', refusal: true }
+    );
+    if (!problem) return false;
+    publishRefusal(problem);
+    return true;
   }
 
   /**
