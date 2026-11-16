@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 import { lexJavaScript } from './lib/js-scan.mjs';
 import { BRAND } from '../src/core/brand.js';
@@ -422,6 +423,36 @@ async function readExisting(file) {
     if (error.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+/**
+ * Parse the generated manifest from its source text.
+ *
+ * One owner for every consumer: the Android builder, the artifact check and the
+ * Pages smoke all need the same `files`, `digests` and `version`, and they used
+ * to keep three slightly different acceptance rules (a manifest with no
+ * `digests` passed the Android build and failed the artifact check). This is
+ * the inverse of `renderPrecache`, so the fields cannot drift.
+ */
+export function parseManifest(source, filename = OUTPUT) {
+  const sandbox = { self: {} };
+  vm.runInNewContext(source, sandbox, { filename });
+  const manifest = sandbox.self?.__PRECACHE;
+  if (!manifest || !Array.isArray(manifest.files) || manifest.files.length === 0) {
+    throw new Error(`${filename} has no file list`);
+  }
+  if (!manifest.digests || typeof manifest.digests !== 'object' || Array.isArray(manifest.digests)) {
+    throw new Error(`${filename} has no digests`);
+  }
+  if (typeof manifest.version !== 'string' || manifest.version.length === 0) {
+    throw new Error(`${filename} has no version stamp`);
+  }
+  return manifest;
+}
+
+/** Read the generated manifest from a checkout. */
+export async function readManifest(root = ROOT) {
+  return parseManifest(await readFile(join(root, OUTPUT), 'utf8'), OUTPUT);
 }
 
 /** Compare the manifest and worker stamp on disk with the graph. Never writes. */

@@ -28,10 +28,10 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import vm from 'node:vm';
 
 import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
 import { minSdkVersionOf, targetSdkVersionOf, versionCodeOf } from './build-android.mjs';
+import { OUTPUT, parseManifest } from './precache.mjs';
 
 export const ROOT = resolve(import.meta.dirname, '..');
 const WWW = 'assets/www/';
@@ -49,14 +49,9 @@ export function defaultApkPath(root = ROOT) {
 
 /** The generated precache manifest, read without importing the app. */
 export function readPrecache(root = ROOT) {
-  const source = readFileSync(join(root, 'assets', 'precache.js'), 'utf8');
-  const sandbox = { self: {} };
-  vm.runInNewContext(source, sandbox, { filename: 'assets/precache.js' });
-  const manifest = sandbox.self.__PRECACHE;
-  if (!manifest || !Array.isArray(manifest.files) || !manifest.digests) {
-    throw new Error('assets/precache.js has no file list and digests');
-  }
-  return manifest;
+  // The acceptance rule is the generator's (`parseManifest`), not a second
+  // copy: a manifest the Android build accepts must also pass this check.
+  return parseManifest(readFileSync(join(root, OUTPUT), 'utf8'), OUTPUT);
 }
 
 /** Zip entry names under `assets/www/`, without the prefix. */

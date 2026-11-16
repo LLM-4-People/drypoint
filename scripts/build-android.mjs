@@ -21,7 +21,7 @@ import vm from 'node:vm';
 
 import brand from '../brand.json' with { type: 'json' };
 import { DISTRIBUTION_FILES, resolveDistributionFile } from './lib/distribution.mjs';
-import { isAllowed, resolveSurfacePath } from './precache.mjs';
+import { isAllowed, readManifest, resolveSurfacePath } from './precache.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const androidDir = join(root, 'android');
@@ -133,15 +133,6 @@ function run(command, args, label) {
 function runWithInput(command, args, input, label) {
   process.stdout.write(`android: ${label}\n`);
   execFileSync(command, args, { input, stdio: ['pipe', 'inherit', 'inherit'] });
-}
-
-async function readPrecache() {
-  const source = await readFile(join(root, 'assets', 'precache.js'), 'utf8');
-  const sandbox = { self: {} };
-  vm.runInNewContext(source, sandbox, { filename: 'assets/precache.js' });
-  const manifest = sandbox.self.__PRECACHE;
-  if (!manifest || !Array.isArray(manifest.files) || !manifest.files.length) fail('assets/precache.js has no file list');
-  return manifest;
 }
 
 /**
@@ -691,7 +682,7 @@ async function main() {
   const versionCode = versionCodeOf(pkg.version);
 
   run(process.execPath, [join(root, 'scripts', 'precache.mjs'), '--write'], 'refreshing the precache manifest');
-  const manifest = await readPrecache();
+  const manifest = await readManifest(root);
 
   // Build into a scratch directory. `android/build/` holds the last verified
   // artifacts and is only touched by the atomic renames below, so a failed

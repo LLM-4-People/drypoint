@@ -522,7 +522,7 @@ test('ANDROID.md keeps the signing, asset and filename contracts', () => {
   assert.ok(doc.includes('android/keystore/drypoint-release.jks'));
 
   assert.match(doc, /SHA-256 digest/);
-  assert.match(build, /await readPrecache\(\)/);
+  assert.match(build, /await readManifest\(root\)/, 'the APK builder reads the manifest through its owner');
   assert.match(build, /if \(!isAllowed\(file\)\) fail\(/);
   assert.match(build, /await resolveSurfacePath\(file\)/);
   assert.match(doc, /app-surface allowlist/);

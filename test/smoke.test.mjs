@@ -15,10 +15,10 @@ import { join } from 'node:path';
 
 import { buildPages } from '../scripts/build-pages.mjs';
 import { contentTypeFor } from '../scripts/lib/content-types.mjs';
+import { parseManifest } from '../scripts/precache.mjs';
 import {
   checkDeployment,
   MANIFEST_PATH,
-  parsePrecache,
   probeMethod,
   SITE_ONLY_FILES,
   smokePaths,
@@ -167,7 +167,7 @@ test('an altered deployed file fails the digest check', async (t) => {
 
 test('the deployed manifest and worker stamp carry one version', async (t) => {
   const out = await stagedSite(t);
-  const manifest = parsePrecache(await readFile(join(out, 'assets/precache.js'), 'utf8'));
+  const manifest = parseManifest(await readFile(join(out, 'assets/precache.js'), 'utf8'));
   const worker = await readFile(join(out, 'sw.js'), 'utf8');
   assert.equal(workerBuild(worker), manifest.version, 'the generated pair agrees');
   const mismatched = worker.replace(/const BUILD = '[0-9a-f]+'/, "const BUILD = 'deadbeefdeadbeef'");
