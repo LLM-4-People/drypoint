@@ -7,7 +7,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { link, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const DEFAULT_PORT = 8080;
@@ -85,10 +86,27 @@ export async function readTrackedServer(file) {
   }
 }
 
-/** Atomically create the pid file; fails with EEXIST when another start won. */
+/**
+ * Atomically create the pid file; fails with EEXIST when another start won.
+ *
+ * The body is written to a private temporary file and published with `link`,
+ * which is atomic and exclusive. Creating the target directly with
+ * `writeFile(..., { flag: 'wx' })` makes it visible at `open()` before its
+ * bytes are written, so a concurrent start can read it as `invalid`, delete
+ * the winner's record and claim the port too. `link` makes the complete file
+ * appear in one step, so a racing reader sees either nothing or the whole
+ * record.
+ */
 export async function writeTrackedServer(file, record) {
-  await writeFile(file, `${JSON.stringify(record)}\n`, { flag: 'wx' });
-  return record;
+  const body = `${JSON.stringify(record)}\n`;
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, body, { flag: 'wx', mode: 0o600 });
+    await link(temp, file);
+    return record;
+  } finally {
+    await rm(temp, { force: true });
+  }
 }
 
 /** True when the process exists (EPERM still means it exists). */

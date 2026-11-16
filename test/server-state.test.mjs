@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,6 +61,27 @@ test('the pid file round-trips, is exclusive and reports malformed contents', as
 
   await writeFile(file, 'not json');
   assert.equal((await readTrackedServer(file)).state, 'invalid');
+});
+
+test('a reader racing a write never sees a half-written pid file', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'drypoint-pid-write-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'server-8080.pid');
+  const record = { pid: process.pid, port: 8080, startedAt: '2026-01-01T00:00:00.000Z' };
+  let invalid = 0;
+  for (let round = 0; round < 50; round++) {
+    const writing = writeTrackedServer(file, record);
+    for (let read = 0; read < 40; read++) {
+      const state = await readTrackedServer(file);
+      if (state.state !== 'missing' && state.state !== 'tracked') invalid++;
+    }
+    await writing;
+    assert.deepEqual((await readTrackedServer(file)).record, record);
+    // The publish is complete and the private temporary file is gone.
+    assert.deepEqual((await readdir(directory)).filter((name) => name.endsWith('.tmp')), []);
+    await rm(file, { force: true });
+  }
+  assert.equal(invalid, 0, 'the pid file appears only with its complete body');
 });
 
 test('cleanup only removes a file that still describes this process', async (t) => {
