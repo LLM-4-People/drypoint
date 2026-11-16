@@ -20,30 +20,19 @@ concurrency:
 jobs:
   build:
     name: build
-    # `workflow_run` fires for every conclusion; only success may deploy. A
-    # manual dispatch has no triggering run, so it is always allowed.
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # The trust boundary, declared where it can be checked: only this
+    # repository's own main branch may deploy. `workflow_run` runs with the
+    # default branch's workflow file, and this condition is what makes
+    # `head_sha` a commit from this repository rather than a fork's.
+    if: >-
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Only this repository's main branch may deploy
-        # `workflow_run` runs with the default branch's workflow file, so the
-        # check that decides what code is built must itself come from main.
-        # This refuses a run from a fork or from another branch before any
-        # checkout happens, which is the trust boundary the workflow relies on.
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
-            head_repo='${{ github.event.workflow_run.head_repository.full_name }}'
-            head_branch='${{ github.event.workflow_run.head_branch }}'
-            if [ "$head_repo" != "$GITHUB_REPOSITORY" ] || [ "$head_branch" != "main" ]; then
-              echo "::error::a Checks run from ${head_repo}:${head_branch} may not deploy this site"
-              exit 1
-            fi
-          elif [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "::error::a manual deploy must name refs/heads/main, not ${GITHUB_REF}"
-            exit 1
-          fi
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,8 +72,8 @@ jobs:
       page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       # Nothing is checked out and no shell runs here: the only job holding
-      # `pages: write` executes one pinned action, so no code from any commit
-      # can run with that token.
+      # `pages: write` executes one pinned action, so no commit's code can run
+      # with that token.
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
@@ -92,6 +81,13 @@ jobs:
   smoke:
     name: smoke
     needs: [build, deploy]
+    # Same trust boundary as `build`: this job checks the commit out too.
+    if: >-
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

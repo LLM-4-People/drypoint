@@ -413,12 +413,17 @@ test('pages deploys only a successful Checks run for the commit it validated', a
   // A red Checks run must not deploy: the condition is on the job and the
   // commit checked out is the run's own head SHA.
   assert.match(pages, /github\.event\.workflow_run\.conclusion == 'success'/, 'a red run cannot deploy');
-  assert.match(pages, /if: github\.event_name == 'workflow_dispatch' \|\| github\.event\.workflow_run\.conclusion == 'success'/);
+  // The trust boundary that makes head_sha a commit of *this* repository: the
+  // guard is a job condition, so it dominates the checkout it protects
+  // (CodeQL recognises the head_repository comparison there).
+  assert.equal(
+    (pages.match(/github\.event\.workflow_run\.head_repository\.full_name == github\.repository/g) ?? []).length,
+    2,
+    'both checking-out jobs refuse a run from a fork'
+  );
+  assert.equal((pages.match(/github\.event\.workflow_run\.head_branch == 'main'/g) ?? []).length, 2, 'and from another branch');
+  assert.equal((pages.match(/github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'/g) ?? []).length, 2, 'a manual deploy must name main');
   assert.match(pages, /workflow_dispatch:/, 'a manual deploy is still possible');
-  // The trust boundary: only this repository, only main, before any checkout.
-  assert.match(pages, /github\.event\.workflow_run\.head_repository\.full_name/, 'a fork run cannot deploy');
-  assert.match(pages, /"\$head_branch" != "main"/, 'another branch cannot deploy');
-  assert.match(pages, /"\$GITHUB_REF" != "refs\/heads\/main"/, 'a manual deploy must name main');
 
   const jobs = jobsOf(pages);
   assert.deepEqual(jobs.map((job) => job.name), ['build', 'deploy', 'smoke']);
