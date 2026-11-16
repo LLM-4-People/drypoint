@@ -561,7 +561,7 @@ generated manifest, or the worker stamp disagree.
 
 ### Accepted deployment limits (1.0.3)
 
-Three facts are recorded as accepted for this release rather than fixed:
+Four facts are recorded as accepted for this release rather than fixed:
 
 - **Assets are not content-hashed.** GitHub Pages serves every asset with a
   ten-minute cache and cannot set custom headers, so a first or uncontrolled
@@ -786,7 +786,7 @@ release are immutable; only its title, notes and pre-release flag can change.
 regenerated for comparison from the current changelog:
 
 ```bash
-gh api repos/LLM-4-People/drypoint/releases/tags/v1.0.0 --jq .body > /tmp/v1.0.0.published.md
+gh api repos/LLM-4-People/drypoint/releases/tags/v1.0.0 --template '{{.body}}' > /tmp/v1.0.0.published.md
 node scripts/release-notes.mjs --tag v1.0.0 --historical --out /tmp/v1.0.0.md
 diff -u /tmp/v1.0.0.published.md /tmp/v1.0.0.md
 ```
