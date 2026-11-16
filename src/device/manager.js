@@ -176,6 +176,11 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     } else {
       log.warn('session closed', { message: error?.message, wasConnected });
     }
+    // A job whose printEnd is on the wire is already committed: the page
+    // counter proved every copy before that frame. The job object is about to
+    // be cleared and its `finishing` event has not run yet, so the fact has to
+    // travel with the disconnect or the UI calls a printed label incomplete.
+    const committed = currentJob?.committed === true;
     currentJob = null;
     // The link is gone: release every reference before the (bounded) close
     // await, so a connect() issued from the state event starts clean.
@@ -197,7 +202,8 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     });
     // A link that never reached "connected" (cancelled or failed connect) has
     // no connection to lose; the connect() caller reports its own error.
-    if (wasConnected) events.emit('disconnected', error);
+    // One payload: the shared emitter forwards a single argument.
+    if (wasConnected) events.emit('disconnected', { error, committed });
     await disposeTransport(closingTransport);
   }
 

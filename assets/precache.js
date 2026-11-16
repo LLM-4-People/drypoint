@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: 'c334e572195c4a36',
+  version: 'f60d5ff87351e7fd',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -105,7 +105,7 @@ self.__PRECACHE = {
     'src/core/store.js': '5f10718601cdfab0b8d18058103531c5827166889b6c8e8eb5a37cf018774ca0',
     'src/core/version.js': '2a274f8204e18b1e7e3ffbdc67bb76f471af3579cdff6a387d8437b5242ecc01',
     'src/device/capabilities.js': '2ffd376cd6574f9d8afc83a55fff7a846ea0ac11a373ceab57c72778a800f519',
-    'src/device/manager.js': '57dbd576e8dc732a0ad37647d1e98de15fe278cb5b5f2969cf1aa0d9d718d51b',
+    'src/device/manager.js': '8a1dc78d4e13e780023b3604231293f50ebb9bc439d47733186638be4d249063',
     'src/device/print-job.js': '92a8f14fa3e21f1ea6ccf2c39357eccfb037eaea6119ada34125b53f73b4f90d',
     'src/device/print-options.js': '9fc5ce0e105afe54ea4a6b42bf2e80e67f62284f414aa9eb21dcd39df941b901',
     'src/device/roll-profiles.js': '126411a8472364f015be6aa77d4e62ee94661585ac3059f56acd43ddae3666b2',
@@ -129,7 +129,7 @@ self.__PRECACHE = {
     'src/label/templates.js': '165b47fc6bee66c8f7121053bd24d26227ac0d951300b56714b0c0e2fc17142a',
     'src/label/text-layout.js': '475d60e209e7ecade8208829c8a244b6d37d5c01ef04069d577afbe165171599',
     'src/label/transfer.js': '9eddcaf0899e8760d4a6f18f2f97a1e9f896bb77411ba1f0e761217cf8403129',
-    'src/main.js': 'd567944f4c4fc05ccc3aebd5c430726ea64bd642fe28f37478b695f994e72b28',
+    'src/main.js': 'a46f907ef4aef648b957c7941795d0236b2416ce89334a24cec157421397ad74',
     'src/protocol/client.js': '1124bfaf6668838e602c2cd9c7a36f8569fa78ccba3501cde37803721a400ea0',
     'src/protocol/commands.js': 'fb406fce789c8007e8d929148c92f697c4d1b36a3279eb32af9deaf7b6f5c2b6',
     'src/protocol/errors.js': 'eb3bf68e81a226c0196cceccd4f6aaa8fe15209f1f1be47f9bc158fd0158414c',
@@ -139,7 +139,7 @@ self.__PRECACHE = {
     'src/protocol/session.js': '1fb73b4637a9d94195a970eeb8b1f721ff27a86b08fbe5d4940d4dfdf1d5a2e8',
     'src/ui/canvas-name.js': 'ddb034abbadc4540847243f58a54b9dd18727a86666b90b4a547a73d18e1030c',
     'src/ui/controls.js': '290cf192cb8cab87ad855715e7fca82081d077571012ebe00470a4ce412b7111',
-    'src/ui/disconnect-report.js': 'ec35843838bca7a8804ef2f818debe5428929762d724f66e98bcddb8859344fe',
+    'src/ui/disconnect-report.js': '23342ec2afa946b4d576b0b69e8f4f27913d8abdb7e6a659b0118c8e79e647f9',
     'src/ui/icons.js': 'b233e96a422293bf3a2f19e5e2e5cd19112e0d4b79d127a690895fd26ffd8813',
     'src/ui/inspector.js': '384002ea3bf0ff322d12e4c5c47a48b4f9784ce9f8228591212fac4031eae960',
     'src/ui/layers.js': '11269febc55924cd21824a776c1ff3b218dfbdea131b9ea9cc89dd0c5b62b9f2',

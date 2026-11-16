@@ -815,12 +815,14 @@ device.events.on('printer-error', (error) => {
   toast(error.message, { tone: 'error' });
 });
 
-device.events.on('disconnected', () => {
+device.events.on('disconnected', (detail) => {
   setDeviceState();
   // The same owner reports every lost link: an idle disconnect is status only,
-  // while a job phase makes it one specific toast. The print flow stays silent
-  // for a lost link, so the operator never hears two versions of one event.
-  reportDisconnect({ phase: printFlow.phase, setStatus });
+  // while a job phase makes it one specific toast. A job whose printEnd was
+  // already committed carries that fact, because the flow has not emitted
+  // `finishing` yet when the link drops during the ack. The print flow stays
+  // silent for a lost link, so the operator never hears two versions.
+  reportDisconnect({ phase: printFlow.phase, committed: detail?.committed === true, setStatus });
 });
 
 /**

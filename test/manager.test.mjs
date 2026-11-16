@@ -276,6 +276,32 @@ test('diagnostic GetInfo reads every unconsumed key on demand', async () => {
   assert.equal(address.decoded.bluetoothAddress, FIXTURE_BLUETOOTH_ADDRESS);
 });
 
+test('a link lost while PrintEnd is awaited carries the terminal commit', async () => {
+  // The page counter confirmed every copy, so the outcome is settled, but the
+  // link dropped before the PrintEnd ack and the flow never emitted
+  // `finishing`. The disconnect must carry the commit fact, or the UI says the
+  // label "may be incomplete" about a label the printer counted as printed.
+  const fake = harness({
+    override: (cmd) => (cmd === 0xf3 ? new Promise(() => {}) : undefined),
+    hold: (cmd) => cmd === 0xf3,
+  });
+  const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });
+  const disconnected = [];
+  manager.events.on('disconnected', (detail) => disconnected.push(detail));
+  await manager.connect();
+
+  const job = manager.print(raster, { lengthMm: 40 });
+  await waitFor(() => frameCommands(fake.instances[0]).includes(0xf3));
+  fake.instances[0].drop(new Error('Printer disconnected'));
+  await assert.rejects(job, /disconnected/i);
+  await tick();
+
+  assert.equal(disconnected.length, 1, 'one disconnect event');
+  assert.equal(disconnected[0].committed, true, 'the disposable fact survives the cleared job');
+  assert.match(disconnected[0].error.message, /disconnected/i);
+  assert.equal(manager.connected, false);
+});
+
 test('disconnect closes the transport once and emits disconnected once', async () => {
   const fake = harness();
   const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });

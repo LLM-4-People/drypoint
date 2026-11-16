@@ -884,6 +884,7 @@ test('the disconnect report has one honest sentence per phase', () => {
     ['preparing', 'Disconnected while preparing', /nothing was printed/],
     ['printing', 'Disconnected during print', /may be incomplete/],
     ['finishing', 'Disconnected after printing', /the label was printed/],
+    ['committed', 'Disconnected before the job ended', /counted the label as printed[\s\S]*before it confirmed the end of the job/],
   ];
   for (const [phase, status, message] of cases) {
     const statuses = [];
@@ -899,6 +900,35 @@ test('the disconnect report has one honest sentence per phase', () => {
   assert.equal(reportDisconnect({ phase: 'idle', setStatus: (text) => statuses.push(text), notify: (message) => toasts.push(message) }), null);
   assert.deepEqual(statuses, ['Disconnected'], 'an idle disconnect is status only');
   assert.deepEqual(toasts, [], 'and never a toast');
+});
+
+test('a committed job lost before the PrintEnd ack is not "may be incomplete"', () => {
+  // The manager knows printEnd was committed; the flow has not emitted
+  // `finishing` yet. The disconnect report takes that fact and tells the one
+  // true story instead of calling a counted label incomplete.
+  const statuses = [];
+  const toasts = [];
+  const result = reportDisconnect({
+    phase: 'printing',
+    committed: true,
+    setStatus: (text) => statuses.push(text),
+    notify: (message, options) => toasts.push({ message, options }),
+  });
+  assert.equal(statuses[0], 'Disconnected before the job ended');
+  assert.equal(toasts.length, 1, 'one toast');
+  assert.equal(result, toasts[0].message);
+  assert.match(result, /counted the label as printed/);
+  assert.match(result, /before it confirmed the end of the job/);
+  assert.match(result, /Reconnect before printing again/);
+  assert.doesNotMatch(result, /may be incomplete/);
+  assert.equal(toasts[0].options?.tone, 'error');
+
+  // The ordinary mid-print drop keeps its honest uncertainty.
+  const uncertain = reportDisconnect({ phase: 'printing', setStatus: () => {}, notify: () => {} });
+  assert.match(uncertain, /may be incomplete/);
+  // A committed job that already reached `finishing` keeps the after-print copy.
+  const finished = reportDisconnect({ phase: 'finishing', committed: true, setStatus: () => {}, notify: () => {} });
+  assert.match(finished, /the label was printed/);
 });
 
 test('a connection refresh does not overwrite a job status', () => {

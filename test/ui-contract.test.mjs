@@ -568,9 +568,13 @@ test('the diagnostics filename follows the authored app id', () => {
 });
 
 test('a disconnect during a job says the label may be incomplete', () => {
-  const handler = main.match(/device\.events\.on\('disconnected', \(\) => \{([\s\S]*?)\n\}\);/)?.[1];
+  const handler = main.match(/device\.events\.on\('disconnected', \(detail\) => \{([\s\S]*?)\n\}\);/)?.[1];
   assert.ok(handler, 'the disconnected handler exists');
-  assert.match(handler, /reportDisconnect\(\{ phase: printFlow\.phase, setStatus \}\)/, 'one report owner reads the job phase');
+  assert.match(
+    handler,
+    /reportDisconnect\(\{ phase: printFlow\.phase, committed: detail\?\.committed === true, setStatus \}\)/,
+    'one report owner reads the job phase and the terminal-commit fact'
+  );
   const report = read('src/ui/disconnect-report.js');
   assert.match(report, /Disconnected while preparing; nothing was printed\./);
   assert.match(report, /Disconnected during print: the label may be incomplete/);
