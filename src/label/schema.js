@@ -36,6 +36,12 @@ const { maxElements, maxTextChars, maxValueChars, maxNameChars, maxSrcChars, max
  * operator's data. The shape owner refuses it instead.
  */
 export const INVALID_ELEMENT_LIST_MESSAGE = 'That label has no valid element list.';
+/**
+ * A valid JSON document can nest far deeper than the engine's clone can walk.
+ * The clone is a normalisation detail; the operator gets one bounded refusal,
+ * never the engine's `RangeError`.
+ */
+export const DOCUMENT_TOO_DEEP_MESSAGE = 'That label is nested too deeply to be read.';
 
 function defaultsFor(type) {
   const widthPx = geometry().widthPx;
@@ -403,7 +409,16 @@ export function validateDocument(input) {
   if (Object.prototype.hasOwnProperty.call(input, 'elements') && !Array.isArray(input.elements)) {
     throw new Error(INVALID_ELEMENT_LIST_MESSAGE);
   }
-  const source = deepClone(input);
+  let source;
+  try {
+    source = deepClone(input);
+  } catch (error) {
+    // JSON.parse accepts far deeper nesting than structuredClone can walk.
+    // The depth is a transfer bound, so the operator gets the one bounded
+    // message instead of an engine stack trace.
+    if (error instanceof RangeError) throw new Error(DOCUMENT_TOO_DEEP_MESSAGE);
+    throw error;
+  }
   const lengthMm = clamp(finite(source.lengthMm, defaultLengthMm), minLengthMm, geometry().maxLengthMm);
   // The document shape has one owner too: only these keys survive, so a hostile
   // or future field can never ride along into history or a saved file.

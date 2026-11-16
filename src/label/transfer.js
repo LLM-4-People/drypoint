@@ -11,7 +11,7 @@
 
 import { CONFIG } from '../core/config.js';
 import { sourceBudgetProblem } from './images.js';
-import { migrateDocument } from './schema.js';
+import { DOCUMENT_TOO_DEEP_MESSAGE, migrateDocument } from './schema.js';
 
 /** The one format token a transfer file must carry. */
 export const TRANSFER_FORMAT = CONFIG.app.id;
@@ -27,7 +27,14 @@ function formatBytes(bytes) {
 
 /** The one "file is bigger than a valid document can be" message. */
 export function transferTooLargeMessage(bytes) {
-  return `That label file is too large (${formatBytes(bytes)}); this app imports files up to ${formatBytes(TRANSFER_MAX_BYTES)}.`;
+  const limit = `${formatBytes(TRANSFER_MAX_BYTES)} (${TRANSFER_MAX_BYTES} bytes)`;
+  // The UTF-16 pre-check knows only a lower bound on the byte count, so it
+  // states the limit and omits the file size rather than quoting a rounded
+  // number that reads as the same size as the limit.
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return `That label file is too large; this app imports files up to ${limit}.`;
+  }
+  return `That label file is too large (${formatBytes(bytes)}, ${Math.trunc(bytes)} bytes); this app imports files up to ${limit}.`;
 }
 
 /**
@@ -112,7 +119,10 @@ export function parseDocument(text) {
     envelope = JSON.parse(text, (key, value) =>
       key === '__proto__' || key === 'constructor' ? undefined : value
     );
-  } catch {
+  } catch (error) {
+    // The reviver walks the document recursively; a value past the depth bound
+    // throws RangeError. That is a transfer bound, not malformed JSON.
+    if (error instanceof RangeError) throw new Error(DOCUMENT_TOO_DEEP_MESSAGE);
     throw new Error('That label file is incomplete or is not valid JSON.');
   }
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {

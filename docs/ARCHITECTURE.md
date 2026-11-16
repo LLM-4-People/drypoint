@@ -315,7 +315,12 @@ A document may also carry `notices`: operator-facing strings left by a
 migration that had to grow the tape or drop content the printer cannot hold
 (e.g. a legacy barcode with non-ASCII text). Notices are part of the label, not
 of one render, so `renderDocument` includes them in its warnings and they reach
-the same print confirmation as any layout problem.
+the same print confirmation as any layout problem. A refusal is recorded here
+on purpose, not only in a toast: it is a bounded fact about the label (for
+example, the source or history budget), so it survives reload and export; the
+list is capped by `CONFIG.bounds.maxNotices` and the oldest entry gives way
+only when the list is full, because the newer refusal is the one the operator
+has not seen.
 
 `renderDocument` runs one layout-warning pass before painting. It reports
 visible elements whose boxes overlap (a frame or background rect that fully
