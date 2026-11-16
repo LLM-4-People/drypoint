@@ -68,6 +68,7 @@ async function harness(t, { existing = false, existingAsset = 'same', existingBu
   const dist = join(root, 'dist');
   const runnerTemp = join(root, 'tmp');
   const existingBundlePath = join(root, 'existing-bundle.jsonl');
+  const verifiedJson = join(root, 'verified-input.json');
   await Promise.all([mkdir(bin), mkdir(dist), mkdir(runnerTemp)]);
   const log = join(root, 'gh.log');
   await writeFile(
@@ -83,6 +84,10 @@ async function harness(t, { existing = false, existingAsset = 'same', existingBu
       '         exit 1',
       '       fi ;;',
       '  esac',
+      'fi',
+      'if [ "$1" = attestation ] && [ "$2" = verify ]; then',
+      '  cat "$GH_VERIFIED_JSON"',
+      '  exit 0',
       'fi',
       'if [ "$1" = release ] && [ "$2" = view ]; then',
       `  exit ${existing ? 0 : 1}`,
@@ -123,15 +128,24 @@ async function harness(t, { existing = false, existingAsset = 'same', existingBu
     attestationLine(digest, existingBundle === 'same' ? SIGN_SHA : OTHER_SHA),
   ];
   await writeFile(existingBundlePath, `${lines.join('\n')}\n`);
-  return { root, bin, dist, runnerTemp, log, existingBundlePath };
+  const verified = lines.map((line) => {
+    const bundle = JSON.parse(line);
+    return {
+      attestation: { bundle },
+      verificationResult: { statement: JSON.parse(Buffer.from(bundle.dsseEnvelope.payload, 'base64').toString('utf8')) },
+    };
+  });
+  await writeFile(verifiedJson, JSON.stringify(verified));
+  return { root, bin, dist, runnerTemp, log, existingBundlePath, verifiedJson };
 }
 
-function env({ bin, runnerTemp, log, existingBundlePath }, { tag = 'v1.0.3', ghRepo = 'LLM-4-People/drypoint' } = {}) {
+function env({ bin, runnerTemp, log, existingBundlePath, verifiedJson }, { tag = 'v1.0.3', ghRepo = 'LLM-4-People/drypoint' } = {}) {
   return {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
     GH_LOG: log,
     GH_EXISTING_BUNDLE: existingBundlePath,
+    GH_VERIFIED_JSON: verifiedJson,
     RUNNER_TEMP: runnerTemp,
     GITHUB_REF_NAME: 'decoy-branch',
     GITHUB_REPOSITORY: 'LLM-4-People/drypoint',
@@ -188,6 +202,7 @@ test('an existing release with a non-reproducible bundle refreshes the notes and
   assert.ok(verify.includes('--bundle'), 'the downloaded bundle is verified');
   assert.ok(verify.includes('--signer-workflow'), 'the signer workflow is pinned');
   assert.ok(verify.includes('https://slsa.dev/provenance/v1'), 'the predicate type is pinned');
+  assert.ok(verify.includes('--format json'), 'only the attestations gh verified are parsed');
   const edit = calls.find((call) => call.startsWith('release edit v1.0.3'));
   assert.ok(edit, 'a re-run refreshes the body instead of keeping a stale one');
   assert.ok(edit.includes('--notes-file'), 'the refreshed body is the generated notes');
