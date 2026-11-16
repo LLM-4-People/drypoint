@@ -1,6 +1,6 @@
 /**
  * A1 regression: a hidden image is never decoded at boot. When the operator
- * reveals it, the next repaint must start the decode — otherwise the canvas
+ * reveals it, the next repaint must start the decode; otherwise the canvas
  * paints "still loading" forever. The unit suite cannot see the missing
  * document argument; only the real page can.
  *

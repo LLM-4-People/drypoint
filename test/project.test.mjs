@@ -9,8 +9,10 @@ import { CONFIG } from '../src/core/config.js';
 import { SETTINGS_SCHEMA, printSettingsSnapshot } from '../src/core/settings.js';
 import { INFO_PROJECTION } from '../src/device/manager.js';
 import { shortcutIntent } from '../src/editor/shortcuts.js';
+import { lexJavaScript } from '../scripts/lib/js-scan.mjs';
 import { isIgnored, parseIgnore } from '../scripts/lib/tree.mjs';
-import { listProjectFiles, projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
+import { markers } from '../scripts/build-docs.mjs';
+import { listProjectFiles, listRootFiles, projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
 
 const pkg = JSON.parse(read('package.json'));
 const indexHtml = read('index.html');
@@ -55,13 +57,50 @@ test('dead configuration keys stay deleted', () => {
   assert.match(read('src/device/print-options.js'), /JOB_SPEED\[settings\['print\.speed'\]\]/);
 });
 
+/**
+ * The only text a read gate may trust: comments, strings and template literals
+ * are blanked, so prose or a fixture cannot claim a consumer.
+ * @param {string} source
+ * @returns {string}
+ */
+export function scannedSource(source) {
+  const { code, inside } = lexJavaScript(source);
+  return [...code].map((character, index) => (inside[index] ? ' ' : character)).join('');
+}
+
+/**
+ * Whether one CONFIG leaf is read in already-scanned source.
+ * @param {string} sources comment- and string-free text of every consumer
+ * @param {string[]} path leaf path below CONFIG
+ * @returns {boolean}
+ */
+export function configLeafConsumed(sources, path) {
+  const escape = (key) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Dotted reads may wrap or space the dots; a reference to a deeper path still
+  // starts with the leaf path, which is what a consumed table needs.
+  const dotted = (keys) => `CONFIG${keys.map((key) => `\\s*\\.\\s*${escape(key)}`).join('')}`;
+  if (new RegExp(dotted(path)).test(sources)) return true;
+  const parent = path.slice(0, -1);
+  if (parent.length === 0) return false;
+  // Destructuring (`const { widthPx } = CONFIG.geometry`) is the other real
+  // read form; it names the key only in the pattern, so a leaf scan has to
+  // resolve the parent object explicitly.
+  const pattern = new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${dotted(parent)}(?![\\w.])`, 'g');
+  for (const match of sources.matchAll(pattern)) {
+    const names = match[1].split(',').map((part) => part.trim().split(':')[0].trim());
+    if (names.includes(path.at(-1))) return true;
+  }
+  return false;
+}
+
 test('every CONFIG leaf is read outside its own module', () => {
   // The precache generator stamps CONFIG.offline.navigationTimeoutMs into the
   // service-worker manifest (a classic script cannot import the config), so it
-  // is a real consumer too.
+  // is a real consumer too. Every file is scanned with comments and strings
+  // blanked: a comment that mentions a leaf is not a reader.
   const sources = [...listProjectFiles('src'), ...listProjectFiles('scripts')]
     .filter((file) => (file.endsWith('.js') || file.endsWith('.mjs')) && file !== 'src/core/config.js')
-    .map((file) => read(file))
+    .map((file) => scannedSource(read(file)))
     .join('\n');
 
   // A leaf is a primitive, an array, or a lookup table whose keys are all
@@ -81,31 +120,12 @@ test('every CONFIG leaf is read outside its own module', () => {
   };
   walk(CONFIG, []);
 
-  const escape = (key) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // Dotted reads may wrap or space the dots; a reference to a deeper path still
-  // starts with the leaf path, which is what a consumed table needs.
-  const dotted = (path) => `CONFIG${path.map((key) => `\\s*\\.\\s*${escape(key)}`).join('')}`;
-  const consumed = (path) => {
-    if (new RegExp(dotted(path)).test(sources)) return true;
-    const parent = path.slice(0, -1);
-    if (parent.length === 0) return false;
-    // Destructuring (`const { widthPx } = CONFIG.geometry`) is the other real
-    // read form; it names the key only in the pattern, so a leaf scan has to
-    // resolve the parent object explicitly.
-    const pattern = new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${dotted(parent)}(?![\\w.])`, 'g');
-    for (const match of sources.matchAll(pattern)) {
-      const names = match[1].split(',').map((part) => part.trim().split(':')[0].trim());
-      if (names.includes(path.at(-1))) return true;
-    }
-    return false;
-  };
-
   // `storagePrefix` is read by config.js's own storageKey() helper: the prefix
   // has exactly one reader, so no module can build a storage key by hand.
   const ownerInternal = new Set(['app.storagePrefix']);
   const unused = leaves
     .map((path) => path.join('.'))
-    .filter((path) => !ownerInternal.has(path) && !consumed(path.split('.')));
+    .filter((path) => !ownerInternal.has(path) && !configLeafConsumed(sources, path.split('.')));
   assert.deepEqual(unused, [], 'every CONFIG value has a consumer');
 });
 
@@ -208,8 +228,9 @@ test('history compares documents through one function', () => {
 /* ---------------- README contracts ---------------- */
 
 test('the README command table is generated from package.json', () => {
-  const start = readme.indexOf('<!-- generated:scripts -->');
-  const end = readme.indexOf('<!-- /generated:scripts -->');
+  const { start: markerStart, end: markerEnd } = markers('scripts');
+  const start = readme.indexOf(markerStart);
+  const end = readme.indexOf(markerEnd);
   assert.ok(start >= 0 && end > start, 'the command table has its generated markers');
 
   // The table is the generated block, so it lists the scripts exactly once and
@@ -407,6 +428,16 @@ test('the ARCHITECTURE module map lists every real src, scripts and docs file', 
   }
 });
 
+test('the ARCHITECTURE module map lists every root Markdown document', () => {
+  const files = parseModuleMap(read('docs/ARCHITECTURE.md'));
+  const roots = listRootFiles().filter((file) => file.endsWith('.md'));
+  assert.ok(roots.includes('README.md') && roots.length >= 6, 'the root Markdown is real');
+  for (const file of roots) assert.ok(files.includes(file), `the module map lists ${file}`);
+  for (const file of files.filter((entry) => !entry.includes('/') && entry.endsWith('.md'))) {
+    assert.ok(roots.includes(file), `the module map has no phantom root document: ${file}`);
+  }
+});
+
 test('the ARCHITECTURE discovery chain lists only the probed GetInfo keys', () => {
   const doc = read('docs/ARCHITECTURE.md');
   const block = doc
@@ -488,12 +519,12 @@ test('ANDROID.md keeps the signing, asset and filename contracts', () => {
   const packageName = brand.appId;
   assert.match(read('android/AndroidManifest.template.xml'), /package="@PACKAGE@"/, 'the template has no second package owner');
   assert.ok(doc.includes(`adb uninstall ${packageName}`), 'the documented uninstall command names the real package');
-  assert.match(build, /const dir = join\(androidDir, 'keystore'\)/);
+  assert.match(build, /directory = join\(androidDir, 'keystore'\)/);
   assert.match(build, /const store = env\.ANDROID_KEYSTORE_FILE \|\| join\(directory, 'drypoint-release\.jks'\)/);
   assert.ok(doc.includes('android/keystore/drypoint-release.jks'));
 
   assert.match(doc, /SHA-256 digest/);
-  assert.match(build, /await readPrecache\(\)/);
+  assert.match(build, /await readManifest\(root\)/, 'the APK builder reads the manifest through its owner');
   assert.match(build, /if \(!isAllowed\(file\)\) fail\(/);
   assert.match(build, /await resolveSurfacePath\(file\)/);
   assert.match(doc, /app-surface allowlist/);
@@ -569,4 +600,16 @@ test('.gitignore keeps every secret, artifact and local file out of git', () => 
   for (const path of ['src/main.js', 'README.md', 'android/app/src/main/java/dev/llm4people/drypoint/MainActivity.java', 'docs/PRINTERS.md']) {
     assert.equal(isIgnored(path, parsed), false, `${path} is published`);
   }
+});
+
+test('the CONFIG gate accepts a real read and not a comment or a string', () => {
+  const path = ['ui', 'previewMaxScale'];
+  const forged = '// CONFIG.ui.previewMaxScale is read here\nconst note = "CONFIG.ui.previewMaxScale";\n';
+  assert.equal(configLeafConsumed(scannedSource(forged), path), false, 'prose and a fixture are not readers');
+  assert.equal(configLeafConsumed(scannedSource(`const scale = CONFIG.ui.previewMaxScale;`), path), true, 'a dotted read counts');
+  assert.equal(
+    configLeafConsumed(scannedSource(`const { previewMaxScale } = CONFIG.ui;`), path),
+    true,
+    'a destructured read counts'
+  );
 });

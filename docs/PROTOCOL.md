@@ -18,14 +18,14 @@ on purpose; the app never guesses an offset for them.
 | --- | --- | --- |
 | head | 2 | `0x55 0x55` |
 | CMD | 1 | request or reply opcode |
-| LEN | 1 | payload length, 0–255 |
+| LEN | 1 | payload length, 0-255 |
 | DATA | LEN | payload bytes |
 | CRC | 1 | XOR of CMD, LEN and every DATA byte |
 | tail | 2 | `0xAA 0xAA` |
 
 - The CRC is a plain 8-bit XOR; no mask is applied (an XOR result is already
-  0–255).
-- `encodeFrame` rejects payload elements that are not integers 0–255 and
+  0-255).
+- `encodeFrame` rejects payload elements that are not integers 0-255 and
   payloads longer than 255 bytes with a `RangeError`
   (`CONFIG.protocol.maxPayloadBytes`); `Uint8Array.from` would silently wrap
   `300` to `0x2c`.
@@ -33,7 +33,7 @@ on purpose; the app never guesses an offset for them.
   CRC and tail, and resynchronises one byte at a time after a bad frame. A
   corrupted length byte cannot stall the stream: an incomplete candidate is
   skipped as soon as a complete, valid frame follows it. The length byte is the
-  only frame-size limit (0–255), so there is no second, unreachable threshold.
+  only frame-size limit (0-255), so there is no second, unreachable threshold.
 - The only framed request with a prefix is `Connect`: the bytes `03` precede the
   frame (`03 55 55 c1 01 01 c1 aa aa`). The BLE transport builds that frame from
   the command registry; no transport keeps a copy of the bytes.
@@ -42,12 +42,12 @@ on purpose; the app never guesses an offset for them.
 
 `src/protocol/commands.js` owns three frozen tables:
 
-- `OP` — every opcode this codebase can build or receive. It is not a claim
+- `OP`: every opcode this codebase can build or receive. It is not a claim
   that the app sends all of them; `OP_ROLE` is.
-- `OP_ROLE` — every known opcode classified as `request` (a caller names the
+- `OP_ROLE`: every known opcode classified as `request` (a caller names the
   command), `unused` (registered and buildable, but nothing sends it),
   `inbound` or `unsupported`.
-- `UNSUPPORTED_OPS` — opcodes known from the protocol family that this app
+- `UNSUPPORTED_OPS`: opcodes known from the protocol family that this app
   deliberately does not send, each with a reason.
 
 `test/op-registry.test.mjs` enforces that every known opcode is classified
@@ -64,7 +64,7 @@ family:
 
 | Command | Opcode | Why it is not sent |
 | --- | --- | --- |
-| `disconnect` | `0xD2` | closing the transport already frees the port; **no `COMMANDS` entry** — its documented reply `0xD3` is also the unsolicited row counter, so an exchange could be answered by a status frame (see the `0xD3` note below) |
+| `disconnect` | `0xD2` | closing the transport already frees the port; **no `COMMANDS` entry**: its documented reply `0xD3` is also the unsolicited row counter, so an exchange could be answered by a status frame (see the `0xD3` note below) |
 | `printerFree` | `0xC3` | unverified on this unit; `CancelPrint` ends a job |
 | `setSpeed` | `0x22` | speed is sent inside `PrintStart`; a standalone write is unproven |
 | `setVolume` | `0x2E` | the sound switches use `SOUND_SETTINGS` (`0x58`) |
@@ -103,7 +103,7 @@ whose reply depends on its key (`0x40 + key`).
 | `setLanguage` | `0x26` | value | `0x36` | control | required byte |
 | `setPrintMode` | `0x2C` | value | `0x3C` | control | required byte |
 | `reset` | `0x28` | `01` | `0x38` | control | destructive |
-| `calibrate` | `0x8E` | `01` | `0x8F` | 20 s | feed / align one label |
+| `calibrate` | `0x8E` | `01` | `0x8F` | 20 s | feed / align paper |
 | `testPage` | `0x5A` | `01` | `0x6A` | 20 s | printer self-test |
 | `printerFree` | `0xC3` | `01` | `0xC4` | control | |
 | `printStart` | `0x01` | pages u16, `00 00 00 00`, colour, speed, `00` | `0x02` | control | speed 0 = quality, 1 = normal |
@@ -190,8 +190,8 @@ protocol does not carry.
 
 Every capability probe is optional, so a silent printer would otherwise cost one
 control timeout per probe (8 `GetInfo` keys plus the core probes). The manager
-gives a whole discovery one deadline — `CONFIG.protocol.timeouts.discovery`
-(12 s) — as an `AbortSignal` passed to every exchange. When it fires, the
+gives a whole discovery one deadline (`CONFIG.protocol.timeouts.discovery`,
+12 s) as an `AbortSignal` passed to every exchange. When it fires, the
 in-flight request is aborted and `connect()`/`refresh()` rejects with
 "The printer did not finish discovery within 12000 ms" instead of holding the
 manager (and the print-job lock) for a minute or more.
@@ -208,40 +208,25 @@ event and otherwise ignored.
 
 ## Supported models and the print gate
 
-`src/protocol/models.js` is the one model table. `support` is a product fact,
+`src/protocol/models.js` is the one model table, and
+[the printer support matrix](PRINTERS.md) is the one human-readable copy: one
+row per id, with the head evidence and what a new model would need. This page
+does not repeat the list, so the two cannot drift. `support` is a product fact,
 not a firmware guess:
 
-| Id | Vendor name | Support |
-| --- | --- | --- |
-| `0x0900` | D110 | not supported |
-| `0x0910` | D110_M | **confirmed** |
-| `0x0210` | D11_H | experimental |
-| `0x0200` | D11 | not supported |
-| `0x0202` | D11S | not supported |
-| `0x0213` | D11_Pro | not supported |
-| `0x1000` | B1 | not supported |
-| `0x1001` | B1 Pro | not supported |
-| `0x1002` | B1 SE | not supported |
-| `0x1B00` | B2 Pro | not supported |
-| `0x1B01` | B2 | not supported |
-| `0x0300` | B21 | not supported |
-| `0x0309` | B21S | not supported |
-| `0x0311` | B21 Pro | not supported |
-| `0x0901` | D110 / Hi-D110 (vendor-ambiguous) | not supported |
-
-- **confirmed** — the D110M V4 sequence is verified on that hardware.
-- **experimental** — the sequence is offered, but the one pre-print confirmation
+- **confirmed**: the D110M V4 sequence is verified on that hardware.
+- **experimental**: the sequence is offered, but the one pre-print confirmation
   says it is unverified on that model.
-- **not supported** — the model is named and every mutating command is refused
+- **not supported**: the model is named and every mutating command is refused
   before any frame is sent; reads stay available.
-- **unknown** — an id outside the table is `Unknown model` and blocks every
+- **unknown**: an id outside the table is `Unknown model` and blocks every
   mutating command.
 
 `supportGate` runs at the write choke point for every mutating command and
 answers `{ allowed, reason, kind }`, where `kind` is `model`, `geometry` or
 `sensor`. `printBlockReason` stays the single print answer and delegates to it.
 The gate refuses, in order: an unsupported model (with its real name), an
-unknown or absent model, and a head width the printer did not report — including
+unknown or absent model, and a head width the printer did not report, including
 a malformed `0` or `65535` report, which never becomes geometry. An experimental
 model is allowed after the operator confirms. Lid, paper and battery checks
 follow for commands that move or print paper and apply only when the printer
@@ -315,9 +300,9 @@ carry both bytes decodes as absent.
 
 | Offset | Field | Encoding |
 | --- | --- | --- |
-| 0–1 | `hardwareVersion` | major + fraction/100 (e.g. `04 01` → 4.01) |
-| 2–3 | `softwareVersion` | same encoding |
-| 4–5 | `headWidthPx` | u16 big-endian |
+| 0-1 | `hardwareVersion` | major + fraction/100 (e.g. `04 01` → 4.01) |
+| 2-3 | `softwareVersion` | same encoding |
+| 4-5 | `headWidthPx` | u16 big-endian |
 | 6 | `dpiClass` | raw class byte (`2` → 203 dpi, `3` → 300 dpi) |
 | 6 (derived) | `dpi` | resolution decoded from the class; `null` for an unknown class |
 | 7 | `headAlignment` | raw byte |
@@ -328,9 +313,9 @@ carry both bytes decodes as absent.
 
 | Offset | Field | Encoding |
 | --- | --- | --- |
-| 0–1 | `voltageMv` | u16 |
-| 2 | `batteryLevel` | 0–4 |
-| 2 | `batteryPercent` | `level × 25`, clamped 0–100 |
+| 0-1 | `voltageMv` | u16 |
+| 2 | `batteryLevel` | 0-4 |
+| 2 | `batteryPercent` | `level × 25`, clamped 0-100 |
 | 3 | `temperatureRaw` | raw byte |
 | 4 | `lidClosed` | `0` = closed |
 | 5 | `paperPresent` | `0` = present |
@@ -342,7 +327,7 @@ carry both bytes decodes as absent.
 | --- | --- | --- |
 | 9 | `packetIntervalMs` | raw byte |
 | 10 | `supportsColor` | `1` = supported |
-| 11–12 | `protocolVersion` | `major × 100 + minor` (`03 01` → 301) |
+| 11-12 | `protocolVersion` | `major × 100 + minor` (`03 01` → 301) |
 
 ### `0xBF` capability TLV
 
@@ -392,7 +377,7 @@ and `grayBuffer`.
 
 | Offset | Field | Encoding |
 | --- | --- | --- |
-| 0–1 | `pagesPrinted` | u16; completion is this counter, never progress |
+| 0-1 | `pagesPrinted` | u16; completion is this counter, never progress |
 | 2 | `renderProgress` | raw byte |
 | 3 | `feedProgress` | raw byte |
 | 7 | `busy` | `1` = busy |
@@ -438,12 +423,12 @@ discovery and 7 are diagnostic-only.
 | `0x07` | `autoShutdown` | byte | auto power-off control |
 | `0x08` | `modelId` | u16 (or one byte) → `deviceType`, `model`; a zero-length reply reports `null` | printer identity rows |
 | `0x09` | `softwareVersion` | major + fraction/100 | firmware row |
-| `0x0A` | `battery` | level 0–4 → percent | battery row |
+| `0x0A` | `battery` | level 0-4 → percent | battery row |
 | `0x0B` | `serial` | ASCII (≥8 bytes) or 4-byte hex | serial row |
 | `0x0C` | `hardwareVersion` | major + fraction/100 | firmware row |
 | `0x0D` | `bluetoothAddress` | 6 bytes → colon-hex | diagnostic only |
 | `0x0E` | `printMode` | byte | diagnostic only |
-| `0x0F` | `area` | raw (`{ length, raw }`) — layout unverified | diagnostic only |
+| `0x0F` | `area` | raw (`{ length, raw }`); layout unverified | diagnostic only |
 
 ## Error codes (`0xDB` payload byte 0)
 
@@ -506,13 +491,14 @@ them: the fixtures use the clearly synthetic values owned by
 | Head | 96 dots, capability TLV reports 200 dpi → 200 / 25.4 = 7.87 dots/mm; tape width derives to 12.19 mm |
 | Heartbeat resolution class | `0xDE` payload byte 6 = `2` → 203 dpi (the TLV's 200 dpi is the pitch authority) |
 | Protocol build | 301; the print task is `D110M V4` from the model table, never derived from this number |
-| Density range | 1–5 |
-| Speed range | 1–5 |
+| Density range | 1-5 |
+| Speed range | 1-5 |
 | Label types | 1, 2, 3, 5 (gap, black mark, continuous, transparent) |
 | Max print height | 1600 px → 203 mm at 200 dpi (the app caps documents at 200 mm) |
-| Auto power-off range | 1–4 |
+| Auto power-off range | 1-4 |
 | RTC / volume / RFID read | supported |
-| Cutter / colour / grey buffer | not reported |
+| Cutter | reported no in the captured CAPS |
+| Colour / grey buffer | absent from the captured CAPS, not reported |
 | Battery | level 4 → 100 %, 4070 mV in the captured frame |
 | Sensors | lid closed, paper present, RFID ok |
 | Roll tag | barcode `6977031214406` (a product EAN), 192 total, 75 used (117 remaining), type 1 |

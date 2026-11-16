@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { SerialTransport, canonicalSpp } from '../src/device/transports/serial.js';
+import { SERIAL_PERMISSION_HINT, SerialTransport, canonicalSpp } from '../src/device/transports/serial.js';
 import { createDeviceManager } from '../src/device/manager.js';
 import { CONFIG } from '../src/core/config.js';
 import { encodeFrame } from '../src/protocol/frames.js';
@@ -128,4 +128,108 @@ test('a granted-but-unusable port makes the manager ask once instead of retrying
   // answer. The point is that the picker was offered exactly once.
   await assert.rejects(connecting, /did not answer any capability probe/);
   assert.deepEqual(calls, ['granted', 'request']);
+});
+
+/* ---------------- an actionable permission refusal (PR-F7) ---------------- */
+
+test('a refused serial permission names the concrete next step', async (t) => {
+  const denial = Object.assign(new Error('Permission denied'), { name: 'SecurityError' });
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      serial: {
+        getPorts: async () => [],
+        requestPort: async () => {
+          throw denial;
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+  t.after(() => {
+    if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor);
+    else delete globalThis.navigator;
+  });
+
+  await assert.rejects(SerialTransport.request(), (error) => {
+    assert.match(error.message, /Allow serial access for this site in the browser’s site settings, then reconnect\./);
+    assert.match(error.message, /Permission denied/, 'the platform message is kept');
+    assert.equal(error.name, 'SecurityError', 'the browser error class survives');
+    return true;
+  });
+});
+
+test('a blocked granted() read gets the same site-settings hint', async (t) => {
+  const denial = Object.assign(new Error('Permission denied'), { name: 'SecurityError' });
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      serial: {
+        // This is what the header connect button reaches on a blocked site.
+        getPorts: async () => {
+          throw denial;
+        },
+        requestPort: async () => {
+          throw denial;
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+  t.after(() => {
+    if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor);
+    else delete globalThis.navigator;
+  });
+
+  for (const [name, call] of [
+    ['granted', () => SerialTransport.granted()],
+    ['request', () => SerialTransport.request()],
+  ]) {
+    await assert.rejects(call, (error) => {
+      assert.ok(error.message.includes(SERIAL_PERMISSION_HINT), `${name} uses the one hint owner`);
+      assert.match(error.message, /Permission denied/);
+      assert.equal(error.name, 'SecurityError');
+      return true;
+    });
+  }
+});
+
+test('a cancelled picker keeps the quiet cancel path, without the permission hint', async (t) => {
+  const cancelled = Object.assign(new Error('No port selected by the user.'), { name: 'NotFoundError' });
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      serial: {
+        getPorts: async () => [],
+        requestPort: async () => {
+          throw cancelled;
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+  t.after(() => {
+    if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor);
+    else delete globalThis.navigator;
+  });
+
+  await assert.rejects(SerialTransport.request(), (error) => {
+    assert.equal(error.name, 'NotFoundError', 'the manager still treats this as a user cancel');
+    assert.doesNotMatch(error.message, /site settings/, 'a cancel is not a permission refusal');
+    return true;
+  });
+});
+
+test('an open refusal after the port was chosen gets the same next step', async (t) => {
+  const transport = new SerialTransport();
+  const refused = {
+    getInfo: () => ({ bluetoothServiceClassId: CONFIG.transport.sppService }),
+    open: async () => {
+      throw Object.assign(new Error('Permission denied'), { name: 'SecurityError' });
+    },
+  };
+  await assert.rejects(transport.open(refused), /site settings, then reconnect/);
 });

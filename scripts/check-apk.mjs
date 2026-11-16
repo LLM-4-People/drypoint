@@ -16,31 +16,42 @@
  * an APK.
  *
  * Usage:
- *   node scripts/check-apk.mjs --apk android/build/drypoint.apk --aapt2 <path> [--apksigner <path>]
+ *   node scripts/check-apk.mjs --aapt2 <path> [--apksigner <path>] [--apk <path>]
+ *
+ * `--apk` defaults to `android/build/drypoint-<package.json version>.apk`, the
+ * name `build-android.mjs` publishes. The workflow gate therefore passes the
+ * tool paths only, so the gated command is one exact command with no shell
+ * arithmetic around it.
  */
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import vm from 'node:vm';
 
 import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
+import { minSdkVersionOf, targetSdkVersionOf, versionCodeOf } from './build-android.mjs';
+import { OUTPUT, parseManifest } from './precache.mjs';
 
 export const ROOT = resolve(import.meta.dirname, '..');
 const WWW = 'assets/www/';
 const INTERNET = /uses-permission(?:-sdk-23)?:\s*name='android\.permission\.INTERNET'/;
 
+/** The version in package.json: one owner of the default artifact name. */
+export function packageVersion(root = ROOT) {
+  return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+}
+
+/** The APK `build-android.mjs` publishes for the current package version. */
+export function defaultApkPath(root = ROOT) {
+  return join(root, 'android', 'build', `drypoint-${packageVersion(root)}.apk`);
+}
+
 /** The generated precache manifest, read without importing the app. */
 export function readPrecache(root = ROOT) {
-  const source = readFileSync(join(root, 'assets', 'precache.js'), 'utf8');
-  const sandbox = { self: {} };
-  vm.runInNewContext(source, sandbox, { filename: 'assets/precache.js' });
-  const manifest = sandbox.self.__PRECACHE;
-  if (!manifest || !Array.isArray(manifest.files) || !manifest.digests) {
-    throw new Error('assets/precache.js has no file list and digests');
-  }
-  return manifest;
+  // The acceptance rule is the generator's (`parseManifest`), not a second
+  // copy: a manifest the Android build accepts must also pass this check.
+  return parseManifest(readFileSync(join(root, OUTPUT), 'utf8'), OUTPUT);
 }
 
 /** Zip entry names under `assets/www/`, without the prefix. */
@@ -66,16 +77,65 @@ export function surfaceFindings({ manifest, distribution = DISTRIBUTION_FILES, e
 }
 
 /**
- * The badging output must not grant INTERNET to an offline app, and must name
- * exactly one launcher activity. `uses-permission-sdk-23` applies at minSdk 26
- * just as `uses-permission` does, so the optional suffix is not a bypass.
+ * The identity the APK must carry: package from brand.json, versionName from
+ * package.json, versionCode from the one arithmetic owner. `build-android.mjs`
+ * exports `versionCodeOf`; importing it keeps a second formula out of the
+ * artifact check.
  */
-export function badgingFindings(badging) {
+export function expectedIdentity({ root = ROOT } = {}) {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const brand = JSON.parse(readFileSync(join(root, 'brand.json'), 'utf8'));
+  return { package: brand.appId, versionCode: versionCodeOf(pkg.version), versionName: pkg.version };
+}
+
+/**
+ * The platform levels the APK must carry, read from the manifest template, the
+ * same owner the build renders. A template change that the artifact does not
+ * carry then fails here instead of only in review.
+ */
+export function platformExpectations({ root = ROOT } = {}) {
+  const template = readFileSync(join(root, 'android', 'AndroidManifest.template.xml'), 'utf8');
+  return { minSdkVersion: minSdkVersionOf(template), targetSdkVersion: targetSdkVersionOf(template) };
+}
+
+/**
+ * The badging output must name the exact package, versionCode and versionName,
+ * must not grant INTERNET to an offline app, and must name exactly one launcher
+ * activity. `uses-permission-sdk-23` applies at minSdk 26 just as
+ * `uses-permission` does, so the optional suffix is not a bypass.
+ */
+export function badgingFindings(badging, expected = expectedIdentity()) {
   const text = String(badging);
   const findings = [];
+  const identity = `package: name='${expected.package}' versionCode='${expected.versionCode}' versionName='${expected.versionName}'`;
+  if (!text.split('\n').some((line) => line.startsWith(identity))) {
+    findings.push(`the APK is not ${expected.package} ${expected.versionName} (versionCode ${expected.versionCode})`);
+  }
   if (INTERNET.test(text)) findings.push('the APK requests android.permission.INTERNET');
   const launchers = text.split('\n').filter((line) => line.startsWith('launchable-activity: name=')).length;
   if (launchers !== 1) findings.push(`the APK must have exactly one MAIN/LAUNCHER activity, found ${launchers}`);
+  return findings;
+}
+
+/**
+ * The badging must report the minSdk/targetSdk the manifest template owns.
+ * These are not cosmetic: minSdk decides the signing schemes and targetSdk is
+ * the platform contract the WebView shell is tested against.
+ */
+export function platformFindings(badging, expected) {
+  const text = String(badging);
+  const min = Number(expected?.minSdkVersion);
+  const target = Number(expected?.targetSdkVersion);
+  if (!Number.isInteger(min) || !Number.isInteger(target)) {
+    throw new Error('platformFindings needs integer minSdkVersion and targetSdkVersion');
+  }
+  const findings = [];
+  const minMatch = text.match(/(?:^|\s)minSdkVersion:'(\d+)'/);
+  if (!minMatch) findings.push('the APK does not report minSdkVersion');
+  else if (Number(minMatch[1]) !== min) findings.push(`the APK reports minSdkVersion ${minMatch[1]}, expected ${min}`);
+  const targetMatch = text.match(/(?:^|\s)targetSdkVersion:'(\d+)'/);
+  if (!targetMatch) findings.push('the APK does not report targetSdkVersion');
+  else if (Number(targetMatch[1]) !== target) findings.push(`the APK reports targetSdkVersion ${targetMatch[1]}, expected ${target}`);
   return findings;
 }
 
@@ -145,31 +205,54 @@ export function signatureFindings(apksignerOutput) {
  * @param {{apk: string, aapt2: string, apksigner?: string, root?: string, exec?: Function}} options
  * @returns {{ok: boolean, findings: string[]}}
  */
-export function checkApk({ apk, aapt2, apksigner = '', root = ROOT, exec = execFileSync }) {
+export function checkApk({ apk, aapt2, apksigner = '', root = ROOT, expected, exec = execFileSync }) {
   const manifest = readPrecache(root);
+  const identity = expected ?? expectedIdentity({ root });
   const entries = String(exec('unzip', ['-Z1', apk], { encoding: 'utf8' })).split('\n').filter(Boolean);
+  const present = new Set(entries);
   const findings = surfaceFindings({ manifest, entries });
 
+  // `surfaceFindings` already names a missing or unexpected file. Reading a
+  // missing entry with `unzip -p` would abort the whole check with a tool
+  // error and hide that rule, so the byte loops only visit present files.
   for (const file of manifest.files) {
+    if (!present.has(`${WWW}${file}`)) continue;
     const body = exec('unzip', ['-p', apk, `${WWW}${file}`], { maxBuffer: 64 * 1024 * 1024 });
     const digest = createHash('sha256').update(body).digest('hex');
     if (digest !== manifest.digests[file]) findings.push(`assets/www/${file} does not match its precache digest`);
   }
   for (const file of DISTRIBUTION_FILES) {
+    if (!present.has(`${WWW}${file}`)) continue;
     const bundled = exec('unzip', ['-p', apk, `${WWW}${file}`], { maxBuffer: 64 * 1024 * 1024 });
     const authored = readFileSync(join(root, file));
     if (!bundled.equals(authored)) findings.push(`assets/www/${file} is not the authored notice`);
   }
 
-  findings.push(...badgingFindings(exec(aapt2, ['dump', 'badging', apk], { encoding: 'utf8' })));
+  const badging = String(exec(aapt2, ['dump', 'badging', apk], { encoding: 'utf8' }));
+  findings.push(...badgingFindings(badging, identity));
+  findings.push(...platformFindings(badging, platformExpectations({ root })));
   findings.push(...manifestXmlFindings(exec(aapt2, ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apk], { encoding: 'utf8' })));
   if (apksigner) {
-    findings.push(...signatureFindings(exec(apksigner, ['verify', '--verbose', apk], { encoding: 'utf8' })));
+    let output = '';
+    try {
+      output = String(exec(apksigner, ['verify', '--verbose', apk], { encoding: 'utf8' }));
+    } catch (error) {
+      // `apksigner verify` exits nonzero for an unverifiable APK. Keep the
+      // scheme findings (v1-only still names the missing v2) and name the tool
+      // failure instead of aborting before the rule is printed.
+      output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+      const detail = String(error.stderr || error.message || '').split('\n')[0].trim();
+      findings.push(`apksigner could not verify the APK${detail ? `: ${detail}` : ''}`);
+    }
+    findings.push(...signatureFindings(output));
   }
   return { ok: findings.length === 0, findings };
 }
 
 function parseArguments(argv) {
+  // The identity is read from its two owners (brand.json and package.json),
+  // never from the command line: a caller-supplied identity would let a gate
+  // assert a package or version the artifact does not carry.
   const options = { apk: '', aapt2: '', apksigner: '' };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
@@ -178,7 +261,7 @@ function parseArguments(argv) {
     else if (argument === '--apksigner') options.apksigner = argv[++index] ?? '';
     else throw new Error(`unknown option ${argument}`);
   }
-  if (!options.apk) throw new Error('--apk is required');
+  if (!options.apk) options.apk = defaultApkPath();
   if (!options.aapt2) throw new Error('--aapt2 is required');
   return options;
 }

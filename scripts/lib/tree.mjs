@@ -7,6 +7,7 @@
  */
 
 import { readdir, readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -155,4 +156,26 @@ export async function listFiles({ root = ROOT, rules } = {}) {
   };
   await walk('');
   return files.sort();
+}
+
+/**
+ * Every file git tracks in a checkout. This is the trusted scan's view of the
+ * candidate tree: `.gitignore` cannot hide a force-added file, because a
+ * tracked file is by definition published. A missing repository or a git
+ * failure is an error, never an empty success.
+ *
+ * @param {{root?: string, git?: Function}} [options]
+ * @returns {string[]} sorted POSIX paths
+ */
+export function listTrackedFiles({ root = ROOT, git = execFileSync } = {}) {
+  let output;
+  try {
+    output = git('git', ['-C', root, 'ls-files', '-z', '--cached'], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (error) {
+    throw new Error(`cannot list tracked files under ${root}: ${String(error.message).split('\n')[0]}`);
+  }
+  return String(output).split('\0').filter(Boolean).sort();
 }

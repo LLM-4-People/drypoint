@@ -39,7 +39,7 @@ export function code128Values(text) {
   const values = [START_B];
   for (const char of text) {
     const code = char.codePointAt(0);
-    if (code < 32 || code > 126) throw new Error('Code 128 B supports printable ASCII (32–126) only');
+    if (code < 32 || code > 126) throw new Error('Code 128 B supports printable ASCII (32-126) only');
     values.push(code - 32);
   }
   let checksum = values[0];

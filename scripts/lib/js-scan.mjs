@@ -3,10 +3,10 @@
  *
  * The precache generator needs two views of a module and they must agree:
  *
- *   code   — the source with comments blanked out (newlines preserved), so an
+ *   code:    the source with comments blanked out (newlines preserved), so an
  *            `import()` mentioned in a comment is never mistaken for a
  *            dependency while string contents stay intact;
- *   inside — one flag per offset that sits inside a string, template literal or
+ *   inside:  one flag per offset that sits inside a string, template literal or
  *            regex literal, so an `import()` that is only text is skipped.
  *
  * Both views come from a single pass. A second scanner with its own idea of

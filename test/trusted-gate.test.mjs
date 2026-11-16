@@ -115,6 +115,45 @@ test('a candidate workflow with an anchor grant or an unpinned action fails the 
   assert.equal(real.status, 0, real.stderr);
 });
 
+test('a candidate .gitignore cannot hide a tracked PII file from the trusted scan', async (t) => {
+  const root = await candidate(t);
+  for (const path of REQUIRED_ROOTS) {
+    const target = join(root, path);
+    if (path.includes('.')) await writeFile(target, 'ok\n');
+    else {
+      await mkdir(target, { recursive: true });
+      await writeFile(join(target, 'example.md'), 'ok\n');
+    }
+  }
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
+  git('init', '-b', 'main');
+  await writeFile(join(root, '.gitignore'), '*.log\n');
+  const home = ['', 'home', 'someone', 'work'].join('/');
+  await writeFile(join(root, 'docs', 'leak.log'), `log line with ${home}/secret\n`);
+  git('add', '.');
+  git('add', '-f', 'docs/leak.log');
+
+  // The ignored walker honors the candidate .gitignore: the bug.
+  const hidden = run(PRIVACY, ['--root', root]);
+  assert.equal(hidden.status, 0, 'the candidate ignore file hides the force-added file from the walker');
+
+  // The trusted scan reads tracked files, so the same bytes are published and
+  // therefore scanned.
+  const tracked = run(PRIVACY, ['--root', root, '--tracked']);
+  assert.equal(tracked.status, 1, 'the tracked scan sees the published file');
+  assert.match(tracked.stderr, /docs\/leak\.log:1: home-directory/);
+
+  // A directory that is not a repository fails closed instead of scanning an
+  // empty tree.
+  const plain = await candidate(t);
+  const failed = run(PRIVACY, ['--root', plain, '--tracked']);
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /cannot list tracked files/);
+
+  const real = run(PRIVACY, ['--tracked']);
+  assert.equal(real.status, 0, real.stderr);
+});
+
 test('a candidate PII string fails the trusted privacy scan', async (t) => {
   const root = await candidate(t);
   for (const path of REQUIRED_ROOTS) {

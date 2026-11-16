@@ -17,11 +17,10 @@ import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } f
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
 
 import brand from '../brand.json' with { type: 'json' };
 import { DISTRIBUTION_FILES, resolveDistributionFile } from './lib/distribution.mjs';
-import { isAllowed, resolveSurfacePath } from './precache.mjs';
+import { isAllowed, readManifest, resolveSurfacePath } from './precache.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const androidDir = join(root, 'android');
@@ -133,15 +132,6 @@ function run(command, args, label) {
 function runWithInput(command, args, input, label) {
   process.stdout.write(`android: ${label}\n`);
   execFileSync(command, args, { input, stdio: ['pipe', 'inherit', 'inherit'] });
-}
-
-async function readPrecache() {
-  const source = await readFile(join(root, 'assets', 'precache.js'), 'utf8');
-  const sandbox = { self: {} };
-  vm.runInNewContext(source, sandbox, { filename: 'assets/precache.js' });
-  const manifest = sandbox.self.__PRECACHE;
-  if (!manifest || !Array.isArray(manifest.files) || !manifest.files.length) fail('assets/precache.js has no file list');
-  return manifest;
 }
 
 /**
@@ -335,9 +325,9 @@ export async function writeManifest({ androidDir, buildDir, versionName, version
  * The Android versionCode for a semver version.
  *
  * `major * 10000 + minor * 100 + patch` has room for two digits in the minor
- * and the patch. A larger component would silently borrow from the next one —
+ * and the patch. A larger component would silently borrow from the next one:
  * 1.100.0 and 2.0.0 would both be 20000, and patch 100 would collide with the
- * next minor — so an out-of-range component is refused instead of colliding.
+ * next minor, so an out-of-range component is refused instead of colliding.
  * A prerelease suffix is refused for the same reason: the release contract is a
  * strict `vMAJOR.MINOR.PATCH` tag, and `1.0.0-rc.1` has no versionCode.
  *
@@ -369,6 +359,38 @@ export function minSdkVersionOf(manifestXml) {
   return Number(match[1]);
 }
 
+/** The template's target SDK, the one owner the artifact check reads. */
+export function targetSdkVersionOf(manifestXml) {
+  const match = /android:targetSdkVersion="(\d+)"/.exec(String(manifestXml));
+  if (!match) fail('the rendered manifest declares no android:targetSdkVersion');
+  return Number(match[1]);
+}
+
+/**
+ * The signing schemes for one minimum SDK. This is the only rule: API 24 and
+ * later verify the APK Signature Scheme v2, so the JAR (v1) signature is only
+ * needed below it. The build and the sign job both consume this answer.
+ *
+ * @param {number|string} minSdkVersion
+ * @returns {{minSdkVersion: number, v1SigningEnabled: boolean}}
+ */
+export function signingSchemeForMinSdk(minSdkVersion) {
+  const value = Number(minSdkVersion);
+  if (!Number.isInteger(value) || value <= 0) fail(`minSdkVersion must be a positive integer: ${JSON.stringify(minSdkVersion)}`);
+  return { minSdkVersion: value, v1SigningEnabled: !(value >= 24) };
+}
+
+/**
+ * The signing scheme the rendered manifest declares. The manifest is the one
+ * owner of the minimum SDK.
+ *
+ * @param {string} manifestXml the rendered AndroidManifest.xml
+ * @returns {{minSdkVersion: number, v1SigningEnabled: boolean}}
+ */
+export function signingSchemeOf(manifestXml) {
+  return signingSchemeForMinSdk(minSdkVersionOf(manifestXml));
+}
+
 /**
  * The SHA-256 of the certificate `apksigner verify --print-certs` reported.
  *
@@ -391,8 +413,9 @@ export function certificateSha256(output) {
  * APK unless the build says otherwise. There are exactly two declared
  * exceptions, and both are visible in the build log: a key this run just
  * generated cannot be the release key (the build already warns loudly), and a
- * caller may set ANDROID_ALLOW_TEST_KEY=1. The pull-request gate does, because
- * it proves the toolchain with a throwaway key and never publishes anything.
+ * caller may set ANDROID_ALLOW_TEST_KEY=1. `scripts/ci-keystore.mjs` sets it
+ * for the unprivileged CI jobs, which prove the toolchain with a throwaway key
+ * and publish nothing; the release sign job never sets it.
  *
  * @param {{generated: boolean, env?: Record<string,string|undefined>}} options
  * @returns {boolean}
@@ -457,7 +480,7 @@ export const KEYSTORE_DN = `CN=${brand.name}, O=${brand.author}, C=CA`;
  * The `sh -c` wrapper that runs keytool with umask 077.
  *
  * keytool creates the store with the process umask, so on a standard login it
- * would be 0664 — readable by every local user — until the chmod at the end.
+ * would be 0664, readable by every local user, until the chmod at the end.
  * With umask 077 the file is 0600 from its first byte. `"$@"` keeps every
  * argument verbatim, so no password or path is ever shell-parsed.
  */
@@ -506,15 +529,15 @@ export function keystoreAction({ exists, requireKey }) {
  * on every build. Below API 24 the v1 signature is still required.
  */
 export function apksignerArgs({ store, keyAlias, files, out, aligned, minSdkVersion }) {
-  const needsV1 = !(Number(minSdkVersion) >= 24);
+  const scheme = signingSchemeForMinSdk(minSdkVersion);
   return [
     'sign',
     '--ks', store,
     '--ks-key-alias', keyAlias,
     '--ks-pass', `file:${files.ks}`,
     '--key-pass', `file:${files.key}`,
-    '--min-sdk-version', String(minSdkVersion),
-    '--v1-signing-enabled', needsV1 ? 'true' : 'false',
+    '--min-sdk-version', String(scheme.minSdkVersion),
+    '--v1-signing-enabled', scheme.v1SigningEnabled ? 'true' : 'false',
     '--out', out,
     aligned,
   ];
@@ -567,8 +590,12 @@ export function addDexEntry({ apk, dex, dateTime = APK_ENTRY_DATE_TIME, exec = r
  * the project backs up. A local build without either still generates a
  * throwaway key, but says loudly that it did.
  */
-async function ensureKeystore({ requireKey = false } = {}) {
-  const dir = join(androidDir, 'keystore');
+export async function ensureKeystore({
+  requireKey = false,
+  directory = join(androidDir, 'keystore'),
+  env = process.env,
+} = {}) {
+  const dir = directory;
   const propertiesFile = join(dir, 'keystore.properties');
   // 0700 before anything is written. The directory is what keeps another local
   // user out while keytool creates the store with the login umask (0664); a
@@ -576,26 +603,34 @@ async function ensureKeystore({ requireKey = false } = {}) {
   // chmod.
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700);
-  // The password is a secret: prefer the environment, then a local file that
-  // .gitignore excludes. Only a throwaway run with neither gets a generated one.
-  if (!existsSync(propertiesFile) && !process.env.ANDROID_KEYSTORE_PASSWORD) {
-    const password = randomBytes(18).toString('base64url');
-    await writeFile(propertiesFile, `storePassword=${password}\nkeyPassword=${password}\nkeyAlias=drypoint\n`, { mode: 0o600 });
-    console.log('android: generated a local keystore password in android/keystore/ (ignored by git; back it up)');
-  }
-  const properties = existsSync(propertiesFile) ? parseProperties(await readFile(propertiesFile, 'utf8')) : {};
-  const { store, storePassword, keyPassword, keyAlias } = resolveKeystore({ properties, directory: dir });
-  if (!storePassword) {
-    fail('set ANDROID_KEYSTORE_PASSWORD or keep android/keystore/keystore.properties');
-  }
-  const action = keystoreAction({ exists: existsSync(store), requireKey });
+  const hasProperties = existsSync(propertiesFile);
+  let properties = hasProperties ? parseProperties(await readFile(propertiesFile, 'utf8')) : {};
+  let identity = resolveKeystore({ env, properties, directory: dir });
+  // Decide before any side effect. A CI or --require-key run that may not
+  // invent a key must refuse without writing a password file that outlives the
+  // failed build.
+  const action = keystoreAction({ exists: existsSync(identity.store), requireKey });
   if (action === 'fail') {
     fail(
-      `the release keystore is missing (${store}). CI and --require-key never generate one: ` +
+      `the release keystore is missing (${identity.store}). CI and --require-key never generate one: ` +
         'restore android/keystore/drypoint-release.jks or set ANDROID_KEYSTORE_FILE.'
     );
   }
   const generated = action === 'generate';
+  if (!identity.storePassword) {
+    // A malformed existing file is a configuration error, never a reason to
+    // overwrite it. Only a first local throwaway build may create the file,
+    // and only after the action is known to be `generate`.
+    if (!generated || hasProperties) {
+      fail('set ANDROID_KEYSTORE_PASSWORD or keep android/keystore/keystore.properties');
+    }
+    const password = randomBytes(18).toString('base64url');
+    await writeFile(propertiesFile, `storePassword=${password}\nkeyPassword=${password}\nkeyAlias=${identity.keyAlias}\n`, { mode: 0o600 });
+    console.log('android: generated a local keystore password in android/keystore/ (ignored by git; back it up)');
+    properties = parseProperties(await readFile(propertiesFile, 'utf8'));
+    identity = resolveKeystore({ env, properties, directory: dir });
+  }
+  const { store, storePassword, keyPassword, keyAlias } = identity;
   if (generated) {
     // keytool creates the store with the process umask. `umask 077` makes the
     // file 0600 from its first byte instead of 0664 until the chmod, and the
@@ -621,8 +656,8 @@ async function ensureKeystore({ requireKey = false } = {}) {
  *
  * This is the only owner of the staging lifetime. `fail()` used to call
  * `process.exit(1)` where it stood, so the cleanup below never ran and every
- * failed build left its `build-XXXXXX` tree — assets, dex, keystore copy and
- * signed APK — behind on disk.
+ * failed build left its `build-XXXXXX` tree (assets, dex, keystore copy and
+ * signed APK) behind on disk.
  *
  * @template T
  * @param {string} directory the parent the scratch directory lives in
@@ -646,12 +681,19 @@ async function main() {
     console.log(versionCodeOf(pkg.version));
     return;
   }
+  // The sign job must not hard-code the scheme: it reads this answer from the
+  // same manifest owner the build uses.
+  if (process.argv.includes('--signing-scheme')) {
+    const template = await readFile(join(androidDir, 'AndroidManifest.template.xml'), 'utf8');
+    console.log(JSON.stringify(signingSchemeOf(template)));
+    return;
+  }
   const requireKey = process.argv.includes('--require-key') || process.env.CI === 'true';
   const { aapt2, d8, zipalign, apksigner, androidJar } = resolveTools();
   const versionCode = versionCodeOf(pkg.version);
 
   run(process.execPath, [join(root, 'scripts', 'precache.mjs'), '--write'], 'refreshing the precache manifest');
-  const manifest = await readPrecache();
+  const manifest = await readManifest(root);
 
   // Build into a scratch directory. `android/build/` holds the last verified
   // artifacts and is only touched by the atomic renames below, so a failed

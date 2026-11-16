@@ -1,7 +1,7 @@
 /**
  * The privacy gate: one deny list, one allowlist, one file walker.
  *
- * The planted values below are assembled from fragments on purpose — this test
+ * The planted values below are assembled from fragments on purpose: this test
  * file is itself part of the tree the gate scans, and a test that carried the
  * forbidden strings would fail its own gate.
  */
@@ -73,7 +73,7 @@ test('the planted secrets are reported with file and line', async (t) => {
   );
 
   const host = findings.find((finding) => finding.file === 'host.txt');
-  assert.match(formatFinding(host), /^host\.txt:2: private-host — /);
+  assert.match(formatFinding(host), /^host\.txt:2: private-host: /);
   assert.match(formatFinding(host), new RegExp(PRIVATE_HOST));
 });
 

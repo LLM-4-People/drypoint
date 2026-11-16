@@ -19,6 +19,8 @@ import {
   moduleSpecifiers,
   OUTPUT,
   REQUIRED_FILES,
+  renderBaseHelper,
+  renderContentTypes,
   resolveSurfacePath,
   stampWorker,
   SURFACE_FILES,
@@ -266,7 +268,7 @@ test('a symlink to a repository-only file is rejected by the shared resolver', a
 
   // The dev server passes its own set, which also contains the worker and the
   // generated manifest. That set must accept them and still refuse a keystore
-  // symlink whose key is allowed lexically — the exact call shape serve.mjs uses.
+  // symlink whose key is allowed lexically: the exact call shape serve.mjs uses.
   await writeFile(join(dir, 'sw.js'), 'self.addEventListener("install", () => {});');
   await writeFile(join(dir, 'assets', 'precache.js'), 'self.__PRECACHE = {};');
   const serverAllowed = new Set(['sw.js', 'assets/precache.js', 'assets/app.css', 'assets/leak.css']);
@@ -299,6 +301,8 @@ test('the worker stamps are replaced only at the anchored declarations', () => {
     "const BUILD = 'fedcba9876543210';",
     "// const CACHE_PREFIX = 'old-';",
     "const CACHE_PREFIX = 'old-';",
+    renderBaseHelper(),
+    renderContentTypes(),
   ].join('\n');
   const stamped = stampWorker(source, 'aaaabbbbccccdddd', 'new-');
   assert.match(stamped, /^const BUILD = 'aaaabbbbccccdddd';$/m, 'the real build declaration is rewritten');
@@ -308,6 +312,7 @@ test('the worker stamps are replaced only at the anchored declarations', () => {
   assert.equal(stamped.match(/^const BUILD = /gm).length, 1);
   assert.equal(stamped.match(/^const CACHE_PREFIX = /gm).length, 1);
   assert.throws(() => stampWorker('// no stamp here\n', 'aaaabbbbccccdddd', 'new-'), /exactly one build stamp/);
+  assert.throws(() => stampWorker(`// no base helper\n${source.replace(/\/\/ BEGIN[\s\S]*END generated base helper/, '')}`, 'aaaabbbbccccdddd', 'new-'), /exactly one base helper/);
   assert.throws(
     () => stampWorker(`${source}\nconst BUILD = '1111111111111111';`, 'aaaabbbbccccdddd', 'new-'),
     /exactly one build stamp/,
@@ -323,4 +328,96 @@ test('the worker stamps are replaced only at the anchored declarations', () => {
 test('the live worker carries the authored cache prefix', async () => {
   const { BRAND } = await import('../src/core/brand.js');
   assert.match(read(SW_FILE), new RegExp(`^const CACHE_PREFIX = '${BRAND.cachePrefix}';$`, 'm'));
+});
+
+/* ---------------- the generated worker helper (P-F1) ---------------- */
+
+test('the base helper is stamped into sw.js exactly once', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { ROOT, renderBaseHelper, stampWorker } = await import('../scripts/precache.mjs');
+  const sw = await readFile(join(ROOT, 'sw.js'), 'utf8');
+
+  assert.equal((sw.match(/\/\/ BEGIN generated base helper/g) ?? []).length, 1, 'one generated block');
+  assert.ok(sw.includes(renderBaseHelper()), 'the committed worker carries the owner text byte-for-byte');
+
+  // Exactly-one is enforced: a second block or a missing block fails the stamp.
+  const doubled = sw.replace('// END generated base helper', '// END generated base helper\n// BEGIN generated base helper\n// END generated base helper');
+  assert.throws(() => stampWorker(doubled, '0123456789abcdef'), /exactly one base helper/);
+  const missing = sw.replace(/\/\/ BEGIN generated base helper[\s\S]*?\/\/ END generated base helper/, '');
+  assert.throws(() => stampWorker(missing, '0123456789abcdef'), /exactly one base helper/);
+  // The scalar stamps are still exactly-one.
+  const doubledBuild = sw.replace(/^const BUILD = '[0-9a-f]{16}';$/m, (line) => `${line}\n${line}`);
+  assert.notEqual(doubledBuild, sw);
+  assert.throws(() => stampWorker(doubledBuild, '0123456789abcdef'), /exactly one build/);
+});
+
+test('the committed worker matches a fresh stamp', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { ROOT, SW_FILE, buildPrecache } = await import('../scripts/precache.mjs');
+  const built = await buildPrecache();
+  const actual = await readFile(join(ROOT, SW_FILE), 'utf8');
+  assert.equal(actual, built.swContent, 'npm run build regenerates the same worker');
+});
+
+/* ---------------- the generated content types (P-F3) ---------------- */
+
+test('the content-type block is stamped into sw.js exactly once', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { ROOT, renderContentTypes, stampWorker } = await import('../scripts/precache.mjs');
+  const { CONTENT_TYPES } = await import('../scripts/lib/content-types.mjs');
+  const sw = await readFile(join(ROOT, 'sw.js'), 'utf8');
+
+  assert.equal((sw.match(/\/\/ BEGIN generated content types/g) ?? []).length, 1, 'one generated block');
+  assert.ok(sw.includes(renderContentTypes()), 'the committed worker carries the owner text byte-for-byte');
+
+  // The block is the module's own data and function, not a hand-written copy.
+  const block = sw.slice(sw.indexOf('// BEGIN generated content types'), sw.indexOf('// END generated content types'));
+  for (const extension of Object.keys(CONTENT_TYPES)) {
+    assert.ok(block.includes(`"${extension}"`), `${extension} is in the stamped map`);
+  }
+  assert.match(block, /function contentTypeProblem\(file, contentType\) \{/);
+
+  const doubled = sw.replace('// END generated content types', '// END generated content types\n// BEGIN generated content types\n// END generated content types');
+  assert.throws(() => stampWorker(doubled, '0123456789abcdef'), /exactly one content types/);
+  const missing = sw.replace(/\/\/ BEGIN generated content types[\s\S]*?\/\/ END generated content types/, '');
+  assert.throws(() => stampWorker(missing, '0123456789abcdef'), /exactly one content types/);
+});
+
+/* ---------------- the manifest reader (one owner) ---------------- */
+
+test('only the generator may read the generated manifest', () => {
+  // The Android builder, the artifact check and the Pages smoke all need the
+  // manifest. Three parsers meant three acceptance rules: a manifest without
+  // `digests` passed the Android build and failed the artifact check.
+  const secondReaders = readdirSync(join(root, 'scripts'))
+    .filter((file) => file.endsWith('.mjs') && file !== 'precache.mjs')
+    .filter((file) => readFileSync(join(root, 'scripts', file), 'utf8').includes('__PRECACHE'));
+  assert.deepEqual(secondReaders, [], 'only scripts/precache.mjs may parse __PRECACHE');
+});
+
+test('the manifest reader rejects every incomplete shape', async () => {
+  const { parseManifest } = await import('../scripts/precache.mjs');
+  const source = readFileSync(join(root, OUTPUT), 'utf8');
+  const manifest = parseManifest(source);
+  assert.ok(manifest.files.length > 0 && Object.keys(manifest.digests).length === manifest.files.length);
+
+  const broken = (mutate) => {
+    const copy = { ...manifest };
+    mutate(copy);
+    return `self.__PRECACHE = ${JSON.stringify(copy)};`;
+  };
+  const cases = [
+    ['no file list', broken((copy) => { copy.files = []; }), /has no file list/],
+    ['no digests', broken((copy) => { delete copy.digests; }), /has no digests/],
+    ['array digests', broken((copy) => { copy.digests = []; }), /has no digests/],
+    ['no version', broken((copy) => { delete copy.version; }), /has no version stamp/],
+    ['empty version', broken((copy) => { copy.version = ''; }), /has no version stamp/],
+  ];
+  for (const [name, text, expected] of cases) {
+    assert.throws(() => parseManifest(text, 'fixture.js'), expected, `${name} is rejected`);
+  }
+  assert.equal(parseManifest(source).version, manifest.version, 'the real manifest still parses');
 });

@@ -240,20 +240,26 @@ public class BleBridge {
   }
 
   /**
-   * Whether Downloads already holds a row with this display name.
+   * Whether Downloads already holds a file with this display name.
    *
    * MediaStore silently renames a colliding insert ("labels (1).json"), so the
    * export would report success while writing a file the caller did not name.
+   * The lookup is by display name only: the caller's own timestamped name is
+   * what has to be unique, and a same-named file of another type is still a
+   * name the operator would see twice.
+   *
    * The check runs before the insert; the remaining window is the platform's,
-   * not something this shell can lock.
+   * not something this shell can lock. The race is accepted: the caller's names
+   * carry a millisecond timestamp, so two exports collide only when one
+   * operator starts two labels in the same millisecond.
    */
   private boolean displayNameTaken(String name) {
-    String selection = MediaStore.Downloads.DISPLAY_NAME + " = ? AND " + MediaStore.Downloads.MIME_TYPE + " = ?";
+    String selection = MediaStore.Downloads.DISPLAY_NAME + " = ?";
     try (Cursor cursor = activity.getContentResolver().query(
         MediaStore.Downloads.EXTERNAL_CONTENT_URI,
         new String[] { MediaStore.Downloads._ID },
         selection,
-        new String[] { name, JSON_MIME },
+        new String[] { name },
         null)) {
       return cursor != null && cursor.getCount() > 0;
     }
@@ -294,12 +300,28 @@ public class BleBridge {
     return true;
   }
 
-  /** API 26–28: no MediaStore Downloads collection, so write the file directly. */
+  /**
+   * API 26-28: no MediaStore Downloads collection, so write the file directly.
+   *
+   * The file itself is the duplicate check here as well: truncating an existing
+   * export would silently destroy the earlier copy, and the bridge promises the
+   * same refusal on every supported API. It also means any file at this path is
+   * this call's own partial output, so every failure, including a close that
+   * cannot flush, deletes it before the error is rethrown.
+   */
   private boolean saveFileLegacy(String name, String text) throws java.io.IOException {
     File target = downloadTarget(name);
     if (target == null) return false;
+    if (target.exists()) return false;
     try (FileOutputStream out = new FileOutputStream(target)) {
       out.write(text.getBytes(StandardCharsets.UTF_8));
+      // Reaching the end means the stream closed successfully: the close is the
+      // success condition, not the write() call.
+    } catch (java.io.IOException | RuntimeException error) {
+      if (target.exists() && !target.delete()) {
+        Log.w(TAG, "could not delete the partial export " + target.getName());
+      }
+      throw error;
     }
     return true;
   }

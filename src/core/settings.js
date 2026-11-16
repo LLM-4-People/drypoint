@@ -260,7 +260,29 @@ export function coerceSetting(key, value) {
  */
 let loadIssue = null;
 
-function hydrateSettings(data) {
+/** The one whole-payload load notice: the store resets it after this module. */
+function settingsLoadIssue() {
+  loadIssue = {
+    keys: null,
+    message: 'The saved settings could not be read and were reset to their defaults.',
+  };
+}
+
+function hydrateSettings(data, version) {
+  // A settings envelope from another schema version is not this app's data:
+  // coercing it key by key was harmless only because the current schema has
+  // no incompatible keys. Report the reset like any other unreadable payload.
+  if (version !== CONFIG.app.documentVersion) {
+    settingsLoadIssue();
+    return defaultSettings();
+  }
+  // `data` is untrusted: a string, number, null or array is a corrupt payload,
+  // not an empty settings object. The store writes clean defaults after this
+  // module reports the issue.
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    settingsLoadIssue();
+    return defaultSettings();
+  }
   const next = defaultSettings();
   const badKeys = [];
   for (const [key, value] of Object.entries(data ?? {})) {
@@ -287,8 +309,16 @@ export const settingsStore = createStore(defaultSettings(), {
   key: storageKey('settings'),
   version: CONFIG.app.documentVersion,
   hydrate: hydrateSettings,
-  onError: (error, phase) =>
-    log.warn(phase === 'load' ? 'stored settings could not be read' : 'settings could not be saved', { message: error.message }),
+  onError: (error, phase) => {
+    if (phase === 'load') {
+      settingsLoadIssue();
+      log.warn('stored settings could not be read', { message: error.message });
+      return;
+    }
+    // A failed save keeps the stored value and the in-memory change; the
+    // operator sees the store's own save-failure notice.
+    log.warn('settings could not be saved', { message: error.message });
+  },
 });
 
 // The clean, complete object replaces the corrupt payload instead of waiting

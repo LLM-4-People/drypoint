@@ -13,16 +13,24 @@ import {
   documentHeightPx,
   documentWidthPx,
   droppedSourceNotice,
-  sourceBudgetRefusalNotice,
   truncatedNotice,
   validateDocument,
 } from '../label/schema.js';
 import { CONFIG } from '../core/config.js';
 import { clamp, createId, deepClone } from '../core/format.js';
 import { geometry } from '../core/geometry.js';
-import { IMAGE_SOURCE_LIMIT, imageSourceLimitMessage, imageSources } from '../label/images.js';
+import { sourceBudgetProblem } from '../label/images.js';
 
-export function createEditor({ document: initial, onChange = () => {}, onSelection = () => {} } = {}) {
+/**
+ * @param {object} options
+ * @param {object} [options.document] the starting label
+ * @param {(document: object) => void} [options.onChange] document publisher
+ * @param {(selection: string|null) => void} [options.onSelection] selection publisher
+ * @param {(message: string) => void} [options.onRefusal] one refusal channel: a
+ *        refused edit reaches the operator even when the stage summary is
+ *        saturated with layout warnings
+ */
+export function createEditor({ document: initial, onChange = () => {}, onSelection = () => {}, onRefusal = () => {} } = {}) {
   let document = validateDocument(initial ?? createDocument());
   let selection = document.elements.at(-1)?.id ?? null;
 
@@ -98,46 +106,54 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
    */
   function refuseElementCap() {
     if (document.elements.length < CONFIG.bounds.maxElements) return false;
-    const notice = `A label holds at most ${CONFIG.bounds.maxElements} elements.`;
-    if (!document.notices?.includes(notice)) {
-      document = { ...document, notices: [...(document.notices ?? []), notice] };
-      emit({ commit: false, keepNotices: true });
-    }
+    publishRefusal(`A label holds at most ${CONFIG.bounds.maxElements} elements.`);
     return true;
   }
 
-  /** Publish one refusal as a non-committed notice, without duplicating it. */
+  /**
+   * Publish one refusal: the toast-class channel and the document notice, once
+   * each, bounded by the one notice list. A refusal is the newest fact, so when
+   * the list is full the oldest entry gives way: the operator has already been
+   * told it, and the alternative is an invisible refusal.
+   *
+   * The refusal is a toast-class fact, not a layout hint: with two hundred
+   * overlapping elements the stage summary is saturated, so the operator would
+   * otherwise see nothing at all when Add is refused.
+   */
   function publishRefusal(notice) {
-    if (document.notices?.includes(notice)) return;
-    document = { ...document, notices: [...(document.notices ?? []), notice].slice(0, CONFIG.bounds.maxNotices) };
+    if (document.notices?.includes(notice)) return false;
+    onRefusal(notice);
+    const notices = [...(document.notices ?? []), notice].slice(-CONFIG.bounds.maxNotices);
+    document = { ...document, notices };
     emit({ commit: false, keepNotices: true });
+    return true;
   }
 
   /**
    * The one source policy for every mutation that can add image text.
    *
-   * `replacing` is the element an edit overwrites, so its old source is not
-   * counted twice. The distinct-source cap bounds the decode cache; the
-   * character budget bounds the serialised document, which repeats a source
-   * once per element and therefore grows even when the source is reused.
+   * `replacing` is the element an edit overwrites, so the decision is made on
+   * the document the edit *would* produce. `sourceBudgetProblem` owns both
+   * budgets: the distinct-source cap (the decode cache) and the image-text
+   * budget (the serialised document, which repeats a source once per element and
+   * therefore grows even when the source is reused). A source that another
+   * element still uses keeps its slot.
    */
   function refuseImageSourceCap(element, replacing = null) {
     if (element?.type !== ELEMENT_TYPES.IMAGE || !element.src) return false;
-    const sources = imageSources(document);
-    if (!sources.includes(element.src) && sources.length >= IMAGE_SOURCE_LIMIT) {
-      publishRefusal(imageSourceLimitMessage(sources.length + 1, 'adding another image'));
-      return true;
-    }
-    let chars = element.src.length;
-    for (const each of document.elements) {
-      if (each.id === replacing?.id) continue;
-      if (each.type === ELEMENT_TYPES.IMAGE && typeof each.src === 'string') chars += each.src.length;
-    }
-    if (chars > CONFIG.bounds.maxSourceChars) {
-      publishRefusal(sourceBudgetRefusalNotice());
-      return true;
-    }
-    return false;
+    // The shared owner decides on the document this change would produce: the
+    // replaced element is swapped for its new version, an add appends. Both
+    // budgets and both messages live there, never here.
+    const elements = replacing
+      ? document.elements.map((each) => (each.id === replacing.id ? element : each))
+      : [...document.elements, element];
+    const problem = sourceBudgetProblem(
+      { ...document, elements },
+      { action: replacing ? 'replacing this image' : 'adding another image', refusal: true }
+    );
+    if (!problem) return false;
+    publishRefusal(problem);
+    return true;
   }
 
   /**
@@ -311,14 +327,17 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
   }
 
   function replaceDocument(next) {
-    // A different label has its own notices: nothing carries over.
+    // A different label has its own notices: nothing carries over from the
+    // previous label, but the incoming document's own notices are facts about
+    // it (a shortened text, a dropped element) and they stay published. The
+    // toast is a transient hint, never the record.
     acknowledged.clear();
     displayCache = null;
     document = validateDocument(next);
     selection = document.elements.at(-1)?.id ?? null;
     // Commit instead of reset so applying a template is an undoable edit, and
     // announce the new selection so the inspector rebinds to the new elements.
-    emit();
+    emit({ keepNotices: true });
     emitSelection();
   }
 

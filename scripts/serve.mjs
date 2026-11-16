@@ -8,12 +8,13 @@
 
 import { createServer } from 'node:http';
 import { mkdir, readFile } from 'node:fs/promises';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { join, normalize, resolve, sep } from 'node:path';
 import { networkInterfaces } from 'node:os';
 
 import { BRAND } from '../src/core/brand.js';
 import { CONFIG } from '../src/core/config.js';
 import { isAllowed, OUTPUT, SW_FILE, resolveSurfacePath, writePrecache } from './precache.mjs';
+import { contentTypeFor } from './lib/content-types.mjs';
 import {
   claimTrackedServer,
   pidFileFor,
@@ -36,19 +37,6 @@ try {
   process.exit(1);
 }
 const pidFile = pidFileFor(root, port);
-
-const TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-};
 
 /** Claim the port's pid file; the shared owner decides who may start. */
 async function claimPort() {
@@ -73,8 +61,8 @@ async function claimPort() {
 /**
  * Only the app surface is served: the files the offline manifest lists (each
  * re-asserted against the generator's allowlist) plus the worker itself and its
- * generated manifest. Everything else in the repository — keystore, docs,
- * scripts, tests, package.json, .run — is not reachable even on a LAN bind.
+ * generated manifest. Everything else in the repository (keystore, docs,
+ * scripts, tests, package.json, .run) is not reachable even on a LAN bind.
  * There is deliberately no generic static fallback.
  */
 let allowed = new Set();
@@ -110,7 +98,7 @@ const server = createServer(async (request, response) => {
   }
   // The allowlist is lexical; the shared resolver proves the real file (after
   // symlinks) is still inside the repository, and re-checks the real path
-  // against this server's own surface — which includes the worker and the
+  // against this server's own surface, which includes the worker and the
   // generated manifest even though the precache allowlist does not.
   let filePath;
   try {
@@ -128,7 +116,7 @@ const server = createServer(async (request, response) => {
   try {
     const body = await readFile(filePath);
     response.writeHead(200, {
-      'content-type': TYPES[extname(filePath)] || 'application/octet-stream',
+      'content-type': contentTypeFor(filePath),
       'cache-control': 'no-cache',
     });
     response.end(body);

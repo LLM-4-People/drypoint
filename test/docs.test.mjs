@@ -8,9 +8,33 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { checkDocs, headingSlugs, headingText, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
+import { checkDocs, changelogProseText, headingSlugs, headingText, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
+import { dashFindings, doubleDashFindings, titleCaseFindings } from '../scripts/lib/prose.mjs';
+import { listFiles, listTrackedFiles } from '../scripts/lib/tree.mjs';
+import { CONFIG } from '../src/core/config.js';
 import { MODELS } from '../src/protocol/models.js';
-import { readProjectFile as read } from './helpers/project-files.mjs';
+import { ROLL_BARCODE, ROLL_TOTAL, ROLL_USED } from './fixtures/captured-unit.mjs';
+import { listProjectFiles, readProjectFile as read } from './helpers/project-files.mjs';
+
+const pkg = JSON.parse(read('package.json'));
+
+/** The data rows of the first table after one heading. */
+function tableRows(markdown, heading) {
+  const start = markdown.indexOf(heading);
+  assert.ok(start >= 0, `${heading} exists`);
+  const section = markdown.slice(start + heading.length);
+  const end = section.indexOf('\n## ');
+  const body = end < 0 ? section : section.slice(0, end);
+  return body
+    .split('\n')
+    .filter((line) => line.trim().startsWith('|'))
+    .slice(2)
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+}
+
+function plain(cell) {
+  return cell.replaceAll('**', '').trim();
+}
 
 async function tempTree(t, files) {
   const root = await mkdtemp(join(tmpdir(), 'drypoint-docs-'));
@@ -38,10 +62,10 @@ test('fenced code is not document structure', () => {
 });
 
 test('heading slugs follow GitHub, including duplicates and inline code', () => {
-  const slugs = headingSlugs(['## `0xDE` heartbeat info', '## Same', '## Same', '## Trailing ##', '### Em — dash (test)'].join('\n'));
+  const slugs = headingSlugs(['## `0xDE` heartbeat info', '## Same', '## Same', '## Trailing ##', '### Em: dash (test)'].join('\n'));
   assert.deepEqual(
     [...slugs],
-    ['0xde-heartbeat-info', 'same', 'same-1', 'trailing', 'em--dash-test'],
+    ['0xde-heartbeat-info', 'same', 'same-1', 'trailing', 'em-dash-test'],
     'punctuation is removed, spaces become hyphens and repeats are numbered'
   );
 });
@@ -171,9 +195,328 @@ test('the support matrix lists exactly the models the code knows', () => {
   assert.match(page, /0\.51 mm/, 'the padding is stated in millimetres');
 });
 
+test('the README support matrix and the SUPPORT scope match the model table', () => {
+  const readme = read('README.md');
+  const rows = tableRows(readme, '## Support matrix');
+  const status = new Map(rows.map(([model, state]) => [plain(model), state]));
+
+  for (const model of MODELS.filter((entry) => entry.support === 'confirmed')) {
+    assert.equal(status.get(model.name), 'Tested', `${model.name} is documented as tested`);
+  }
+  for (const model of MODELS.filter((entry) => entry.support === 'experimental')) {
+    assert.equal(status.get(model.name), 'Experimental', `${model.name} is documented as experimental`);
+  }
+  assert.equal(status.get('Every other id the app recognises'), 'Not supported');
+  assert.equal(status.get('Any model the printer reports outside the table'), 'Unknown');
+
+  // The count is a fact from models.js, not a hand-maintained number.
+  const count = `names ${MODELS.length} ids`;
+  assert.ok(readme.includes(count), `README states "${count}"`);
+  assert.ok(read('SUPPORT.md').includes(count), `SUPPORT states "${count}"`);
+  assert.ok(read('docs/PRINTERS.md').includes(count), `PRINTERS states "${count}"`);
+});
+
+test('the README Web Serial range is the BCD range, not an extra version', () => {
+  // BCD: chrome_android version_added 138, version_removed 148, partial RFCOMM,
+  // then full from 148. The partial window is therefore 138-147, not 138-148.
+  const readme = read('README.md');
+  assert.match(readme, /148\+ \(138-147 partial RFCOMM\)/);
+  assert.doesNotMatch(readme, /138-148/);
+});
+
+test('the ANDROID.md CSP quote is the one policy in index.html', () => {
+  const html = read('index.html');
+  const policy = html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]+)"/)?.[1];
+  assert.ok(policy, 'index.html owns one CSP meta element');
+  const quoted = read('docs/ANDROID.md').match(/Content-Security-Policy meta element\n\(`([^`]+)`\)/)?.[1];
+  assert.ok(quoted, 'ANDROID.md quotes the policy');
+  assert.equal(quoted.replace(/\s+/g, ' ').trim(), policy, 'the quote is the whole policy, not a four-directive subset');
+});
+
+test('ANDROID.md states the call and picker timeouts the transport uses', () => {
+  const doc = read('docs/ANDROID.md');
+  const call = Math.round(CONFIG.transport.androidCallTimeoutMs / 1000);
+  const picker = Math.round(CONFIG.transport.androidPickerTimeoutMs / 1000);
+  assert.ok(call < picker, 'the picker is deliberately longer than a bridge call');
+  assert.match(doc, new RegExp(`androidCallTimeoutMs\` \\(${call} s\\)`));
+  assert.match(doc, new RegExp(`androidPickerTimeoutMs\` \\(${picker} s\\)`));
+  assert.doesNotMatch(doc, /every call has `CONFIG\.transport\.androidCallTimeoutMs`/);
+});
+
+test('ANDROID.md lists both distribution notices beside the precache files', () => {
+  const doc = read('docs/ANDROID.md');
+  assert.match(doc, /bundles that list\s+plus the two distribution notices/);
+  assert.match(doc, /`LICENSE` and `THIRD_PARTY_NOTICES\.md`/);
+  assert.doesNotMatch(doc, /The APK bundles exactly\s+that list/);
+});
+
+test('the APK is described as BLE-only without claiming Android cannot do SPP', () => {
+  const doc = read('docs/ANDROID.md');
+  assert.match(doc, /\*\*BLE-only\*\*, because a WebView gives the page no Web Serial/);
+  assert.match(doc, /Chrome for Android 148\+ exposes Web Serial, including\s+RFCOMM serial ports/);
+  assert.match(doc, /138-147 exposed it partially/);
+  assert.doesNotMatch(doc, /Android's Web Serial cannot reach Bluetooth Classic SPP/);
+});
+
+test('the backup section states both importers and the 1.0.2 APK limitation', () => {
+  const readme = read('README.md');
+  assert.match(readme, /\*\*Export a label\.\*\* Open \*\*Document → Export label\*\*/);
+  assert.match(readme, /\*\*Import a label\.\*\* Open \*\*Document → Import label\*\*/);
+  assert.match(readme, /Import works\s+in the web app and in the Android APK from 1\.0\.3/);
+  assert.match(readme, /The 1\.0\.2 APK's file picker is\s+filtered to images/);
+  assert.match(readme, /cannot restore a label inside a downgraded\s+1\.0\.0 or 1\.0\.1 build/);
+  assert.match(readme, /importer refuses a file whose image sources\s+exceed the authoring budget/);
+
+  // The retired-key warning is above the install links, not only in Backup.
+  const warning = readme.indexOf('Do not install v1.0.0 for new work');
+  assert.ok(warning >= 0, 'the README carries the v1.0.0 warning');
+  assert.ok(warning < readme.indexOf('**Live app:**'), 'the warning is above the install links');
+  assert.match(readme, /the 1\.0\.0 APK had been downloaded/, 'the retirement claim is not "before any public install"');
+  assert.doesNotMatch(readme, /retired before any public install/);
+});
+
+test('the file surface names every saveFile caller', () => {
+  const saveFile = /label export, the diagnostics report(?:,| and)/;
+  assert.match(read('README.md'), saveFile);
+  assert.match(read('SECURITY.md'), /one `saveFile` method \(label export, diagnostics\s+report, or\s+the raw copy of an unreadable stored label\)/);
+  assert.match(read('SECURITY.md'), /native save bridge \(label export, diagnostics report, and the raw copy of\s+an unreadable stored label\)/);
+  assert.match(read('docs/ANDROID.md'), /the label export, the\s+diagnostics report and the raw\s+copy of an unreadable stored label/);
+  assert.doesNotMatch(read('SECURITY.md'), /beyond the image picker and the diagnostics download/);
+});
+
+test('the backup claim does not promise a D2D copy is impossible', () => {
+  const clause = /device-to-device\s+migration is controlled by the manufacturer and\s+cannot be disabled by the app on/;
+  assert.match(read('docs/ANDROID.md'), clause);
+  assert.match(read('android/AndroidManifest.template.xml'), clause);
+  assert.doesNotMatch(read('docs/ANDROID.md'), /never copied into a cloud or\s+device-to-device backup/);
+});
+
+test('Edge is an API mirror, not a hardware-tested serial path', () => {
+  const readme = read('README.md');
+  assert.match(readme, /Edge exposes the\s+same Chromium APIs but was not hardware-tested/);
+  assert.doesNotMatch(readme, /Chrome or Edge is the tested serial path/);
+  assert.doesNotMatch(readme, /Web Serial is tested on desktop Chrome\/Edge/);
+});
+
+test('the transfer-memory limit is stated with the bound and the mitigation', () => {
+  const readme = read('README.md');
+  assert.match(readme, /about 65 MB\s+of JSON/);
+  assert.match(readme, /export a smaller label or remove an image first/);
+  assert.match(read('docs/ANDROID.md'), /about 65 MB of JSON/);
+});
+
+test('the release runbook covers every failed or partial outcome', () => {
+  const doc = read('docs/ARCHITECTURE.md');
+  const section = doc.slice(doc.indexOf('### Failed or partial releases'), doc.indexOf('Every workflow pins'));
+  assert.ok(section.length > 0, 'the runbook exists');
+  for (const phrase of [
+    'Re-run the failed job',
+    'Do not delete or recreate the tag',
+    'asset is missing or wrong',
+    'Immutable releases',
+    'signature or an asset digest does not match',
+    'Pages failed after a green',
+    'Pages has no per-deploy rollback',
+    'Revert the bad commit on',
+    'The workflow takes no ref',
+    'provenance workflow ref refs/heads/main',
+    'git rev-list -n 1',
+  ]) {
+    assert.ok(section.includes(phrase), `the runbook states: ${phrase}`);
+  }
+
+  // The tag example is derived from package.json, never a past/future literal.
+  assert.match(doc, /v<package\.json version>/);
+  assert.match(doc, /git tag "v\$\{version\}"/);
+  assert.match(doc, /must not already exist/);
+  assert.doesNotMatch(doc, /git tag v1\.0\.\d/);
+
+  const history = doc.slice(doc.indexOf('### Historical release bodies'));
+  assert.match(history, /--tag v1\.0\.0 --historical --out/);
+  assert.match(history, /gh api repos\/LLM-4-People\/drypoint\/releases\/tags\/v1\.0\.0/);
+  assert.match(history, /never used by the release workflow/);
+});
+
+test('the issue templates point at the latest release, not a past version', () => {
+  const bug = read('.github/ISSUE_TEMPLATE/bug_report.yml');
+  const question = read('.github/ISSUE_TEMPLATE/question.yml');
+  // A version-free placeholder cannot go stale: the description already sends
+  // the reporter to the Releases page for the latest tag.
+  assert.match(bug, /placeholder: The latest release tag, or a commit SHA/);
+  assert.match(bug, /latest release tag from the Releases page/);
+  assert.doesNotMatch(bug, /placeholder: 1\.0\.\d/);
+  assert.doesNotMatch(question, /Web app 1\.0\.\d/);
+  assert.match(question, /Web app <release tag>/);
+});
+
+test('SECURITY.md does not present 1.0.0 as a supported install', () => {
+  const security = read('SECURITY.md');
+  const table = security.slice(security.indexOf('## Supported versions'), security.indexOf('## Reporting a vulnerability'));
+  assert.match(table, /\| 1\.0\.0 \| No: do not install it\./);
+  assert.match(table, /retired before any known install \(the 1\.0\.0 APK had been downloaded\)/);
+  assert.match(table, /uninstalling it deletes every label/);
+  assert.doesNotMatch(table, /\| 1\.x \| Yes/);
+});
+
+test('the README and ARCHITECTURE storage-key tables are the storageKey() calls', () => {
+  const keys = new Set();
+  for (const file of listProjectFiles('src').filter((entry) => entry.endsWith('.js'))) {
+    for (const match of read(file).matchAll(/storageKey\('([^']+)'\)/g)) {
+      keys.add(`${CONFIG.app.storagePrefix}.${match[1]}`);
+    }
+  }
+  const expected = [...keys].sort();
+  assert.equal(expected.length, 4, 'document, settings, rolls and zoom are the whole set');
+
+  const readmeRows = tableRows(read('README.md'), '## Storage keys');
+  const readmeKeys = readmeRows.map(([key]) => key.replaceAll('`', '').trim()).sort();
+  assert.deepEqual(readmeKeys, expected, 'the README table names exactly the storage keys');
+
+  const architectureRows = tableRows(read('docs/ARCHITECTURE.md'), '## Storage keys');
+  const architectureKeys = architectureRows.map(([key]) => key.replaceAll('`', '').trim()).sort();
+  assert.deepEqual(architectureKeys, expected, 'the ARCHITECTURE table names exactly the storage keys');
+
+  const documentRow = readmeRows.find(([key]) => key.includes(`${CONFIG.app.storagePrefix}.document`));
+  assert.ok(documentRow[1].includes(`version: ${CONFIG.app.documentVersion}`), 'the document version is the code owner');
+});
+
+test('PROTOCOL.md links the one model table instead of copying it', () => {
+  const protocol = read('docs/PROTOCOL.md');
+  assert.ok(protocol.includes('[the printer support matrix](PRINTERS.md)'));
+  assert.doesNotMatch(
+    protocol,
+    /^\|\s*[^|]+\|\s*`0x[0-9a-f]{4}`\s*\|/m,
+    'a second model-id table is refused; link PRINTERS.md instead'
+  );
+  assert.doesNotMatch(protocol, /\| \*\*D110_M\*\* \| `0x0910`/);
+});
+
+test('the documented printer controls are the panel labels', () => {
+  const panel = read('src/ui/print-panel.js');
+  const labels = new Set([...panel.matchAll(/actionButton\('([^']+)'/g)].map((match) => match[1]));
+  for (const label of [
+    'Feed / align paper',
+    'Self-test page',
+    'Sync clock',
+    'Read paper info',
+    'Read history',
+    'Read capabilities',
+    'Read device info',
+    'Reset settings',
+    'Export report',
+    'Open log',
+  ]) {
+    assert.ok(labels.has(label), `print-panel builds "${label}"`);
+  }
+  assert.match(read('docs/PRINTERS.md'), /\*\*Feed \/\s*align paper\*\*/);
+  assert.match(read('SUPPORT.md'), /Export report/);
+  assert.match(read('.github/ISSUE_TEMPLATE/bug_report.yml'), /Export report/);
+  assert.doesNotMatch(read('docs/PRINTERS.md'), /Feed \/ Align one label/);
+});
+
+test('the 12 mm scope and the protocol-compatible refusals are stated', () => {
+  const page = read('docs/PRINTERS.md');
+  assert.match(page, /## Why 12 mm is a scope decision, not a protocol limit/);
+  const rows = new Map(tableRows(page, '## Support matrix').map((cells) => [plain(cells[0]), cells]));
+  for (const [model, width] of [['D101', '24 mm'], ['B21 Pro', '50 mm'], ['B2 Pro', '50 mm'], ['B1 Pro', '50 mm']]) {
+    const row = rows.get(model);
+    assert.ok(row, `${model} is in the table`);
+    assert.ok(row.join(' ').includes(width), `${model} names its ${width} media`);
+    assert.match(row[5], /scope/i, `${model}'s refusal is a scope decision`);
+  }
+  assert.match(rows.get('D101')[5], /model gate refuses D101 as a 12 mm scope decision/);
+  assert.doesNotMatch(rows.get('D101')[5], /geometry gate/);
+  assert.match(page, /D11_Pro is a 12 mm model, but only one uncorroborated source/);
+  assert.match(page, /stays unsupported pending a device capture/);
+  assert.match(page, /M2_H/);
+  assert.match(page, /The discovery prefix is a filter, not a support claim/);
+  assert.doesNotMatch(page, /every protocol fact/);
+  assert.doesNotMatch(read('README.md'), /every other known/i);
+  assert.doesNotMatch(read('SUPPORT.md'), /every other known model/i);
+});
+
+test('the README states when printer settings are mirrored and where copies lives', () => {
+  const readme = read('README.md');
+  const start = readme.indexOf('**Density and tape type come from the printer when');
+  const end = readme.indexOf('- **One document at a time.**');
+  const bullet = readme.slice(start, end);
+  assert.ok(start >= 0 && end > start, 'the settings limitation bullet exists');
+  assert.match(bullet, /`Read printer settings`/);
+  assert.match(bullet, /which is the default/);
+  assert.match(bullet, /setting off, the app's stored values are used/);
+  assert.match(bullet, /Change them while connected/);
+  assert.doesNotMatch(bullet, /always come from the printer/);
+  assert.match(readme, /Copies is a document field, but its only control is in\s+the Print panel/);
+});
+
+test('the reference-unit roll facts match their fixture', () => {
+  const remaining = ROLL_TOTAL - ROLL_USED;
+  assert.match(read('README.md'), new RegExp(`\`${ROLL_BARCODE}\`, ${ROLL_TOTAL}-label capacity`));
+  assert.match(
+    read('docs/PROTOCOL.md'),
+    new RegExp(`\`${ROLL_BARCODE}\` \\(a product EAN\\), ${ROLL_TOTAL} total, ${ROLL_USED} used \\(${remaining} remaining\\)`)
+  );
+});
+
 test('the documentation index links every page in docs/', () => {
   const index = read('docs/README.md');
   for (const page of ['ARCHITECTURE.md', 'ANDROID.md', 'PRINTERS.md', 'PROTOCOL.md']) {
     assert.ok(index.includes(`(${page})`), `docs/README.md links ${page}`);
   }
+});
+
+/* ---------------- prose rules: dashes and sentence case ---------------- */
+
+test('the prose gate rejects every typographic dash', () => {
+  assert.deepEqual(dashFindings('x.md', 'plain text'), []);
+  for (const dash of ['\u2012', '\u2013', '\u2014', '\u2015']) {
+    const findings = dashFindings('x.md', `before ${dash} after`);
+    assert.equal(findings.length, 1, JSON.stringify(dash));
+    assert.equal(findings[0].line, 1);
+    assert.match(findings[0].message, /not allowed/);
+  }
+});
+
+test('the prose gate allows CLI options and Markdown rules', () => {
+  for (const text of ['npm run build -- --check', 'node script.mjs --flag', '---', '|---|---|', 'x-y']) {
+    assert.deepEqual(doubleDashFindings('x.md', text), [], text);
+  }
+  for (const text of ['a -- b', 'word--word', 'a --']) {
+    assert.equal(doubleDashFindings('x.md', text).length, 1, text);
+  }
+});
+
+test('the prose gate enforces sentence-case headings', () => {
+  assert.deepEqual(titleCaseFindings('x.md', '## Build the Android APK'), []);
+  assert.equal(titleCaseFindings('x.md', '## Build The Android APK').length, 1);
+  assert.deepEqual(titleCaseFindings('x.md', '## GitHub Pages'), [], 'a proper name is not Title Case');
+  assert.deepEqual(titleCaseFindings('x.md', '## Drypoint Android app'), []);
+  assert.deepEqual(titleCaseFindings('x.md', '## A heading with `Code` inline'), []);
+});
+
+test('the changelog gate checks the current section and leaves archived release bodies alone', () => {
+  const changelog = read('CHANGELOG.md');
+  const version = pkg.version;
+  const scoped = changelogProseText(changelog, version);
+  assert.deepEqual(dashFindings('CHANGELOG.md', scoped), [], 'archived published bodies keep their punctuation');
+  assert.match(scoped, new RegExp(`^## \\[?${version.replaceAll('.', '\\.')}\\]?`, 'm'), 'the current section is in scope');
+
+  const heading = new RegExp(`^(## \\[?${version.replaceAll('.', '\\.')}\\]?.*)$`, 'm');
+  const current = scoped.replace(heading, '$1\n\nCurrent \u2014 injected.');
+  assert.equal(dashFindings('CHANGELOG.md', current).length, 1, 'a dash in the current section is rejected');
+  assert.equal(dashFindings('CHANGELOG.md', `Preamble \u2014 injected.\n${scoped}`).length, 1, 'a dash in the preamble is rejected');
+});
+
+test('the CLI scans the tracked view, not the gitignore-aware walk', async (t) => {
+  const { root } = await tempTree(t, {
+    '.gitignore': 'ignored.txt\n',
+    'ignored.txt': 'tracked anyway\n',
+    'kept.txt': 'kept\n',
+  });
+  assert.deepEqual(await listFiles({ root }), ['.gitignore', 'kept.txt'], 'the walk obeys .gitignore');
+  const git = () => 'ignored.txt\0kept.txt\0';
+  assert.deepEqual(listTrackedFiles({ root, git }), ['ignored.txt', 'kept.txt'], 'a tracked file cannot hide');
+
+  const source = read('scripts/check-docs.mjs');
+  assert.match(source, /async function main\([\s\S]*?checkDocs\(\{ files: listTrackedFiles\(\) \}\)/, 'main passes the tracked list');
 });

@@ -7,11 +7,15 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { link, readFile, readlink, rm, writeFile } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 
 export const DEFAULT_PORT = 8080;
 export const SERVER_SCRIPT = 'serve.mjs';
+const ROOT = resolve(import.meta.dirname, '..', '..');
+/** This checkout's canonical dev server, the only script stop may signal. */
+export const SERVER_SCRIPT_PATH = join(ROOT, 'scripts', SERVER_SCRIPT);
 
 /** Parse a port from --port, --port=N or PORT, falling back to 8080. */
 export function resolvePort(argv = process.argv.slice(2), env = process.env) {
@@ -85,10 +89,27 @@ export async function readTrackedServer(file) {
   }
 }
 
-/** Atomically create the pid file; fails with EEXIST when another start won. */
+/**
+ * Atomically create the pid file; fails with EEXIST when another start won.
+ *
+ * The body is written to a private temporary file and published with `link`,
+ * which is atomic and exclusive. Creating the target directly with
+ * `writeFile(..., { flag: 'wx' })` makes it visible at `open()` before its
+ * bytes are written, so a concurrent start can read it as `invalid`, delete
+ * the winner's record and claim the port too. `link` makes the complete file
+ * appear in one step, so a racing reader sees either nothing or the whole
+ * record.
+ */
 export async function writeTrackedServer(file, record) {
-  await writeFile(file, `${JSON.stringify(record)}\n`, { flag: 'wx' });
-  return record;
+  const body = `${JSON.stringify(record)}\n`;
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, body, { flag: 'wx', mode: 0o600 });
+    await link(temp, file);
+    return record;
+  } finally {
+    await rm(temp, { force: true });
+  }
 }
 
 /** True when the process exists (EPERM still means it exists). */
@@ -133,9 +154,43 @@ export async function readProcessCommand(pid) {
   }
 }
 
-/** The command must be this project's dev server, never an unrelated process. */
-export function commandLooksLikeServer(command) {
-  return typeof command === 'string' && command.includes(SERVER_SCRIPT);
+/** The process working directory, needed to resolve a relative script path. */
+export async function readProcessCwd(pid) {
+  try {
+    return await readlink(`/proc/${pid}/cwd`);
+  } catch {
+    return null;
+  }
+}
+
+/** Split a joined command line into argv-like tokens, respecting simple quotes. */
+function commandTokens(command) {
+  return (command.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((token) => token.replace(/^["']|["']$/g, ''));
+}
+
+const NODE_EXECUTABLES = new Set(['node', 'node.exe', 'nodejs', 'nodejs.exe']);
+
+/**
+ * The command must be this project's dev server, never an unrelated process.
+ *
+ * A bare `serve.mjs` substring is not ownership: `vim scripts/serve.mjs` and
+ * another checkout's server both contain it. The script token must resolve to
+ * this checkout's canonical `scripts/serve.mjs` (absolute, or relative to the
+ * process working directory), and a node executable must appear before it.
+ */
+export function commandLooksLikeServer(command, { root = ROOT, cwd = null } = {}) {
+  if (typeof command !== 'string') return false;
+  const canonical = join(resolve(root), 'scripts', SERVER_SCRIPT);
+  const tokens = commandTokens(command);
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (!token.toLowerCase().includes(SERVER_SCRIPT)) continue;
+    // A relative script can only be verified against the real process cwd.
+    if (!token.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(token) && !cwd) return false;
+    if (resolve(cwd ?? '', token) !== canonical) continue;
+    return tokens.slice(0, index).some((earlier) => NODE_EXECUTABLES.has(basename(earlier).toLowerCase()));
+  }
+  return false;
 }
 
 /** Wait until the pid disappears, or the timeout elapses. */
@@ -195,11 +250,13 @@ export async function claimTrackedServer({
   port,
   pid = process.pid,
   startedAt = new Date().toISOString(),
+  root = ROOT,
   deps = {},
 }) {
   const read = deps.read ?? readTrackedServer;
   const alive = deps.alive ?? isProcessAlive;
   const commandFor = deps.commandFor ?? readProcessCommand;
+  const cwdFor = deps.cwdFor ?? readProcessCwd;
   const write = deps.write ?? writeTrackedServer;
   const remove = deps.remove ?? defaultRemove;
   const warn = deps.warn ?? (() => {});
@@ -216,7 +273,8 @@ export async function claimTrackedServer({
         await discardTrackedFile(file, tracked.record.pid, remove, read);
       } else if (alive(tracked.record.pid)) {
         const command = await commandFor(tracked.record.pid);
-        if (command === null || commandLooksLikeServer(command)) return { ok: false, reason: 'tracked', record: tracked.record };
+        const cwd = command === null ? null : await cwdFor(tracked.record.pid);
+        if (command === null || commandLooksLikeServer(command, { root, cwd })) return { ok: false, reason: 'tracked', record: tracked.record };
         warn(`pid ${tracked.record.pid} is not the dev server (${command}); replacing ${file}`);
         await discardTrackedFile(file, tracked.record.pid, remove, read);
       } else {
@@ -239,10 +297,11 @@ export async function claimTrackedServer({
  * Stop the server tracked in `file` for `port`, or explain why not.
  * @returns {Promise<{code:number, messages:Array<{level:'info'|'error', text:string}>}>}
  */
-export async function stopTrackedServer({ file, port, deps = {} }) {
+export async function stopTrackedServer({ file, port, root = ROOT, deps = {} }) {
   const read = deps.read ?? readTrackedServer;
   const alive = deps.alive ?? isProcessAlive;
   const commandFor = deps.commandFor ?? readProcessCommand;
+  const cwdFor = deps.cwdFor ?? readProcessCwd;
   const signal = deps.signal ?? ((pid, name) => process.kill(pid, name));
   const wait = deps.wait ?? waitForExit;
   const removeOwned = deps.removeOwned ?? removeTrackedServerIfOwned;
@@ -273,7 +332,8 @@ export async function stopTrackedServer({ file, port, deps = {} }) {
   }
 
   const command = await commandFor(record.pid);
-  if (!command || !commandLooksLikeServer(command)) {
+  const cwd = command === null ? null : await cwdFor(record.pid);
+  if (!command || !commandLooksLikeServer(command, { root, cwd })) {
     messages.push({
       level: 'error',
       text: `refusing to stop pid ${record.pid}: ${command ? `it is ${command}` : 'its command cannot be verified'}.`,

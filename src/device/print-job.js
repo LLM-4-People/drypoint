@@ -3,12 +3,12 @@
  * expects; every step is named so it can be tested and aborted cleanly.
  *
  * Terminal frames: a completed job ends with printEnd (0xF3). A job that is
- * cancelled or fails after it started ends with cancelPrint (0xDA) instead —
+ * cancelled or fails after it started ends with cancelPrint (0xDA) instead:
  * never both, and never a success frame after a cancel.
  */
 
 import { CONFIG } from '../core/config.js';
-import { sleep } from '../core/format.js';
+import { plural, sleep } from '../core/format.js';
 import { createLogger } from '../core/log.js';
 import { encodeFrame, u16be } from '../protocol/frames.js';
 import { OP } from '../protocol/commands.js';
@@ -163,5 +163,5 @@ async function waitForPages(client, copies, signal, timeoutMs = CONFIG.protocol.
     if (pages >= copies) return pages;
     await sleep(CONFIG.protocol.pollIntervalMs);
   }
-  throw new PrinterError(`Printer did not confirm the job: no new page for ${timeoutMs} ms (${pages}/${copies} labels)`);
+  throw new PrinterError(`Printer did not confirm the job: no new page for ${timeoutMs} ms (${pages}/${copies} ${plural(copies, 'label')})`);
 }

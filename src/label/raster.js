@@ -1,17 +1,20 @@
 /**
  * Canvas → printer raster.
  *
- * The editor works in landscape (length × 96 px). The print head is 96 dots
- * wide and feeds along the length, so the bitmap is transposed here — the one
- * place where the two coordinate systems meet.
+ * The editor works in landscape: the canvas is `length × headWidthPx`, where
+ * the height is the head width the printer reported (96 on the reference
+ * D110_M) and never a constant. The head is `canvas.height` dots wide and
+ * feeds along the length, so the bitmap is transposed here: the one place
+ * where the two coordinate systems meet.
  */
 
 import { CONFIG } from '../core/config.js';
 import { luminanceAt } from './dither.js';
 
 /**
- * @param {HTMLCanvasElement} canvas landscape label, `length × 96` px
- * @returns {{width:number, height:number, rows:Uint8Array[]}} printer raster, 96 wide
+ * @param {HTMLCanvasElement} canvas landscape label, `length × headWidthPx` px
+ * @returns {{width:number, height:number, rows:Uint8Array[]}} printer raster,
+ *          `canvas.height` dots wide and `canvas.width` rows long
  */
 export function canvasToRaster(canvas) {
   const source = canvas.width;

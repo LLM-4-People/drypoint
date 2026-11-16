@@ -34,7 +34,7 @@ jobs:
             build-mode: none
           # The Android shell is Java; a data-flow query can follow the
           # manifest, the bridge and the export writer. `none` analyses the
-          # sources without an SDK or Gradle — this build is a plain javac
+          # sources without an SDK or Gradle: this build is a plain javac
           # invocation the repository already owns.
           - language: java-kotlin
             build-mode: none

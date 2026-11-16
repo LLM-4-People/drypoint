@@ -67,13 +67,13 @@ export function describeErrorCode(code) {
 }
 
 /** The one "the operator asked for this" error: every layer reports it the same way. */
-export function cancelledError(message = 'Print cancelled') {
+function cancelledError(message = 'Print cancelled') {
   return new PrinterError(message, { cancelled: true, fatal: true });
 }
 
 /**
  * The reason an aborted signal carries. A printer error aborts the operation
- * that owns the link, and that error — not a generic cancel — is what the
+ * that owns the link, and that error (not a generic cancel) is what the
  * caller must see, so the one flow reports one cause. Any other reason keeps
  * the shared "cancelled" outcome.
  */

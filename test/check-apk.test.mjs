@@ -11,11 +11,15 @@ import {
   badgingFindings,
   bundledFiles,
   checkApk,
+  expectedIdentity,
   manifestXmlFindings,
+  platformExpectations,
+  platformFindings,
   readPrecache,
   signatureFindings,
   surfaceFindings,
 } from '../scripts/check-apk.mjs';
+import { versionCodeOf } from '../scripts/build-android.mjs';
 import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
 import { projectRoot } from './helpers/project-files.mjs';
 
@@ -24,10 +28,14 @@ const manifest = {
   digests: { 'index.html': 'a'.repeat(64), 'assets/app.css': 'b'.repeat(64) },
 };
 
+/** The identity the release must carry, read from its two owners. */
+const IDENTITY = expectedIdentity();
+
 const BADGING = [
-  "package: name='dev.llm4people.drypoint' versionCode='10002' versionName='1.0.2'",
+  `package: name='${IDENTITY.package}' versionCode='${IDENTITY.versionCode}' versionName='${IDENTITY.versionName}'`,
+  "minSdkVersion:'26' targetSdkVersion:'34'",
   "uses-permission: name='android.permission.BLUETOOTH_CONNECT'",
-  "launchable-activity: name='dev.llm4people.drypoint.MainActivity' label='' icon=''",
+  `launchable-activity: name='${IDENTITY.package}.MainActivity' label='' icon=''`,
 ].join('\n');
 
 const XMLTREE = [
@@ -93,6 +101,52 @@ test('INTERNET in either permission form and the launcher count are checked', ()
   const twoLaunchers = `${BADGING}\nlaunchable-activity: name='dev.llm4people.drypoint.Second' label='' icon=''`;
   assert.ok(badgingFindings(twoLaunchers).some((finding) => /exactly one MAIN\/LAUNCHER activity, found 2/.test(finding)));
   assert.ok(badgingFindings("package: name='x'").some((finding) => /found 0/.test(finding)), 'a launcher is required');
+});
+
+test('the badging must carry the exact package, versionCode and versionName', () => {
+  const expected = expectedIdentity();
+  const pkg = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'));
+  assert.equal(expected.package, 'dev.llm4people.drypoint', 'the package comes from brand.json');
+  assert.equal(expected.versionName, pkg.version, 'the version name comes from package.json');
+  assert.equal(expected.versionCode, versionCodeOf(pkg.version), 'the version code comes from its one owner');
+  assert.deepEqual(badgingFindings(BADGING, expected), []);
+  const cases = [
+    ['versionCode 1', BADGING.replace(`versionCode='${expected.versionCode}'`, "versionCode='1'"), new RegExp(`versionCode ${expected.versionCode}`)],
+    ['wrong package', BADGING.replace(expected.package, 'dev.example.other'), /not dev\.llm4people\.drypoint/],
+    ['wrong versionName', BADGING.replace(`versionName='${expected.versionName}'`, "versionName='9.9.9'"), new RegExp(`not dev\\.llm4people\\.drypoint ${expected.versionName.replaceAll('.', '\\.')}`)],
+  ];
+  for (const [name, text, pattern] of cases) {
+    assert.ok(badgingFindings(text, expected).some((finding) => pattern.test(finding)), `${name} is rejected`);
+  }
+  // The composed check uses the same identity, so a hard-coded positive
+  // versionCode cannot pass the release artifact check.
+  const files = [...readPrecache().files, ...DISTRIBUTION_FILES];
+  const bytes = new Map(files.map((file) => [file, readFileSync(join(projectRoot, file))]));
+  const exec = (command, args) => {
+    if (command === 'unzip' && args[0] === '-Z1') return files.map((file) => `assets/www/${file}`).join('\n');
+    if (command === 'unzip' && args[0] === '-p') return bytes.get(args[2].replace('assets/www/', ''));
+    if (command === 'aapt2' && args[1] === 'badging') return BADGING.replace(`versionCode='${expected.versionCode}'`, "versionCode='1'");
+    if (command === 'aapt2' && args[1] === 'xmltree') return XMLTREE;
+    throw new Error(`unexpected command ${command} ${args.join(' ')}`);
+  };
+  const result = checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec });
+  assert.equal(result.ok, false);
+  assert.ok(result.findings.some((finding) => finding.includes(`versionCode ${expected.versionCode}`)));
+});
+
+test('the badging must carry the platform levels the template owns', () => {
+  const platform = platformExpectations();
+  assert.deepEqual(platform, { minSdkVersion: 26, targetSdkVersion: 34 });
+  assert.deepEqual(platformFindings(BADGING, platform), []);
+  const cases = [
+    ['minSdk', BADGING.replace("minSdkVersion:'26'", "minSdkVersion:'25'"), /reports minSdkVersion 25, expected 26/],
+    ['targetSdk', BADGING.replace("targetSdkVersion:'34'", "targetSdkVersion:'33'"), /reports targetSdkVersion 33, expected 34/],
+    ['missing min', BADGING.replace("minSdkVersion:'26' ", ''), /does not report minSdkVersion/],
+    ['missing target', BADGING.replace(" targetSdkVersion:'34'", ''), /does not report targetSdkVersion/],
+  ];
+  for (const [name, text, pattern] of cases) {
+    assert.ok(platformFindings(text, platform).some((finding) => pattern.test(finding)), `${name} is rejected`);
+  }
 });
 
 test('the binary manifest enforces every component, debuggable and cleartext rule', () => {
@@ -202,5 +256,37 @@ test('the composed check passes a matching APK and fails each planted rule', () 
   assert.ok(
     checkApk({ apk: 'fake.apk', aapt2: 'aapt2', apksigner: 'apksigner', exec: unsigned }).findings.some((finding) => /v2/.test(finding)),
     'the composed check reads the signature, not only the rule function'
+  );
+
+  // A missing entry must name the surface rule, not abort on `unzip -p`.
+  const missing = (command, args) =>
+    command === 'unzip' && args[0] === '-Z1'
+      ? files.filter((file) => file !== 'src/core/dom.js').map((file) => `assets/www/${file}`).join('\n')
+      : exec(command, args);
+  const missingResult = checkApk({ apk: 'fake.apk', aapt2: 'aapt2', exec: missing });
+  assert.ok(
+    missingResult.findings.some((finding) => /assets\/www is missing src\/core\/dom\.js/.test(finding)),
+    'the missing file is named by the surface rule'
+  );
+
+  // `apksigner` exits nonzero for a v1-only or otherwise unverifiable APK.
+  // The scheme finding and the tool failure both survive the exception.
+  const unverifiable = (command, args) => {
+    if (command === 'apksigner' && args[0] === 'verify') {
+      const error = new Error('Command failed');
+      error.stdout = VERIFIED.replace('v2 scheme (APK Signature Scheme v2): true', 'v2 scheme (APK Signature Scheme v2): false');
+      error.stderr = 'DOES NOT VERIFY';
+      throw error;
+    }
+    return exec(command, args);
+  };
+  const unverifiableResult = checkApk({ apk: 'fake.apk', aapt2: 'aapt2', apksigner: 'apksigner', exec: unverifiable });
+  assert.ok(
+    unverifiableResult.findings.some((finding) => /no verified v2 signature/.test(finding)),
+    'the signature rule is named instead of a bare RangeError'
+  );
+  assert.ok(
+    unverifiableResult.findings.some((finding) => /apksigner could not verify/.test(finding)),
+    'the tool failure is named'
   );
 });

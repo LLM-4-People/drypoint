@@ -60,6 +60,7 @@ function fakeDevice({
   caps = buildCaps(),
   printing = false,
   readingInfo = false,
+  maintaining = false,
   sound = true,
   soundWrite = undefined,
   rejectSoundRead = false,
@@ -68,7 +69,7 @@ function fakeDevice({
 } = {}) {
   const calls = [];
   const device = {
-    state: { status, capabilities: caps, transportLabel: null, printing, readingInfo, error: null },
+    state: { status, capabilities: caps, transportLabel: null, printing, readingInfo, maintaining, error: null },
     get connected() {
       return this.state.status === 'connected';
     },
@@ -255,6 +256,7 @@ test('sound controls follow the capability across connected and disconnected', a
       if (status === 'connected') {
         assert.deepEqual(switches.map((row) => row.getAttribute('data-state')), ['known', 'known'], `${label}: the read resolved`);
         assert.deepEqual(buttons.map((button) => button.getAttribute('aria-checked')), ['true', 'true'], `${label}: the printer's value is applied`);
+        assert.deepEqual(buttons.map((button) => button.getAttribute('role')), ['switch', 'switch'], `${label}: a known value is a switch`);
       } else {
         assert.deepEqual(switches.map((row) => row.getAttribute('data-state')), ['unknown', 'unknown'], `${label}: offline is unknown`);
         assert.deepEqual(
@@ -262,6 +264,7 @@ test('sound controls follow the capability across connected and disconnected', a
           [null, null],
           `${label}: an unread value is never announced as off`
         );
+        assert.deepEqual(buttons.map((button) => button.getAttribute('role')), [null, null], `${label}: an unknown value is not a switch`);
       }
     }
   }
@@ -554,7 +557,7 @@ test('Read capabilities keeps the raw TLV, including colour and gray, in diagnos
   assert.match(dialog.textContent, /Raw TLV values/);
   assert.match(dialog.textContent, /grayBuffer: 01/, 'the raw gray byte is inspectable');
   assert.match(dialog.textContent, /Colour reported: Not reported/);
-  assert.match(dialog.textContent, /Speed range: 1–5/);
+  assert.match(dialog.textContent, /Speed range: 1-5/);
 
   const close = [...dialog.querySelectorAll('button')].find((node) => node.textContent.trim() === 'Close');
   close.dispatch('click');
@@ -744,6 +747,22 @@ test('a device-info read disables every command that would use the link', () => 
   assert.equal(container.querySelector('input[aria-label="Copies"]').disabled, false, 'a document field is not link-bound');
 });
 
+test('an in-flight maintenance command disables every command that would use the link', () => {
+  const { device } = fakeDevice({
+    status: 'connected',
+    caps: buildCaps({ hasVolume: true, autoShutdown: 2 }),
+    maintaining: true,
+  });
+  const { container } = mount(device);
+
+  for (const label of ['Disconnect', 'Refresh', 'Feed / align paper', 'Self-test page', 'Sync clock', 'Reset settings']) {
+    assert.equal(buttonByText(container, label)?.disabled, true, `${label} waits for the maintenance command`);
+  }
+  assert.equal(container.querySelector('input[aria-label="Density"]').disabled, true);
+  assert.equal(container.querySelector('select[aria-label="Auto power-off"]').disabled, true);
+  for (const row of switchRows(container)) assert.equal(row.querySelector('button').disabled, true);
+});
+
 test('a device-info read that loses the link logs debug instead of toasting an error', async () => {
   const { device } = fakeDevice({ status: 'connected' });
   device.readInfoDiagnostics = async () => {
@@ -802,7 +821,7 @@ test('an empty density intersection disables the control and states the wire val
   assert.equal(wire.density, 6, 'the job sends the printer floor');
   assert.match(
     container.textContent,
-    /The printer accepts density 6–8, outside this app's 1–5; the density control is disabled and the next print sends 6\./
+    /The printer accepts density 6-8, outside this app's 1-5; the density control is disabled and the next print sends 6\./
   );
 });
 
@@ -922,7 +941,7 @@ test('the panel names the model, its support state and the behaviour task', () =
     protocolVersion: 301,
   });
   const { container } = mount(fakeDevice({ status: 'connected', caps }).device);
-  assert.match(container.textContent, /D110_M — tested · 0x0910/);
+  assert.match(container.textContent, /D110_M \(tested\) · 0x0910/);
   assert.match(container.textContent, /D110M V4 · build 301/);
   assert.doesNotMatch(container.textContent, /\bV5\b/);
 });
@@ -934,7 +953,7 @@ test('an experimental model and an unsupported model read differently', () => {
       caps: buildCaps({ model: 'D11_H', modelSupport: 'experimental', task: 'd110mv4', deviceType: 0x0210 }),
     }).device
   );
-  assert.match(experimental.container.textContent, /D11_H — experimental · 0x0210/);
+  assert.match(experimental.container.textContent, /D11_H \(experimental\) · 0x0210/);
 
   const unsupported = mount(
     fakeDevice({
@@ -942,7 +961,7 @@ test('an experimental model and an unsupported model read differently', () => {
       caps: buildCaps({ model: 'B1', modelSupport: 'unsupported', task: 'd110mv4', deviceType: 0x1000 }),
     }).device
   );
-  assert.match(unsupported.container.textContent, /B1 — not supported · 0x1000/);
+  assert.match(unsupported.container.textContent, /B1 \(not supported\) · 0x1000/);
 });
 
 /* ---------------- support gate (P1) ---------------- */
@@ -1019,7 +1038,7 @@ test('an unknown model is named Unknown model and exposes no print task', () => 
   const { container } = mount(device);
   const rows = rowsOf(container);
   assert.equal(rows.get('Model'), 'Unknown model · 0x1234');
-  assert.doesNotMatch(container.textContent, /Unknown — unknown/);
+  assert.doesNotMatch(container.textContent, /Unknown: unknown/);
   assert.equal(rows.get('Protocol'), 'Print task not available for this model');
   assert.doesNotMatch(container.textContent, /D110M V4/);
 });
@@ -1031,7 +1050,7 @@ test('an unsupported known model exposes no print task', () => {
   });
   const { container } = mount(device);
   const rows = rowsOf(container);
-  assert.equal(rows.get('Model'), 'B1 — not supported · 0x1000');
+  assert.equal(rows.get('Model'), 'B1 (not supported) · 0x1000');
   assert.equal(rows.get('Protocol'), 'Print task not available for this model');
   assert.doesNotMatch(container.textContent, /D110M V4/);
 });

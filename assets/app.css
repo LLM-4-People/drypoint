@@ -152,13 +152,72 @@ h3 {
      the content's min-content width (431px with 44px safe-area insets on a
      390px phone) and the clipped right edge cannot be scrolled back. */
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* top bar, the storage alert (zero height while hidden), workspace, action
+     bar. Every region names its area: the alert is `display:none` while
+     hidden, so auto-placement would otherwise put the workspace in the alert's
+     row and the action bar in the flexible row. The named rows keep each
+     region in place whether the alert exists or not. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'topbar'
+    'alert'
+    'workspace'
+    'actionbar';
   height: 100dvh;
+}
+
+/* ---------------- storage alert ---------------- */
+
+/* An unreadable stored label is kept, not replaced: the banner stays until the
+   operator exports the raw value or resets the label, and it is the one reason
+   the app refuses to save. */
+.storage-alert {
+  grid-area: alert;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--danger-border, var(--line-2));
+  background: color-mix(in srgb, var(--danger, #e5484d) 14%, var(--surface));
+  color: var(--text);
+}
+
+.storage-alert[hidden] {
+  display: none;
+}
+
+.storage-alert-text {
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.storage-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.storage-alert-actions button {
+  padding: 7px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.storage-alert-actions button:hover {
+  border-color: var(--accent);
 }
 
 /* ---------------- top bar ---------------- */
 
 .topbar {
+  grid-area: topbar;
   display: grid;
   grid-template-columns: 1fr minmax(0, 320px) 1fr;
   align-items: center;
@@ -345,6 +404,7 @@ h3 {
 /* ---------------- workspace ---------------- */
 
 .workspace {
+  grid-area: workspace;
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr) 344px;
   min-height: 0;
@@ -948,7 +1008,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* Selected state: a --field-border ring (3.22:1 light, 3.43:1 dark on this
-   surface) plus two non-colour cues — bolder text and a bar along the bottom
+   surface) plus two non-colour cues: bolder text and a bar along the bottom
    edge. The old inset divider ring was 1.08:1 and colour was the only cue. */
 .segmented button[aria-pressed="true"] {
   border-color: var(--field-border);
@@ -1146,6 +1206,7 @@ input[type="range"]::-webkit-slider-thumb {
 /* ---------------- action bar ---------------- */
 
 .actionbar {
+  grid-area: actionbar;
   position: relative;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
@@ -1165,14 +1226,13 @@ input[type="range"]::-webkit-slider-thumb {
   transition: width 0.12s linear;
 }
 
-/* The support-gate refusal, visible above the bar. Absolutely positioned so a
-   model/geometry block never moves the buttons or the status line. */
+/**
+ * The support-gate refusal, in normal flow above the bar's action row. It is
+ * not an overlay: an absolutely positioned banner permanently covered the
+ * inspector tabs and the Document actions under it on a phone.
+ */
 .gate-reason {
-  position: absolute;
-  left: max(12px, env(safe-area-inset-left));
-  right: max(12px, env(safe-area-inset-right));
-  bottom: 100%;
-  margin: 0 0 6px;
+  margin: 8px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
   padding: 8px 12px;
   border: 1px solid var(--danger-border, var(--line-2));
   border-radius: 9px;
@@ -1469,11 +1529,17 @@ input[type="range"]::-webkit-slider-thumb {
        z-index only implied a stacking context that never existed. */
     background: var(--bg);
     border-bottom: 1px solid var(--line);
+    /* P-F2: the pre-paint compact order (see .sidebar below). */
+    order: 1;
   }
 
   .stage-scroll {
     padding: 6px 12px 10px;
-    max-height: 40vh;
+    /* P-F2: the compact stage owns a fixed height instead of a content cap, so
+       the boot fit resizing the canvas cannot move the rail and inspector
+       below it. That resize was the other first-load shift; scrolling still
+       happens inside this box. */
+    height: 40vh;
   }
 
   .stage-bar {
@@ -1516,24 +1582,55 @@ input[type="range"]::-webkit-slider-thumb {
     padding: 0 12px 8px;
   }
 
+  /* P-F2: the compact shell paints in its final order before any script runs.
+     The boot move (main.js placeStage/placeInspector) still makes DOM order
+     equal this visual order for Tab, but on a throttled phone it ran seconds
+     after first paint and moved the stage and inspector, shifting the shell by
+     0.92 CLS. Removing the sidebar's box makes its rail, inspector and panels
+     items of the one-column workspace grid, so `order` puts the stage first
+     and the inspector directly under the rail in the first frame. The aside
+     keeps its landmark and name in the accessibility tree. */
   .sidebar {
-    border-right: none;
-    border-bottom: 1px solid var(--line);
+    display: contents;
   }
 
   .rail {
+    order: 2;
     overflow-x: auto;
+    /* The sidebar's box used to paint this surface behind the rail; with
+       display: contents each compact row carries it itself. */
+    background: var(--surface);
   }
 
   .layers-panel {
+    order: 4;
     flex: none;
     max-height: 200px;
   }
 
+  .templates-panel {
+    order: 5;
+  }
+
+  .document-panel {
+    order: 6;
+  }
+
+  .panel {
+    background: var(--surface);
+  }
+
   .inspector {
+    order: 3;
     border-left: none;
     border-top: 1px solid var(--line);
-    min-height: 0;
+    /* P-F2: the design fields mount at boot. Without a reserved height the
+       inspector grew from its tabs to a full form and pushed Layers, Templates
+       and Document down by about 1000 px after first paint, which was the
+       remaining measurable shift. Reserving most of a phone screen keeps those
+       panels below the fold until the fields exist; the box still grows to its
+       content on taller labels, so nothing is clipped. */
+    min-height: 60vh;
   }
 
   .panel-body {
@@ -1577,6 +1674,13 @@ input[type="range"]::-webkit-slider-thumb {
     z-index: 30;
     /* Opaque: content scrolling under a translucent bar would show through. */
     background: var(--bg);
+  }
+
+  /* A persistent gate refusal adds a row to the bar. A sticky bar would then
+     grow upward over the inspector tabs; while the gate is showing, nothing in
+     the bar can print anyway, so let it take its normal place at the end. */
+  .actionbar:has(.gate-reason:not([hidden])) {
+    position: static;
   }
 
   .action-row {
@@ -1660,6 +1764,8 @@ input[type="range"]::-webkit-slider-thumb {
 
   .tabs button,
   .template-grid button,
+  .document-actions button,
+  .storage-alert-actions button,
   .segmented button,
   .btn,
   .btn.small,
@@ -1768,7 +1874,7 @@ input[type="range"]::-webkit-slider-thumb {
 
   /* Opening the menu moves focus into the grid, so the trigger is never
      display:none'd while it holds focus. The grid stays in the row's normal
-     flow — the list's overflow-y must keep clipping a long list, so a floating
+     flow; the list's overflow-y must keep clipping a long list, so a floating
      popup was cut off at the list edges. The row grows and the list scrolls it
      into view instead. */
   .layer-row[data-menu="open"] .layer-actions {

@@ -14,7 +14,7 @@ function u16(data, offset) {
   return (data[offset] << 8) | data[offset + 1];
 }
 
-/** Battery level steps (0–4) to a percentage, clamped to 0–100. One owner. */
+/** Battery level steps (0-4) to a percentage, clamped to 0-100. One owner. */
 export function batteryPercent(level) {
   if (!Number.isFinite(level)) return null;
   return Math.min(100, Math.max(0, level * 25));

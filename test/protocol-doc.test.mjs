@@ -125,9 +125,9 @@ test('numeric fields decode exactly as the document describes', () => {
 
 /* ---------------- offset markers and the capability TLV table (R5G-2) ---------------- */
 
-/** A numeric offset cell (`6`, `11–12`), or null for the prose cells of 0x1B. */
+/** A numeric offset cell (`6`, `11-12`), or null for the prose cells of 0x1B. */
 function offsetRange(cell) {
-  const match = cell.match(/^(\d+)(?:–(\d+))?$/);
+  const match = cell.match(/^(\d+)(?:-(\d+))?$/);
   if (!match) return null;
   return match[2] === undefined ? [Number(match[1])] : [Number(match[1]), Number(match[2])];
 }
@@ -140,7 +140,7 @@ function decodeMarker(row, bytes) {
   if (/major × 100 \+ minor/.test(encoding)) return bytes[0] * 100 + bytes[1];
   if (/u16/.test(encoding)) return (bytes[0] << 8) | bytes[1];
   if (/level × 25/.test(encoding)) return bytes[0] * 25;
-  if (/^0–4$/.test(encoding)) return bytes[0];
+  if (/^0-4$/.test(encoding)) return bytes[0];
   const flag = encoding.match(/`([01])`\s*=/);
   if (flag) return bytes[0] === Number(flag[1]);
   if (/raw/.test(encoding)) return bytes[0];
@@ -188,7 +188,7 @@ test('every decoder reads its markers from the documented offsets', () => {
 
   // The three offsets the round-5 mutations target are pinned in the document
   // as well as the decoder.
-  assert.equal(byField(rows('### `0xDE` heartbeat info')).get('headWidthPx').offset, '4–5');
+  assert.equal(byField(rows('### `0xDE` heartbeat info')).get('headWidthPx').offset, '4-5');
   assert.equal(byField(rows('### `0xB5` status data')).get('packetIntervalMs').offset, '9');
 });
 

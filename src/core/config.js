@@ -15,7 +15,7 @@ function deepFreeze(value) {
 }
 
 /**
- * The user threshold is a percentage; the renderer wants a 0–255 luminance cut.
+ * The user threshold is a percentage; the renderer wants a 0-255 luminance cut.
  * One owner for both representations: `thresholdDefault` is derived from it.
  */
 const THRESHOLD = Object.freeze({ min: 5, max: 95, step: 5, default: 55 });
@@ -46,8 +46,14 @@ const TRANSFER_OVERHEAD_BYTES = 4 * 1024 * 1024;
  * The image text one label may carry. Serialised documents repeat an image
  * source once per element, so the distinct-source cache limit alone does not
  * bound the file: a label that reuses one large source still grows with every
- * copy. The editor, validation and the transfer envelope share this budget, so
- * a label the app can produce always fits the file it can import.
+ * copy.
+ *
+ * This is an authoring budget, not a normalise rule. `label/images.js`
+ * (`sourceBudgetProblem`) enforces it where an image enters the label (editor
+ * add/update/duplicate) and where the label crosses a file boundary (import,
+ * export). Validation preserves an over-budget document intact: it runs on
+ * every undo, geometry change and print, so rewriting there would silently
+ * destroy a label that already exists.
  */
 const MAX_SOURCE_CHARS = IMAGE_CACHE_LIMIT * MAX_SRC_CHARS;
 
@@ -67,7 +73,7 @@ export const CONFIG = deepFreeze({
     dpi: 203,
     widthPx: 96,
     /**
-     * A real D110-family head is 96–576 dots. A reported 0 or 65535 is a
+     * A real D110-family head is 96-576 dots. A reported 0 or 65535 is a
      * malformed/hostile reply: it must not become geometry or a raster width,
      * and with no usable report the print gate treats the head as a guess.
      */
@@ -131,10 +137,10 @@ export const CONFIG = deepFreeze({
     }),
     /** The user-facing threshold is a percentage of full ink. */
     threshold: THRESHOLD,
-    /** Internal 0–255 luminance cut derived from the default percentage. */
+    /** Internal 0-255 luminance cut derived from the default percentage. */
     thresholdDefault: Math.round((THRESHOLD.default / 100) * 255),
     /**
-     * Fixed 0–255 luminance cut for the final 1-bit raster pass. The user
+     * Fixed 0-255 luminance cut for the final 1-bit raster pass. The user
      * threshold only drives image dithering, so small antialiased text is not
      * lost when the user picks a low image threshold.
      */
@@ -187,7 +193,12 @@ export const CONFIG = deepFreeze({
     printGate: {
       unsupported: 'This app prints 12 mm labels on the NIIMBOT D110 family; no frame was sent.',
       unknownModel: 'Unknown model: the printer did not report a model this app knows; no frame was sent and printing is disabled.',
-      guessedGeometry: 'The printer did not report its head width, so the label size is a guess; no frame was sent and printing is disabled.',
+      // Both facts make a label width real: the head width and the dots per mm
+      // that turn millimetres into dots. The gate picks the message for the
+      // fact the printer actually withheld; this one is the both-missing case.
+      guessedGeometry: 'The printer did not report enough geometry to size the label (a head width and a usable resolution), so the label size is a guess; no frame was sent and printing is disabled.',
+      missingHeadWidth: 'The printer did not report its head width, so the label size is a guess; no frame was sent and printing is disabled.',
+      missingResolution: 'The printer did not report a usable resolution, so the label size is a guess; no frame was sent and printing is disabled.',
       experimental: 'This model is experimental: the D110M V4 sequence is verified on the D110_M, not on this printer.',
     },
   },
@@ -196,7 +207,13 @@ export const CONFIG = deepFreeze({
     sppService: '00001101-0000-1000-8000-00805f9b34fb',
     bleService: 'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
     bleCharacteristic: 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f',
-    bleNamePrefixes: ['D110', 'NIIMBOT', 'B1', 'B21'],
+    /**
+     * The discovery filter, not a support claim: a device whose name starts
+     * with one of these is offered to the picker and then identified by its
+     * reported id, which the model gate alone judges. B1 covers B18/B18S and
+     * B2 covers B2/B21, so the catalogue names are not repeated as prefixes.
+     */
+    bleNamePrefixes: ['D110', 'D11', 'B1', 'B2', 'B21', 'N1', 'H1', 'D101', 'NIIMBOT'],
     bleWritePacingMs: 12,
     /**
      * A transport open() that never settles (a GATT connect that stalls, a port
@@ -268,6 +285,12 @@ export const CONFIG = deepFreeze({
     maxTextChars: 2000,
     maxValueChars: 2000,
     maxNameChars: 120,
+    /**
+     * Element ids are internal and appear in DOM attributes, so they are capped
+     * with the other strings. An unbounded accepted id used to make an accepted
+     * import export a file the importer refuses.
+     */
+    maxIdChars: 120,
     /** An image data URL longer than this is dropped, never truncated. */
     maxSrcChars: MAX_SRC_CHARS,
     /** Total image-source text one document may carry; see MAX_SOURCE_CHARS. */

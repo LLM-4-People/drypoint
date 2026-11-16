@@ -13,7 +13,7 @@ import { toast as defaultToast } from './toast.js';
 
 const log = createLogger('ui.save-failure');
 
-export const SAVE_FAILURE_MESSAGE = 'Changes are not being saved — storage is full or blocked';
+export const SAVE_FAILURE_MESSAGE = 'Changes are not being saved: storage is full or blocked';
 
 /**
  * @param {{toast?: Function}} [deps] injected for tests

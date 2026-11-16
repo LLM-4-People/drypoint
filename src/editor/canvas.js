@@ -218,7 +218,7 @@ export function createCanvasEditor({
 
   /**
    * The corner handle under a screen point. A mouse gets half the drawn handle
-   * size — the hit box is the handle, not a halo. A finger has no such
+   * size; the hit box is the handle, not a halo. A finger has no such
    * precision, so the touch target is larger while the drawing stays 18 px.
    */
   function hitHandle(screen, pointerType = 'mouse') {

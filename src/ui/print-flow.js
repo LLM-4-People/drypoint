@@ -10,6 +10,7 @@
 
 import { CONFIG } from '../core/config.js';
 import { createLogger } from '../core/log.js';
+import { plural } from '../core/format.js';
 import { hydrateImages } from '../label/images.js';
 import { canvasToRaster } from '../label/raster.js';
 import { renderDocument, summariseWarnings } from '../label/render.js';
@@ -32,9 +33,18 @@ const log = createLogger('ui.print-flow');
  * a sensor refusal leaves them available so the press reports that reason.
  *
  * @param {{printing?:boolean, finishing?:boolean, empty?:boolean, offline?:boolean,
- *          reading?:boolean, oversized?:boolean, gate?:{allowed:boolean,reason:string|null,kind:string|null}|null}} state
+ *          reading?:boolean, maintaining?:boolean, oversized?:boolean, gate?:{allowed:boolean,reason:string|null,kind:string|null}|null}} state
  */
-export function printButtonState({ printing = false, finishing = false, empty = false, offline = false, reading = false, oversized = false, gate = null } = {}) {
+export function printButtonState({
+  printing = false,
+  finishing = false,
+  empty = false,
+  offline = false,
+  reading = false,
+  maintaining = false,
+  oversized = false,
+  gate = null,
+} = {}) {
   if (finishing) {
     // The outcome is settled; only the device refresh is left. Nothing on the
     // wire can be cancelled, so the control must not offer Cancel.
@@ -75,16 +85,34 @@ export function printButtonState({ printing = false, finishing = false, empty = 
       ? 'Show at least one element before printing'
       : reading
         ? 'Wait for the device info read to finish'
-        : oversized
-          ? 'The label is larger than the printer; it will be shortened to fit'
-          : '';
+        : maintaining
+          ? 'Wait for the printer command to finish'
+          : oversized
+            ? 'The label is larger than the printer; it will be shortened to fit'
+            : '';
   return {
-    disabled: Boolean(blocked) || empty || reading,
+    disabled: Boolean(blocked) || empty || reading || maintaining,
     title,
-    testDisabled: Boolean(blocked) || reading,
-    testTitle: blocked || (reading ? 'Wait for the device info read to finish' : ''),
+    testDisabled: Boolean(blocked) || reading || maintaining,
+    testTitle: blocked || (reading ? 'Wait for the device info read to finish' : maintaining ? 'Wait for the printer command to finish' : ''),
     supportBlocked: blocked,
   };
+}
+
+/**
+ * The status line a connection refresh may publish, or null.
+ *
+ * A discovery pass runs inside a print job too (the post-print refresh), and
+ * `#status` at that moment is the job's own outcome. A connection line must not
+ * overwrite it: the job status is the one the operator is waiting for, and the
+ * next explicit refresh still publishes the connection line.
+ *
+ * @param {{jobBusy?: boolean, remaining?: number|null}} state
+ * @returns {string|null}
+ */
+export function connectionStatus({ jobBusy = false, remaining = null } = {}) {
+  if (jobBusy) return null;
+  return remaining != null ? `Connected · ${remaining} ${plural(remaining, 'label')} left` : 'Connected';
 }
 
 /**
@@ -126,6 +154,8 @@ export function createPrintFlow({
   let printing = false;
   /** True once the job outcome is settled and its refresh is still running. */
   let finishing = false;
+  /** True once printEnd was committed: the label is printed, not possibly cut. */
+  let committed = false;
   /** True from the first trigger until the flow settles, dialog included. */
   let busy = false;
 
@@ -148,6 +178,7 @@ export function createPrintFlow({
   // keeps "Preparing…" and only the error remains.
   device.events?.on?.('finishing', (info) => {
     if (!printing || !info?.started) return;
+    committed = Boolean(info.committed);
     setFinishing(true);
     setStatus('Finishing…');
   });
@@ -214,7 +245,7 @@ export function createPrintFlow({
       await hydrate(target);
       const { canvas, warnings, hidden = 0 } = render(target, options);
       const warningReport = { warnings, hidden };
-      // Keep the warnings in the stage hint, even when the user cancels here —
+      // Keep the warnings in the stage hint even when the user cancels here,
       // but only for the label on screen: a test print must not overwrite the
       // current label's warning with the test document's.
       if (current) onWarnings(warningReport);
@@ -224,7 +255,7 @@ export function createPrintFlow({
       const capabilities = device.state?.capabilities ?? null;
       const experimental = capabilities?.modelSupport === 'experimental';
       const experimentalText = experimental
-        ? `${capabilities.model ?? 'This printer'} — ${CONFIG.device.printGate.experimental}`
+        ? `${capabilities.model ?? 'This printer'}. ${CONFIG.device.printGate.experimental}`
         : null;
       if (warnings.length) {
         const proceed = await confirm(
@@ -259,6 +290,10 @@ export function createPrintFlow({
       const result = await device.print(raster, {
         copies: target.copies,
         lengthMm: target.lengthMm,
+        // The action-bar test label is a fixed 40 mm diagnostic page. Saving
+        // its length would resize the operator's live label on the next
+        // reconnect, so only the live document records a roll profile.
+        rememberRoll: current,
         onProgress: (done, total) => setProgress(0.1 + (done / total) * 0.8),
         // Printing/Cancel belong to the moment the job really starts. The
         // manager calls this immediately before PrintStart, so a gate refusal
@@ -295,6 +330,7 @@ export function createPrintFlow({
       // returns to "Print", whatever the outcome.
       setFinishing(false);
       setPrinting(false);
+      committed = false;
       busy = false;
       // Never hold the process open just for a cosmetic progress reset.
       setTimeout(() => setProgress(0), 1200)?.unref?.();
@@ -314,11 +350,12 @@ export function createPrintFlow({
     },
     /**
      * The job phase a disconnect has to describe: nothing is on the wire while
-     * preparing, only the finished-job refresh while finishing, and paper may
-     * have moved as soon as the job started.
+     * preparing, paper may have moved as soon as the job started, and only a
+     * job whose printEnd was committed may say the label was printed.
      */
     get phase() {
-      return printing ? 'printing' : busy ? 'preparing' : 'idle';
+      if (finishing && committed) return 'finishing';
+      return printing || finishing ? 'printing' : busy ? 'preparing' : 'idle';
     },
   };
 }

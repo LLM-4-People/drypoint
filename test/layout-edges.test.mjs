@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { openApp, withPage } from './helpers/browser-page.mjs';
+import { delay, openApp, withPage } from './helpers/browser-page.mjs';
 
 const WIDTHS = [901, 1000, 1100];
 
@@ -70,5 +70,108 @@ test('the boot zoom fits the stage from 901 to 1100 px and the 360 px pill stays
     assert.doesNotMatch(pill.shortText, /…/, 'the pill never renders a truncated "Connect p…"');
     assert.equal(pill.aria, 'Connect printer', 'the accessible name is the full action');
     assert.ok(pill.pillWidth >= 44, 'the pill keeps its tap target');
+  });
+});
+
+
+test('a short phone keeps the stage scrollable and the inspector reachable', async (t) => {
+  // P-F2 gives the compact stage a fixed 40vh height so the boot fit cannot
+  // move the rest of the shell. That cap must still hold the whole scaled
+  // canvas, and the form below it must stay reachable on the shortest phones.
+  await withPage(t, async ({ cdp, port }) => {
+    for (const [width, height] of [[375, 667], [360, 640]]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 2, mobile: true });
+      await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 0, left: 0, bottom: 0, right: 0 } });
+      await openApp(cdp, port);
+
+      const state = await cdp.evaluate(`(() => {
+        const stage = document.querySelector('#stageScroll');
+        const canvas = document.querySelector('#labelCanvas');
+        const inspector = document.querySelector('.inspector');
+        const box = stage.getBoundingClientRect();
+        const label = canvas.getBoundingClientRect();
+        const fields = document.querySelectorAll('#panelBody input, #panelBody select, #panelBody textarea').length;
+        window.scrollTo(0, inspector.offsetTop);
+        const reached = inspector.getBoundingClientRect();
+        return {
+          stageHeight: Math.round(box.height),
+          viewportHeight: window.innerHeight,
+          canvasInside: label.top >= box.top - 1 && label.bottom <= box.bottom + 1,
+          canvasWidthInside: label.width <= stage.clientWidth + 1,
+          clipsSideways: stage.scrollWidth - stage.clientWidth,
+          pageScrolls: document.documentElement.scrollHeight > window.innerHeight,
+          fields,
+          reachedTop: Math.round(reached.top),
+          reachedBottom: Math.round(reached.bottom),
+        };
+      })()`);
+
+      const label = `${width}x${height}`;
+      assert.ok(state.stageHeight >= Math.round(state.viewportHeight * 0.4) - 2, `${label}: the 40vh stage keeps its height (${state.stageHeight})`);
+      assert.ok(state.stageHeight <= Math.round(state.viewportHeight * 0.4) + 2, `${label}: the stage is not content-sized (${state.stageHeight})`);
+      assert.equal(state.canvasInside, true, `${label}: the fitted canvas is wholly inside the stage`);
+      assert.equal(state.canvasWidthInside, true, `${label}: the canvas is not clipped sideways`);
+      assert.ok(state.clipsSideways <= 1, `${label}: the stage does not scroll sideways (${state.clipsSideways})`);
+      assert.equal(state.pageScrolls, true, `${label}: the page still scrolls to the panels`);
+      assert.ok(state.fields > 0, `${label}: the design fields mounted`);
+      assert.ok(state.reachedTop >= 0 && state.reachedTop < state.viewportHeight, `${label}: the inspector scrolls into reach (top ${state.reachedTop})`);
+      assert.ok(state.reachedBottom > 0, `${label}: the inspector is not collapsed (bottom ${state.reachedBottom})`);
+    }
+  });
+});
+
+
+test('the compact stage keeps its height when the label zoom changes', async (t) => {
+  // The fixed 40vh stage is what keeps first-load layout independent of the
+  // canvas: a content-capped stage collapsed when the fit shrank the label, and
+  // an early first paint then moved the whole shell. Zooming out is the same
+  // dependency in miniature.
+  await withPage(t, async ({ cdp, port }) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 412, height: 823, deviceScaleFactor: 2, mobile: true });
+    await openApp(cdp, port);
+    const measure = () => cdp.evaluate(`(() => ({
+      stage: Math.round(document.querySelector('#stageScroll').getBoundingClientRect().height),
+      canvas: Math.round(document.querySelector('#labelCanvas').getBoundingClientRect().height),
+      zoom: document.querySelector('.zoom-value')?.textContent ?? '',
+    }))()`);
+    const before = await measure();
+    await cdp.evaluate(`(() => {
+      const out = document.querySelector('[aria-label="Zoom out"]');
+      for (let index = 0; index < 3; index++) out.click();
+    })()`);
+    await delay(150);
+    const after = await measure();
+
+    assert.ok(after.canvas < before.canvas, `the label really zoomed out (${before.canvas} -> ${after.canvas})`);
+    assert.notEqual(after.zoom, before.zoom, 'the zoom control reports the new scale');
+    assert.equal(after.stage, before.stage, `the reserved stage did not collapse (${before.stage} -> ${after.stage})`);
+  });
+});
+
+
+test('a stored deliberate zoom survives a reload above the boot fit', async (t) => {
+  // N4: the boot used to shrink a stored 220% to the 200% fit while the stored
+  // key stayed 2.2, so the screen and the next session disagreed.
+  await withPage(t, async ({ cdp, port }) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await openApp(cdp, port);
+    await cdp.evaluate("localStorage.setItem('drypoint.zoom', '2.2')");
+    await openApp(cdp, port);
+    const state = await cdp.evaluate(`(() => ({
+      shown: document.querySelector('.zoom-value')?.textContent,
+      stored: localStorage.getItem('drypoint.zoom'),
+    }))()`);
+    assert.equal(state.shown, '220%', 'the deliberate scale is painted');
+    assert.equal(state.stored, '2.2', 'and stays the stored value');
+
+    // A first visit takes the automatic fit and does not write the shared key.
+    await cdp.evaluate("localStorage.removeItem('drypoint.zoom')");
+    await openApp(cdp, port);
+    const fresh = await cdp.evaluate(`(() => ({
+      shown: document.querySelector('.zoom-value')?.textContent,
+      stored: localStorage.getItem('drypoint.zoom'),
+    }))()`);
+    assert.equal(fresh.stored, null, 'an automatic boot fit is never persisted');
+    assert.match(fresh.shown, /^\d+%$/, 'the first view still has a scale');
   });
 });

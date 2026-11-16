@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/core/config.js';
 import {
   IMAGE_SOURCE_LIMIT,
+  sourceBudgetProblem,
   createVisibleImageHydrator,
+  documentSourceChars,
+  documentSourceBudgetMessage,
   forgetImage,
   getImage,
   hydrateImages,
@@ -200,4 +203,79 @@ test('the editor refuses the 17th distinct image before insertion with the print
     'reusing an existing source does not consume a new slot'
   );
   assert.deepEqual(imageSources(editor.document).slice(0, IMAGE_SOURCE_LIMIT), sources);
+});
+
+/* ---------------- the one source measurement (A-F1) ---------------- */
+
+test('imageSources can exclude the element an edit replaces', () => {
+  const document = {
+    elements: [
+      { id: 'a', type: 'image', src: 'shared.png' },
+      { id: 'b', type: 'image', src: 'shared.png' },
+      { id: 'c', type: 'text', text: 'not an image' },
+      { id: 'd', type: 'image', src: 'other.png' },
+    ],
+  };
+  assert.deepEqual(imageSources(document), ['shared.png', 'other.png']);
+  assert.deepEqual(imageSources(document, { excludeId: 'a' }), ['shared.png', 'other.png'], 'b still uses it');
+  assert.deepEqual(imageSources(document, { excludeId: 'b' }), ['shared.png', 'other.png']);
+  assert.deepEqual(imageSources(document, { excludeId: 'd' }), ['shared.png']);
+  assert.deepEqual(imageSources(document, { excludeId: 'missing' }), ['shared.png', 'other.png']);
+});
+
+test('documentSourceChars counts every occurrence, not distinct sources', () => {
+  const document = {
+    elements: [
+      { type: 'image', src: 'aaa' },
+      { type: 'image', src: 'aaa' },
+      { type: 'image', src: '' },
+      { type: 'text', text: 'ignored' },
+    ],
+  };
+  assert.equal(documentSourceChars(document), 6, 'the serialised label repeats the source');
+  assert.equal(documentSourceChars({ elements: [] }), 0);
+  assert.equal(documentSourceChars(null), 0);
+  assert.match(documentSourceBudgetMessage(64_000_001), /64000001 characters of image data/);
+  assert.match(documentSourceBudgetMessage(64_000_001), /import or save/);
+});
+
+/* ---------------- the one source-budget decision (B-core-F2/F6) ---------------- */
+
+test('one decision covers the distinct count and the image-text budget', () => {
+  const seventeen = { elements: Array.from({ length: 17 }, (_, index) => ({ type: 'image', src: `decision-${index}.png` })) };
+  const problem = sourceBudgetProblem(seventeen, { action: 'importing this label' });
+  assert.match(problem, /this one uses 17/);
+  assert.match(problem, /importing this label/);
+
+  const sixteen = { elements: seventeen.elements.slice(0, 16) };
+  assert.equal(sourceBudgetProblem(sixteen, { action: 'importing this label' }), null, '16 is legal');
+
+  // The character budget is the second fact, with the boundary's wording.
+  const src = 'a'.repeat(CONFIG.bounds.maxSrcChars);
+  // Sixteen distinct sources plus one repeated occurrence: inside the distinct
+  // cap, over the character budget.
+  const chars = { elements: Array.from({ length: CONFIG.image.cacheLimit + 1 }, (_, index) => ({ type: 'image', src: index < CONFIG.image.cacheLimit ? `${src}${index}` : `${src}0` })) };
+  assert.equal(imageSources(chars).length, CONFIG.image.cacheLimit, 'the fixture is inside the distinct cap');
+  assert.match(sourceBudgetProblem(chars, { action: 'exporting this label' }), /characters of image data/);
+  assert.match(sourceBudgetProblem(chars, { refusal: true }), /Adding this image would give the label/);
+  assert.match(sourceBudgetProblem(chars, { action: 'exporting this label' }), /import or save/);
+});
+
+test('a new document revision clears the one-attempt memory', () => {
+  // K-F11: the hydrator attempts each source once per revision. Without the
+  // clear, a revision that re-references a source still decoding (or refused
+  // and still within the cache) would never be attempted again: the 17th
+  // refused image path depends on the next revision being fresh.
+  let resolveDecode;
+  const decode = () => new Promise((resolve) => { resolveDecode = resolve; });
+  const hydrate = createVisibleImageHydrator({ decode, state: () => 'missing' });
+  const first = { elements: [{ type: 'image', src: 'revision.png' }] };
+
+  assert.equal(hydrate(first), 1, 'the first revision starts the decode');
+  assert.equal(hydrate(first), 0, 'the same revision is never decoded twice');
+
+  const second = { elements: [{ type: 'image', src: 'revision.png' }] };
+  assert.equal(hydrate(second), 1, 'a new revision clears the attempt memory');
+  assert.equal(hydrate(second), 0, 'and the new revision is attempted only once');
+  resolveDecode();
 });

@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         A question is welcome here. Please do not paste a printer serial, a
-        Bluetooth address or a home directory path — see
+        Bluetooth address or a home directory path: see
         [SUPPORT.md](https://github.com/LLM-4-People/drypoint/blob/main/SUPPORT.md) for what to redact.
   - type: textarea
     id: question
@@ -27,7 +27,7 @@ body:
     attributes:
       label: Setup
       description: Build (web app or APK), version, OS/browser and printer model.
-      placeholder: Web app 1.0.0, Windows 11, Chrome 141, D110_M
+      placeholder: Web app <release tag>, Windows 11, Chrome 141, D110_M
     validations:
       required: false
   - type: checkboxes

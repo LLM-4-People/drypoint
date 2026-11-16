@@ -3,8 +3,8 @@
  * Smoke-test a Pages deployment: the document root and every file the service
  * worker precaches, each bounded-retried until it answers 200.
  *
- * The file list comes from `assets/precache.js` — the generated manifest the
- * worker itself installs — so a deployment that forgets one file fails here
+ * The file list comes from `assets/precache.js` (the generated manifest the
+ * worker itself installs), so a deployment that forgets one file fails here
  * instead of failing on a user's phone. Four hand-picked URLs used to be
  * enough to pass while the list grew to sixty-four.
  *
@@ -12,18 +12,34 @@
  *   node scripts/smoke-pages.mjs --base https://host/drypoint/ [--cache-bust <id>]
  */
 
-import { readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
 
 import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
+import { contentTypeEssence, contentTypeProblem } from './lib/content-types.mjs';
+import { OUTPUT, parseManifest, readManifest } from './precache.mjs';
 
 export const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
-export const PRECACHE_FILE = 'assets/precache.js';
+export const PRECACHE_FILE = OUTPUT;
 
 /** The document root. A deployment is only alive if this answers. */
 export const ROOT_PATH = '/';
+
+/**
+ * Files a Pages deployment must serve that the precache manifest cannot name.
+ *
+ * `sw.js` is registered from the document, not precached by itself;
+ * `assets/precache.js` is the manifest the worker imports; `404.html` is the
+ * host's static fallback and is never part of a successful navigation. They
+ * ride beside the app, so a deployment can lose one and still pass the
+ * precache list. This is a different distribution from `DISTRIBUTION_FILES`,
+ * which is the licence/notices list every artifact carries.
+ *
+ * `.nojekyll` is deliberately absent: it is an empty host control marker, not
+ * app content, and a 200 for it proves nothing about the deployment.
+ */
+export const SITE_ONLY_FILES = Object.freeze(['sw.js', 'assets/precache.js', '404.html']);
 
 /**
  * The one file whose content type is part of the contract: a manifest served as
@@ -33,15 +49,20 @@ export const ROOT_PATH = '/';
 export const MANIFEST_PATH = '/manifest.webmanifest';
 export const MANIFEST_TYPE = 'application/manifest+json';
 
+/** The build stamp the worker installs with. */
+export function workerBuild(source) {
+  const match = /const BUILD = '([0-9a-f]+)';/.exec(String(source));
+  if (!match) throw new Error('sw.js has no BUILD stamp');
+  return match[1];
+}
+
 /** Every URL a deployment must answer, sorted, duplicates removed. */
 export async function smokePaths({ root = ROOT } = {}) {
-  const source = await readFile(join(root, PRECACHE_FILE), 'utf8');
-  const sandbox = { self: {} };
-  vm.runInNewContext(source, sandbox, { filename: PRECACHE_FILE });
-  const files = sandbox.self?.__PRECACHE?.files;
-  if (!Array.isArray(files) || files.length === 0) throw new Error(`${PRECACHE_FILE} has no file list`);
+  const manifest = await readManifest(root);
+  const files = manifest.files;
   const paths = new Set([ROOT_PATH]);
   for (const file of files) paths.add(file.startsWith('/') ? file : `/${file}`);
+  for (const file of SITE_ONLY_FILES) paths.add(`/${file}`);
   // The licence and notices ride beside the app, not inside the precache
   // manifest, but a deployment that forgets them is incomplete. One list owns
   // both distributions.
@@ -58,14 +79,102 @@ export async function smokePaths({ root = ROOT } = {}) {
  */
 export function probeMethod(path) {
   const noticePath = DISTRIBUTION_FILES.some((file) => path === `/${file}`);
-  return path === MANIFEST_PATH || noticePath ? 'GET' : 'HEAD';
+  const siteFile = SITE_ONLY_FILES.some((file) => path === `/${file}`);
+  // The manifest, the notices and the deployment-only JS/HTML are read for
+  // their body or their type; a binary asset only has to answer.
+  return path === MANIFEST_PATH || noticePath || siteFile ? 'GET' : 'HEAD';
 }
 
 /** Why a Content-Type cannot be the manifest, or null. */
 export function manifestTypeProblem(contentType) {
-  const essence = String(contentType ?? '').split(';')[0].trim().toLowerCase();
+  const essence = contentTypeEssence(contentType);
   if (!essence) return 'the response has no content type';
   return essence === MANIFEST_TYPE ? null : `the manifest is served as "${essence}", not ${MANIFEST_TYPE}`;
+}
+
+/** One GET against the deployment, with a redirect refused at the boundary. */
+async function deployedResponse(base, path, { query = '', fetchImpl = fetch } = {}) {
+  const url = `${base.replace(/\/+$/, '')}${path}${query}`;
+  const response = await fetchImpl(url, { method: 'GET', cache: 'no-store', redirect: 'manual' });
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers?.get?.('location') ?? '';
+    throw new Error(`${url} redirected${location ? ` to ${location}` : ''}; a deployment must serve the file at its own path`);
+  }
+  if (response.status !== 200) throw new Error(`${url} answered ${response.status}`);
+  return response;
+}
+
+async function deployedText(base, path, options) {
+  return (await deployedResponse(base, path, options)).text();
+}
+
+async function deployedBytes(base, path, options) {
+  return Buffer.from(await (await deployedResponse(base, path, options)).arrayBuffer());
+}
+
+/**
+ * Prove the deployment is this build, not only a set of URLs that answer:
+ * the deployed manifest and worker stamp must agree (and, when known, the
+ * checkout's version), and every precached byte must match its manifest
+ * digest. A same-path redirect or a torn/rewritten file fails here even when
+ * the status and content type look right.
+ */
+export async function verifyDeployment(base, { expectedVersion = null, query = '', fetchImpl = fetch } = {}) {
+  const manifest = parseManifest(
+    await deployedText(base, `/${PRECACHE_FILE}`, { query, fetchImpl }),
+    `${base.replace(/\/+$/, '')}/${PRECACHE_FILE}`
+  );
+  const build = workerBuild(await deployedText(base, '/sw.js', { query, fetchImpl }));
+  if (manifest.version !== build) {
+    throw new Error(`the deployed worker BUILD ${build} does not match the manifest version ${manifest.version}`);
+  }
+  if (expectedVersion && manifest.version !== expectedVersion) {
+    throw new Error(`the deployed manifest version ${manifest.version} is not this build's ${expectedVersion}`);
+  }
+  for (const file of manifest.files) {
+    const path = file.startsWith('/') ? file : `/${file}`;
+    const body = await deployedBytes(base, path, { query, fetchImpl });
+    const digest = createHash('sha256').update(body).digest('hex');
+    if (digest !== manifest.digests[file]) {
+      throw new Error(`${path}: deployed content ${digest} does not match the manifest digest ${manifest.digests[file]}`);
+    }
+  }
+  return { version: manifest.version, files: manifest.files.length };
+}
+
+/**
+ * The one deployment check: fetch every required URL and refuse a response
+ * whose content type contradicts the file, through the same decision the
+ * worker applies to a precache fetch. The manifest keeps its stricter
+ * installability rule on top.
+ *
+ * @param {string} base absolute deployment URL
+ * @param {object} [options]
+ * @returns {Promise<Array<{path: string, status: number}>>} the probed URLs
+ */
+export async function checkDeployment(
+  base,
+  { paths, query = '', attempts, delayMs, fetchImpl, expectedVersion = null, verify = true } = {}
+) {
+  const urls = paths ?? (await smokePaths());
+  const results = [];
+  for (const path of urls) {
+    const options = {};
+    if (attempts !== undefined) options.attempts = attempts;
+    if (delayMs !== undefined) options.delayMs = delayMs;
+    if (fetchImpl !== undefined) options.fetchImpl = fetchImpl;
+    const result = await probe(base, path, { ...options, query });
+    if (path === MANIFEST_PATH) {
+      const problem = manifestTypeProblem(result.contentType);
+      if (problem) throw new Error(`${problem} (${base.replace(/\/+$/, '')}${path})`);
+    } else {
+      const problem = contentTypeProblem(path, result.contentType);
+      if (problem) throw new Error(`${path}: ${problem} (${base.replace(/\/+$/, '')}${path})`);
+    }
+    results.push({ path, status: result.status });
+  }
+  if (verify) await verifyDeployment(base, { expectedVersion, query, fetchImpl });
+  return results;
 }
 
 /**
@@ -92,7 +201,15 @@ export async function probe(
   let last = 'no attempt was made';
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const response = await fetchImpl(url, { method, cache: 'no-store' });
+      const response = await fetchImpl(url, { method, cache: 'no-store', redirect: 'manual' });
+      if (response.status >= 300 && response.status < 400) {
+        // A redirect is deterministic, not a CDN lag: the file must exist at
+        // its own path. Retrying would only hide the rewrite.
+        const location = response.headers?.get?.('location') ?? '';
+        const error = new Error(`${url} redirected${location ? ` to ${location}` : ''}; a deployment must serve the file at its own path`);
+        error.name = 'DeploymentRedirectError';
+        throw error;
+      }
       const contentType = response.headers?.get?.('content-type') ?? null;
       const contentLength = Number(response.headers?.get?.('content-length'));
       if (response.status === 200) {
@@ -100,6 +217,7 @@ export async function probe(
       }
       last = `answered ${response.status}`;
     } catch (error) {
+      if (error.name === 'DeploymentRedirectError') throw error;
       last = error.message;
     }
     if (attempt < attempts) await sleep(delayMs);
@@ -129,19 +247,16 @@ async function main(argv) {
     return 2;
   }
   try {
+    const local = await readManifest(ROOT);
     const paths = await smokePaths();
     // One cache-busting query for every URL: the CDN can answer the previous
     // build's copy of a file that changed in this deployment.
     const query = options.cacheBust ? `?smoke=${encodeURIComponent(options.cacheBust)}` : '';
-    for (const path of paths) {
-      const result = await probe(options.base, path, { query });
-      if (path === MANIFEST_PATH) {
-        const problem = manifestTypeProblem(result.contentType);
-        if (problem) throw new Error(`${problem} (${options.base}${path})`);
-      }
-      console.log(`200 ${options.base.replace(/\/+$/, '')}${path}${query ? ` ${query}` : ''}`);
+    const results = await checkDeployment(options.base, { paths, query, expectedVersion: local.version });
+    for (const result of results) {
+      console.log(`200 ${options.base.replace(/\/+$/, '')}${result.path}${query ? ` ${query}` : ''}`);
     }
-    console.log(`smoke: ${paths.length} URLs answered 200`);
+    console.log(`smoke: ${results.length} URLs answered 200`);
     return 0;
   } catch (error) {
     console.error(`smoke: ${error.message}`);

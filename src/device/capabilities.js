@@ -4,18 +4,11 @@
  */
 
 import { CONFIG } from '../core/config.js';
-import { maxLengthFor, pitchFor } from '../core/geometry.js';
+import { maxLengthFor, pitchFor, usableDpi } from '../core/geometry.js';
 import { modelFor } from '../protocol/models.js';
 
 
 const reported = (value) => value !== null && value !== undefined;
-
-/**
- * A reported resolution is usable only inside the supported printer range.
- * A hostile `0xFFFF` would otherwise become 2580 dots/mm and a 516k-row
- * raster for a 200 mm label; an invalid report is treated as absent.
- */
-const usableDpi = (value) => Number.isFinite(value) && value > 0 && value <= CONFIG.geometry.maxDpi;
 
 /** Human names for the `source` groups, so the UI never prints internal keys. */
 export const CAPABILITY_GROUP_LABELS = Object.freeze({
@@ -81,7 +74,7 @@ export function describeDeviceStatus(state = {}) {
       shortLabel,
       title: `Open printer controls${transport}`,
       // The accessible name contains the visible text (WCAG 2.5.3).
-      ariaLabel: `${label} — open printer controls`,
+      ariaLabel: `${label}: open printer controls`,
       panelLabel: 'Connected',
     };
   }
@@ -138,6 +131,10 @@ export function emptyCapabilities() {
     /** 'reported' when the printer answered, 'default' when the value is a guess. */
     source: {
       model: 'default',
+      // The gate's two geometry facts are marked separately so a refusal can
+      // name the one the printer withheld. `geometry` is the combined claim.
+      headWidth: 'default',
+      dpi: 'default',
       geometry: 'default',
       density: 'default',
       labelType: 'default',
@@ -200,11 +197,19 @@ export function mergeCapabilities({ heartbeat, advanced, capabilities, statusDat
 
   const source = {
     model: reported(info.model) ? 'reported' : prior.source.model,
-    // The gate's "reported" fact is the head width plus a usable resolution:
-    // a known dpi with a fallback 96-dot head is still a guessed label width,
-    // and a hostile dpi leaves the pitch unknown even when the head width was
-    // reported.
-    geometry: invalidDpi ? 'default' : reportedHeadWidth !== null ? 'reported' : prior.source.geometry,
+    // The gate's "reported" fact is the head width *and* a usable resolution.
+    // A head-only frame has no pitch: the label size would be a guess, so it
+    // must not claim to be reported and the gate must refuse to print. A
+    // previously reported dpi counts (it is the same session's printer), and a
+    // hostile dpi stays a default even with a usable head.
+    headWidth: reportedHeadWidth !== null ? 'reported' : prior.source.headWidth,
+    dpi: invalidDpi ? 'default' : reportedDpi !== null ? 'reported' : prior.source.dpi,
+    geometry:
+      invalidDpi || dpi === null
+        ? 'default'
+        : reportedHeadWidth !== null
+          ? 'reported'
+          : prior.source.geometry,
     density: reported(capabilities?.densityRange) || reported(info.density) ? 'reported' : prior.source.density,
     labelType: capabilities?.labelTypes?.length || reported(info.labelType) ? 'reported' : prior.source.labelType,
     battery: battery ? 'reported' : prior.source.battery,
@@ -319,12 +324,12 @@ export function autoShutdownOptions(capabilities) {
 /**
  * The paper-moving commands and the words a sensor refusal uses for each one.
  * The gate owns the sentence; a command names its action so a feed refusal
- * cannot claim "nothing was printed".
+ * cannot claim "nothing was printed". Only the actions this app can actually
+ * command exist here: an unused `advance` entry was dead configuration.
  */
-export const PAPER_ACTIONS = Object.freeze({
+const PAPER_ACTIONS = Object.freeze({
   print: Object.freeze({ verb: 'print', doing: 'printing', done: 'printed' }),
   feed: Object.freeze({ verb: 'feed', doing: 'feeding', done: 'fed' }),
-  advance: Object.freeze({ verb: 'advance', doing: 'advancing', done: 'advanced' }),
 });
 
 /**
@@ -340,7 +345,7 @@ export const PAPER_ACTIONS = Object.freeze({
  * capability object blocks, it never throws.
  *
  * @param {object|null|undefined} capabilities
- * @param {{requiresPaper?: boolean, action?: keyof typeof PAPER_ACTIONS}} [options]
+ * @param {{requiresPaper?: boolean, action?: 'print'|'feed'}} [options]
  * @returns {{allowed: boolean, reason: string|null, kind: 'model'|'geometry'|'sensor'|null}}
  */
 export function supportGate(capabilities, { requiresPaper = true, action = 'print' } = {}) {
@@ -351,7 +356,21 @@ export function supportGate(capabilities, { requiresPaper = true, action = 'prin
     return blocked(`${capabilities?.model ?? 'This printer'} is not supported. ${CONFIG.device.printGate.unsupported}`, 'model');
   }
   if (!capabilities?.model || support === 'unknown') return blocked(CONFIG.device.printGate.unknownModel, 'model');
-  if (capabilities?.source?.geometry !== 'reported') return blocked(CONFIG.device.printGate.guessedGeometry, 'geometry');
+  if (capabilities?.source?.geometry !== 'reported') {
+    // Name the fact the printer withheld. A dpi-only report is not a missing
+    // resolution, and a head-only report is not a missing head width; only the
+    // both-missing case uses the general sentence.
+    const marks = capabilities?.source ?? {};
+    const headMissing = marks.headWidth !== 'reported';
+    const dpiMissing = marks.dpi !== 'reported';
+    const reason =
+      headMissing && dpiMissing
+        ? CONFIG.device.printGate.guessedGeometry
+        : headMissing
+          ? CONFIG.device.printGate.missingHeadWidth
+          : CONFIG.device.printGate.missingResolution;
+    return blocked(reason, 'geometry');
+  }
   if (!requiresPaper) return allowed;
   const words = PAPER_ACTIONS[action] ?? PAPER_ACTIONS.print;
   const sensors = capabilities?.sensors;

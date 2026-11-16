@@ -5,6 +5,7 @@ import {
   clampZoom,
   fitScale,
   fitZoom,
+  initialZoom,
   placementPlan,
   shouldClampZoom,
   stepZoom,
@@ -127,4 +128,28 @@ test('a deliberate user zoom survives a resize; an automatic fit and a breakpoin
   assert.equal(shouldClampZoom({ zoom: 1.7, autoZoom: 1.1, breakpointChanged: false }), false, 'user zoom survives');
   assert.equal(shouldClampZoom({ zoom: 1.1, autoZoom: 1.1, breakpointChanged: false }), true, 'the automatic fit follows');
   assert.equal(shouldClampZoom({ zoom: 1.7, autoZoom: 1.1, breakpointChanged: true }), true, 'a breakpoint refits');
+});
+
+
+test('a stored deliberate zoom is the first scale, not the boot fit', () => {
+  // N4: a stored 220% at a viewport whose fit is 200% must reload at 220%.
+  assert.deepEqual(initialZoom({ stored: 2.2, fit: 2, compact: false }), { value: 2.2, auto: false });
+  // The manual bounds follow the layout: the compact floor is lower.
+  assert.deepEqual(initialZoom({ stored: 0.1, fit: 2, compact: true }), {
+    value: CONFIG.ui.previewMinScale,
+    auto: false,
+  });
+  assert.deepEqual(initialZoom({ stored: 0.1, fit: 2, compact: false }), { value: CONFIG.ui.zoom.min, auto: false });
+  assert.deepEqual(initialZoom({ stored: 99, fit: 2, compact: false }), { value: CONFIG.ui.zoom.max, auto: false });
+});
+
+test('a first visit takes the automatic fit and never enlarges past the default', () => {
+  assert.deepEqual(initialZoom({ fit: 1.4 }), { value: 1.4, auto: true });
+  assert.deepEqual(initialZoom({ fit: 0.2 }), { value: 0.2, auto: true }, 'the fit owns its own floor');
+  assert.deepEqual(initialZoom({ fit: 4 }), { value: CONFIG.ui.zoom.default, auto: false });
+  assert.deepEqual(initialZoom({}), { value: CONFIG.ui.zoom.default, auto: false });
+  assert.deepEqual(initialZoom({ stored: null, fit: null, compact: true }), {
+    value: CONFIG.ui.zoom.default,
+    auto: false,
+  });
 });

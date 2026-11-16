@@ -11,8 +11,8 @@ import { createLogger } from '../../core/log.js';
 const log = createLogger('transport.serial');
 
 /**
- * Reduce any form the platform reports a Bluetooth service class ID in — a
- * 16-bit number, a short hex string, or the full 128-bit UUID — to the eight
+ * Reduce any form the platform reports a Bluetooth service class ID in (a
+ * 16-bit number, a short hex string, or the full 128-bit UUID) to the eight
  * hex digits every comparison uses. Chrome returns a number for a mapped SPP
  * port and the UUID string for a custom one, so both forms must match.
  */
@@ -30,6 +30,33 @@ export function canonicalSpp(id) {
 const SPP_SERVICE_ID = canonicalSpp(CONFIG.transport.sppService);
 const SPP_SHORT_ID = Number.parseInt(SPP_SERVICE_ID, 16);
 
+/**
+ * The one actionable wording for a refused serial permission.
+ *
+ * Chrome reports a blocked or revoked serial permission as a `SecurityError`
+ * whose message is only "Permission denied". The operator cannot act on that:
+ * the fix is a site setting, not a retry.
+ */
+export const SERIAL_PERMISSION_HINT = 'Allow serial access for this site in the browser’s site settings, then reconnect.';
+
+/**
+ * Add the concrete next step to a permission refusal, and leave every other
+ * failure untouched (a cancelled picker is a `NotFoundError`, not a denial).
+ * @template T
+ * @param {T} error
+ * @returns {T|Error}
+ */
+function withPermissionHint(error) {
+  const name = error?.name ?? '';
+  const denied = name === 'SecurityError' || name === 'NotAllowedError' || /permission denied/i.test(error?.message ?? '');
+  if (!denied) return error;
+  const message = error?.message ? `${error.message}. ${SERIAL_PERMISSION_HINT}` : SERIAL_PERMISSION_HINT;
+  const hinted = new Error(message);
+  hinted.name = name || 'SecurityError';
+  hinted.cause = error;
+  return hinted;
+}
+
 export class SerialTransport {
   kind = 'serial';
   #port = null;
@@ -45,7 +72,15 @@ export class SerialTransport {
 
   static async granted() {
     if (!SerialTransport.available()) return null;
-    const ports = await navigator.serial.getPorts();
+    let ports;
+    try {
+      // This is the connect path from the header pill. A blocked site
+      // permission surfaces here, before any picker, so it needs the same
+      // actionable wording request() and open() add.
+      ports = await navigator.serial.getPorts();
+    } catch (error) {
+      throw withPermissionHint(error);
+    }
     // Only a port that reports the SPP service is this printer. Falling back to
     // an arbitrary authorised port would retry an unusable one forever and
     // never offer the picker; null makes the caller ask instead.
@@ -62,9 +97,13 @@ export class SerialTransport {
     } catch (error) {
       if (error.name === 'NotFoundError') {
         log.warn('no SPP device matched the filter, falling back to the full port list');
-        return navigator.serial.requestPort();
+        try {
+          return await navigator.serial.requestPort();
+        } catch (retryError) {
+          throw withPermissionHint(retryError);
+        }
       }
-      throw error;
+      throw withPermissionHint(error);
     }
   }
 
@@ -78,7 +117,13 @@ export class SerialTransport {
 
   async open(port) {
     this.#port = port;
-    await port.open({ baudRate: CONFIG.transport.serialBaudRate, bufferSize: CONFIG.transport.serialBufferSize });
+    try {
+      await port.open({ baudRate: CONFIG.transport.serialBaudRate, bufferSize: CONFIG.transport.serialBufferSize });
+    } catch (error) {
+      // A revoked permission surfaces here too, after a port was chosen: the
+      // same concrete next step applies.
+      throw withPermissionHint(error);
+    }
     this.#writer = port.writable.getWriter();
     this.#reader = port.readable.getReader();
     this.#readLoop();

@@ -21,6 +21,8 @@ export function createStore(initialState, options = {}) {
     onChange = null,
     onError = null,
     onPersist = null,
+    /** A write may be vetoed while the operator has an unreadable value. */
+    canPersist = () => true,
     /** Raw stores keep their own shape; the version envelope is opt-out only. */
     envelope = true,
   } = options;
@@ -30,20 +32,39 @@ export function createStore(initialState, options = {}) {
   /** True once a write is owed; cleared only by a successful persist. */
   let dirty = false;
 
+  /**
+   * Read the stored value.
+   *
+   * The raw string is handed to `onError` on every failure: a parse error, a
+   * rejected shape or a failed hydrate. The caller needs it to keep an
+   * unreadable label intact instead of replacing it with a fresh one.
+   */
   function load() {
     if (!key || typeof localStorage === 'undefined') return initialState;
+    let raw = null;
     try {
-      const raw = localStorage.getItem(key);
+      raw = localStorage.getItem(key);
       if (!raw) return initialState;
       const parsed = JSON.parse(raw);
       if (!envelope) return hydrate ? hydrate(parsed, version) : parsed;
-      if (!parsed || typeof parsed !== 'object') return initialState;
+      // A scalar, null or array payload is not an envelope. It is a load
+      // failure like a parse error, not a silent reset: the caller keeps the
+      // raw text (the document store quarantines it) or reports the notice
+      // (settings), and the next write replaces it only through that owner.
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        onError?.(new Error('the stored value is not a JSON object'), 'load', { raw });
+        return initialState;
+      }
       // A version-matching payload is still untrusted: a hand-edited or
       // partially written value must be normalised, never merged raw.
-      if (hydrate) return { ...initialState, ...hydrate(parsed.data ?? {}, parsed.version) };
+      // `data` is passed through unchanged: a null or absent key is a corrupt
+      // payload, not an empty object. The hydrate owner reports it and the
+      // store writes clean defaults; `?? {}` here would make that guard
+      // unreachable and silently keep the corrupt value on disk.
+      if (hydrate) return { ...initialState, ...hydrate(parsed.data, parsed.version) };
       return parsed.version === version ? { ...initialState, ...parsed.data } : initialState;
     } catch (error) {
-      onError?.(error, 'load');
+      onError?.(error, 'load', { raw });
       return initialState;
     }
   }
@@ -51,6 +72,10 @@ export function createStore(initialState, options = {}) {
   const persist = key
     ? debounce(() => {
         if (typeof localStorage === 'undefined') return;
+        // The owner may veto a write. An unreadable stored label must survive
+        // edits and reloads until the operator exports or resets it, so the
+        // write is skipped while the veto holds and the state stays dirty.
+        if (!canPersist()) return;
         try {
           localStorage.setItem(key, JSON.stringify(envelope ? { version, data: state } : state));
           dirty = false;

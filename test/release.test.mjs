@@ -68,23 +68,64 @@ test('the release notes keep the historical body and add one commit binding', ()
     'the commit adds exactly one binding line and changes nothing else'
   );
 
-  // Historical regeneration without --commit is byte-neutral for every
-  // section, including the two releases that were published before 1.0.3.
-  for (const version of ['1.0.0', '1.0.1', '1.0.2']) {
-    const historical = releaseNotes({ tag: `v${version}`, version, changelog });
-    assert.equal(
-      historical.body,
-      `${changelogSection(changelog, version)}\n\n---\n\nSigning certificate SHA-256 (\`apksigner verify --print-certs\`): \`${BRAND.androidSigningCertificateSha256}\``,
-      `${version} regenerates without the binding`
-    );
-  }
-
   for (const commit of ['abc', 'A'.repeat(40), 'g'.repeat(40), `${'a'.repeat(39)} `]) {
     assert.throws(
       () => releaseNotes({ tag: `v${pkg.version}`, version: pkg.version, changelog, commit }),
       /commit must be a 40-character lowercase SHA/
     );
   }
+});
+
+test('historical bodies render from the current changelog in their published shape', () => {
+  const v100 = releaseNotes({ tag: 'v1.0.0', version: '1.0.0', changelog });
+  assert.ok(v100.body.startsWith('> **Do not install this build for new work.**'), 'the banner is the first block');
+  assert.ok(v100.body.includes('First public release:'), 'the section follows the banner');
+  assert.doesNotMatch(v100.body, /Signing certificate SHA-256/, 'v1.0.0 was published before the generated footer');
+  assert.ok(v100.body.endsWith('\n'), 'the published body ended with one blank line');
+
+  const v101 = releaseNotes({ tag: 'v1.0.1', version: '1.0.1', changelog });
+  assert.doesNotMatch(v101.body, /was retired before any public install; v1\.0\.1 is signed/, 'the unproven claim is superseded');
+  assert.doesNotMatch(v101.body, /The APK is byte-reproducible: generated ZIP/, 'the rebuild claim is corrected');
+  assert.match(v101.body, /the 1\.0\.0 APK had been downloaded/);
+  assert.match(v101.body, /\*\*Historical note \(added 2026-11-16\)\.\*\*/);
+  assert.doesNotMatch(v101.body, /Signing certificate SHA-256/, 'v1.0.1 was published before the generated footer');
+
+  const v102 = releaseNotes({ tag: 'v1.0.2', version: '1.0.2', changelog });
+  assert.match(v102.body, /^> \*\*Android 1\.0\.2 limitation \(recorded 2026-11-16\)\.\*\*/, 'the dated note is first');
+  assert.doesNotMatch(v102.body, /loads it again on any device/, 'the Android 1.0.2 claim is corrected');
+  assert.doesNotMatch(v102.body, /print refusal reason is visible/, 'the banner claim is narrowed');
+  assert.match(v102.body, /A model or geometry refusal is visible/);
+  assert.match(v102.body, /D110_BROWSER_CONCURRENCY/);
+  assert.match(v102.body, /Signing certificate SHA-256/, '1.0.2 carries the generated footer');
+  assert.doesNotMatch(v102.body, /release-notes:/, 'directives never reach a release body');
+});
+
+test('historical rendering cannot bypass the release version binding', () => {
+  assert.equal(releaseNotes({ tag: 'v1.0.0', version: '1.0.2', changelog, historical: true }).version, '1.0.0');
+  assert.throws(
+    () => releaseNotes({ tag: 'v1.0.2', version: '1.0.2', changelog, historical: true }),
+    /historical notes must precede package\.json version 1\.0\.2/
+  );
+  assert.throws(
+    () => releaseNotes({ tag: 'v1.0.0', version: '1.0.2', changelog, historical: true, commit: 'a'.repeat(40) }),
+    /a historical body never carries a commit binding/
+  );
+});
+
+test('a release-page directive is consumed and can suppress the generated footer', () => {
+  const markdown = [
+    '## [1.0.0] - 2026-01-01',
+    '',
+    '<!-- release-notes: the blockquote below is the banner -->',
+    '> banner',
+    '',
+    '- one',
+    '',
+    '<!-- release-notes: no signing footer; the body predates it -->',
+    '',
+  ].join('\n');
+  assert.equal(changelogSection(markdown, '1.0.0'), '> banner\n\n- one');
+  assert.equal(releaseNotes({ tag: 'v1.0.0', version: '1.0.0', changelog: markdown }).body, '> banner\n\n- one');
 });
 
 test('a tag that is not v<version> is refused', () => {
@@ -137,6 +178,16 @@ test('the command line writes the notes and fails on a wrong tag', async (t) => 
   const historical = join(out, 'historical.md');
   run('--tag', `v${pkg.version}`, '--out', historical);
   assert.doesNotMatch(await readFile(historical, 'utf8'), /Built from tag/, 'regeneration without --commit stays unchanged');
+
+  const old = join(out, 'v1.0.0.md');
+  run('--tag', 'v1.0.0', '--historical', '--out', old);
+  const oldText = await readFile(old, 'utf8');
+  assert.ok(oldText.startsWith('> **Do not install this build for new work.**'));
+  assert.doesNotMatch(oldText, /Signing certificate SHA-256/, 'the historical body keeps its published shape');
+  assert.throws(
+    () => run('--tag', `v${pkg.version}`, '--historical', '--out', join(out, 'current.md')),
+    (error) => error.status === 1 && /must precede package\.json version/.test(error.stderr)
+  );
 
   assert.throws(
     () => run('--tag', `v${pkg.version}`, '--commit', 'abc', '--out', join(out, 'bad.md')),

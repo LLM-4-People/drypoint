@@ -12,11 +12,15 @@ import {
   APK_ENTRY_DATE_TIME,
   apksignerArgs,
   certificateSha256,
+  ensureKeystore,
+  keystoreAction,
   minSdkVersionOf,
   publishApkPair,
   releaseIdentityRequired,
   renderManifest,
   sdkDirs,
+  signingSchemeForMinSdk,
+  signingSchemeOf,
   syncAssets,
   UMASK_WRAPPER,
   versionCodeOf,
@@ -116,7 +120,8 @@ test('the Android manifest requests the BLE permissions the bridge checks', () =
 
 test('the Android build bundles the generated precache list, not a copied file list', () => {
   const script = read('scripts/build-android.mjs');
-  assert.match(script, /__PRECACHE/);
+  assert.match(script, /readManifest/, 'the builder reads the manifest through its owner');
+  assert.doesNotMatch(script, /__PRECACHE/, 'the builder keeps no parser of its own');
   assert.match(script, /'-A', assetsRoot/, 'aapt2 packages the fresh staged assets root');
   assert.doesNotMatch(script, /join\(appDir, 'assets'\)/, 'the source tree is never the package root');
   assert.match(script, /await withStaging\(androidDir, async \(staging\) => \{/, 'the build happens in a scratch directory that is always removed');
@@ -384,6 +389,28 @@ test('a failed build leaves no staging directory', async (t) => {
 
 /* ---------------- version arithmetic and the signing identity ---------------- */
 
+test('a forbidden CI build refuses before writing a keystore password', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'drypoint-keystore-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await assert.rejects(
+    ensureKeystore({ requireKey: true, directory, env: {} }),
+    /never generate one/
+  );
+  assert.deepEqual(await readdir(directory), [], 'the failed run leaves no password file');
+});
+
+test('an existing password file without a password is not overwritten', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'drypoint-keystore-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, 'keystore.properties'), 'keyAlias=drypoint\n');
+  await assert.rejects(ensureKeystore({ directory, env: {} }), /set ANDROID_KEYSTORE_PASSWORD/);
+  assert.equal(
+    await readFile(join(directory, 'keystore.properties'), 'utf8'),
+    'keyAlias=drypoint\n',
+    'the malformed file is left for the operator, not replaced'
+  );
+});
+
 test('the versionCode arithmetic refuses a component that would collide', () => {
   assert.equal(versionCodeOf('1.0.0'), 10000);
   assert.equal(versionCodeOf('1.2.3'), 10203);
@@ -429,6 +456,22 @@ test('the signing schemes follow the manifest minimum', () => {
   const manifest = read('android/AndroidManifest.template.xml');
   assert.equal(minSdkVersionOf(renderManifest(manifest, { versionName: '1.0.0', versionCode: 10000, packageName: 'dev.example.labels' })), 26, 'the manifest owns the minimum');
   assert.throws(() => minSdkVersionOf('<manifest/>'), /no android:minSdkVersion/);
+
+  // One owner for the scheme: changing the manifest minimum changes the answer
+  // the build uses and the answer the sign job reads from dist/signing.json.
+  assert.deepEqual(signingSchemeOf(manifest), { minSdkVersion: 26, v1SigningEnabled: false });
+  const older = manifest.replace('android:minSdkVersion="26"', 'android:minSdkVersion="23"');
+  assert.deepEqual(signingSchemeOf(older), { minSdkVersion: 23, v1SigningEnabled: true });
+  assert.deepEqual(signingSchemeForMinSdk(24), { minSdkVersion: 24, v1SigningEnabled: false });
+  assert.throws(() => signingSchemeForMinSdk('0'), /positive integer/);
+
+  // The sign job consumes that answer; it never spells a second 26/false.
+  const { workflow } = parseWorkflow(read('.github/workflows/release.yml'));
+  const signText = JSON.stringify(workflow.jobs.sign);
+  assert.match(signText, /jq -r \.minSdkVersion dist\/signing\.json/);
+  assert.match(signText, /jq -r \.v1SigningEnabled dist\/signing\.json/);
+  assert.doesNotMatch(signText, /--min-sdk-version 26/);
+  assert.doesNotMatch(signText, /--v1-signing-enabled false/);
 });
 
 test('the release certificate in brand.json is the one the build compares', () => {
@@ -458,15 +501,24 @@ test('the certificate pin applies to a release key and not to a throwaway', () =
   assert.equal(releaseIdentityRequired({ generated: false, env: { ANDROID_ALLOW_TEST_KEY: '1' } }), false);
   assert.equal(releaseIdentityRequired({ generated: false, env: { ANDROID_ALLOW_TEST_KEY: 'no' } }), true, 'any other value keeps the pin');
 
-  // The release build job has no secret and declares the throwaway key; the
-  // privileged sign job re-signs and never opts out of the certificate pin.
+  // CI never invents a key: the unprivileged jobs create one explicitly with
+  // the one shared script before the build.
+  assert.equal(keystoreAction({ exists: false, requireKey: true }), 'fail');
+  assert.equal(keystoreAction({ exists: true, requireKey: true }), 'use');
+  assert.equal(keystoreAction({ exists: false, requireKey: false }), 'generate');
+
   const release = read('.github/workflows/release.yml');
   const { workflow } = parseWorkflow(release);
-  const buildKey = workflow.jobs.build.steps.find((step) => step.env?.ANDROID_ALLOW_TEST_KEY != null);
-  assert.equal(buildKey?.env.ANDROID_ALLOW_TEST_KEY, 'true', 'the unprivileged build declares a throwaway key');
+  const checks = read('.github/workflows/checks.yml');
+  assert.match(checks, /run: node scripts\/ci-keystore\.mjs/, 'the gate calls the one keystore script');
+  assert.match(release, /run: node scripts\/ci-keystore\.mjs/, 'the release build calls the same script');
+  assert.equal((release.match(/ci-keystore\.mjs/g) ?? []).length, 1, 'one call in the build; the sign job has none');
   assert.doesNotMatch(JSON.stringify(workflow.jobs.build), /secrets\./, 'the build cannot read a release secret');
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.build), /ANDROID_ALLOW_TEST_KEY/, 'the script owns the flag, not the workflow');
   assert.doesNotMatch(JSON.stringify(workflow.jobs.sign), /ANDROID_ALLOW_TEST_KEY/, 'the sign job never allows a test key');
-  assert.match(read('.github/workflows/checks.yml'), /ANDROID_ALLOW_TEST_KEY: 'true'/, 'the gate declares its throwaway key');
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.sign), /ci-keystore/, 'the sign job never creates a throwaway key');
+  assert.doesNotMatch(checks, /ci-throwaway-not-a-release-key/, 'the workflow never hardcodes the password');
+  assert.doesNotMatch(release, /ci-throwaway-not-a-release-key/, 'the workflow never hardcodes the password');
 });
 
 test('the APK carries the licence and the notices from the one distribution list', async (t) => {

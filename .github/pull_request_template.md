@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What changed, and why. Link the issue when there is one: Fixes #123 -->
+What changed, and why. Link the issue when there is one: Fixes #123.
 
 ## Target branch
 
@@ -11,12 +11,12 @@
 Paste the output of the commands you actually ran. Do not tick a box for a
 command you did not run.
 
-- [ ] `npm ci` — installs the one dev-only dependency (the workflow policy parser)
-- [ ] `npm run verify` — brand, precache, privacy, tests, docs, workflows
-- [ ] `npm run test:browser` — the measured browser suites (needs Chromium)
-- [ ] `npm run build:android` — the APK still builds and signs
-- [ ] `node scripts/build-pages.mjs` — the Pages tree still stages
-- [ ] Nothing here: <!-- explain why, and what you verified instead -->
+- [ ] `npm ci`: installs the one dev-only dependency (the workflow policy parser)
+- [ ] `npm run verify`: brand, precache, privacy, tests, docs, workflows
+- [ ] `npm run test:browser`: the measured browser suites (needs Chromium)
+- [ ] `npm run build:android`: the APK still builds and signs
+- [ ] `node scripts/build-pages.mjs`: the Pages tree still stages
+- [ ] Nothing here: explain why, and what you verified instead.
 
 ```
 paste the relevant output here
@@ -25,7 +25,7 @@ paste the relevant output here
 ## Breaking change
 
 - [ ] No.
-- [ ] Yes — what breaks, and who has to adapt:
+- [ ] Yes: what breaks, and who has to adapt:
 
 ## Docs and safety
 

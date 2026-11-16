@@ -72,7 +72,10 @@ test('SECURITY states the boundary, the supported line and the private channel',
   assert.match(security, /no analytics, no\s+telemetry/i);
   assert.match(security, /security\/advisories\/new/, 'the reporting channel is the advisory form');
   assert.match(security, /Coordinated disclosure/);
-  assert.match(security, /\| 1\.x \| Yes/);
+  assert.match(security, /\| 1\.x, except 1\.0\.0 \| Yes/);
+  assert.match(security, /\| 1\.0\.0 \| No: do not install it\./);
+  assert.match(security, /retired before any known install/, 'the 1.0.0 install path names the retired key');
+  assert.match(security, /uninstalling it deletes every label/);
   assert.match(security, /signing certificate/);
   assert.match(security, /Out of scope/);
   assert.doesNotMatch(security, /\[INSERT CONTACT METHOD\]/);
@@ -115,7 +118,7 @@ test('CODE_OF_CONDUCT is Contributor Covenant 2.1 with a real contact', () => {
   assert.doesNotMatch(conduct, /\[INSERT CONTACT METHOD\]/);
   assert.doesNotMatch(conduct, /^\+\+\+/m, 'the TOML front matter is not published');
   assert.doesNotMatch(conduct, /^\[[a-z0-9.]+\]:\s/m, 'the link-reference block is inlined, not kept');
-  for (const heading of ['Our Pledge', 'Our Standards', 'Enforcement Responsibilities', 'Scope', 'Enforcement', 'Enforcement Guidelines', 'Attribution']) {
+  for (const heading of ['Our pledge', 'Our standards', 'Enforcement responsibilities', 'Scope', 'Enforcement', 'Enforcement guidelines', 'Attribution']) {
     assert.ok(conduct.includes(`## ${heading}`), `${heading} is present`);
   }
 });
@@ -203,7 +206,8 @@ test('the README is the public front door', () => {
   assert.match(readme, /releases\/latest/, 'the APK download link');
   assert.match(readme, /\*\*D110_M\*\* \| Tested/);
   assert.match(readme, /\*\*D11_H\*\* \| Experimental/);
-  assert.match(readme, /Every other known NIIMBOT model \| Not supported/);
+  assert.match(readme, /Every other id the app recognises \| Not supported/);
+  assert.match(readme, /names 21 ids/, 'the README states the named-refusal scope, not every vendor model');
   assert.match(readme, /not affiliated with NIIMBOT/i);
   assert.match(readme, /## Privacy/);
   assert.match(readme, /No network/);

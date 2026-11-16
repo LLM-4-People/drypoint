@@ -178,6 +178,24 @@ test('a frame whose stroke swallows the box warns instead of vanishing', () => {
   assert.deepEqual(solid.warnings, ['Frame stroke is wider than the box, so it prints as a solid block']);
 });
 
+test('a collapsed frame whose stroke swallows the box paints the whole box', () => {
+  for (const [w, h, strokePx] of [
+    [6, 6, 12],
+    [40, 30, 50],
+    [96, 10, 12],
+  ]) {
+    const { ops, warnings } = renderWithOps(
+      documentWith([createElement(ELEMENT_TYPES.RECT, { x: 0, y: 0, w, h, strokePx })])
+    );
+    assert.deepEqual(warnings, ['Frame stroke is wider than the box, so it prints as a solid block'], `${w}x${h}`);
+    const filled = ops.find(
+      (op) => op.op === 'fillRect' && op.fillStyle === '#000000' && op.x === 0 && op.y === 0 && op.w === w && op.h === h
+    );
+    assert.ok(filled, `${w}x${h} stroke ${strokePx}: the full box is painted`);
+    assert.equal(ops.filter((op) => op.op === 'stroke').length, 0, `${w}x${h}: no degenerate stroke is issued`);
+  }
+});
+
 test('overlapping visible content is reported; a frame around content is not', () => {
   const overlapping = documentWith([
     createElement(ELEMENT_TYPES.TEXT, { name: 'Front', text: 'Hi', x: 4, y: 4, w: 200, h: 60 }),
@@ -278,7 +296,7 @@ test('a symbol below two dots per module is reported with the numbers', () => {
   ]);
 
   const badBarcode = documentWith([createElement(ELEMENT_TYPES.BARCODE, { value: 'café', x: 0, y: 0, w: 200, h: 60 })]);
-  assert.deepEqual(warningsOf(badBarcode), ['Barcode: Code 128 B supports printable ASCII (32–126) only']);
+  assert.deepEqual(warningsOf(badBarcode), ['Barcode: Code 128 B supports printable ASCII (32-126) only']);
 
   const badQr = documentWith([createElement(ELEMENT_TYPES.QR, { value: '', x: 0, y: 0, w: 80, h: 80 })]);
   assert.deepEqual(warningsOf(badQr), ['QR code: QR content is empty']);
@@ -332,7 +350,7 @@ test('every starter template is free of layout warnings at its own length', () =
 });
 
 test('migration notices reach the renderer warnings', () => {
-  const notice = 'The legacy barcode was dropped during migration: Code 128 B supports printable ASCII (32–126) only.';
+  const notice = 'The legacy barcode was dropped during migration: Code 128 B supports printable ASCII (32-126) only.';
   const document = validateDocument({ lengthMm: 40, notices: [notice], elements: [] });
   assert.deepEqual(renderDocument(document).warnings, [notice]);
 });
@@ -548,7 +566,7 @@ test('the HRI strip is excluded from the bar height, so 60 px with a caption war
 
 test('a long symbol needs 15% of its length even when 51 px is satisfied', () => {
   // 20 characters → 255 modules. A 550 px box gives 2 px modules: the drawn
-  // symbol is 510 px, so 15% is 76.5 px — above the 51 px floor.
+  // symbol is 510 px, so 15% is 76.5 px, above the 51 px floor.
   const value = 'ABCDEFGHIJKLMNOPQRST';
   const warnings = warningsOf(
     documentWith([createElement(ELEMENT_TYPES.BARCODE, { value, x: 0, y: 0, w: 550, h: 60, showText: false })], 200)
@@ -738,4 +756,37 @@ test('a dismissed notice is painted by neither the renderer nor the display path
   // confirmation.
   assert.ok(renderDocument(editor.document).warnings.includes(notice));
   assert.equal(renderDocument(editor.documentForDisplay()).warnings.includes(notice), false);
+});
+
+/* ---------------- the raster follows the reported head width (scope) ---------------- */
+
+test('the raster is as wide as the canvas head, never a 96-dot constant', () => {
+  // A wider head must work mechanically before any wider model is promoted:
+  // the encoder takes its width from the canvas height, the stride covers it,
+  // and the transposed dot still lands on the same head position.
+  for (const head of [192, 576]) {
+    const length = 40;
+    const data = new Uint8ClampedArray(length * head * 4).fill(255);
+    // Landscape (x = 7, y = head - 1) is portrait row 7, head dot 0.
+    const p = ((head - 1) * length + 7) * 4;
+    data.fill(0, p, p + 3);
+    const canvas = {
+      width: length,
+      height: head,
+      getContext: () => ({ getImageData: () => ({ data, width: length, height: head }) }),
+    };
+    const raster = canvasToRaster(canvas);
+
+    assert.equal(raster.width, head, `${head}: width is the canvas height`);
+    assert.equal(raster.height, length, `${head}: one row per landscape column`);
+    assert.equal(raster.rows.length, length);
+    assert.equal(raster.rows[0].length, Math.ceil(head / 8), `${head}: the stride covers the whole head`);
+    assert.equal(raster.rows[7][0], 0x80, `${head}: the dot lands on the first head position`);
+    assert.equal(rasterInk(raster), 1, `${head}: exactly one printable dot`);
+    assert.equal(
+      raster.rows.filter((row, index) => index !== 7).every((row) => row.every((byte) => byte === 0)),
+      true,
+      `${head}: no other row carries ink`
+    );
+  }
 });

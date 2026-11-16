@@ -3,20 +3,108 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and the version number follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-`package.json` is the one owner of that number: a release tag must be exactly
-`v<version>` and its notes are copied from the matching section below.
+and tags use the [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+`MAJOR.MINOR.PATCH` shape. The project's actual rule is narrower: patch releases
+carry fixes and small, backward-compatible additions that do not change the
+stored document format (1.0.2 added label export and import); a document-format
+change or a user-visible redesign is a minor release. `package.json` is the one
+owner of that number: a release tag must be exactly `v<version>` and its notes
+are copied from the matching section below by `scripts/release-notes.mjs`.
+
+## [1.0.3] - 2026-11-16
+
+### Fixed
+
+- **Android label import now works.** The 1.0.2 APK filtered its system file
+  picker to images, so **Document → Import label** could not select a label
+  `.json` file. The picker now accepts JSON documents and the imported label is
+  validated before it replaces the open one; the 1.0.2 release notes record
+  that limitation for that build.
+- **A deep in-scope navigation loads its assets.** The document now carries the
+  deployment base, so opening a deep path serves the app shell with its modules
+  and styles instead of 404s. The Pages deployment injects the shared base
+  rule; the Android shell needs none because it always loads the root document.
+- **The desktop layout keeps the action bar on screen.** The top bar, storage
+  alert, workspace and action bar each own a grid row, so hiding the alert no
+  longer pushes the workspace into the flexible row and the Print button below
+  the viewport. The compact phone layout is unchanged.
+- **An unreadable stored label is quarantined, not replaced.** A label whose
+  stored value cannot be parsed is kept as raw bytes behind a banner; edits
+  cannot overwrite it until the operator resets it, and Reset now asks first.
+  A v3 label with no valid element list is quarantined; a v3 label whose
+  geometry has to be bounded loads with a notice. Both report what changed.
+- **A lost link is described honestly.** A disconnect after the page counter
+  proved the copies, but before the printer confirmed the end of the job, says
+  so instead of "may be incomplete"; a disconnect before that proof still says
+  the label may be incomplete.
+- **Malformed settings are reported and reset once.** A stored settings value
+  that cannot be read as an object shows one notice and is replaced with clean
+  defaults; a failed save still leaves the stored value untouched.
+- **A deliberately chosen zoom survives a reload** up to the manual cap, while
+  an automatic fit still clamps to the viewport.
+- **Imported v3 labels say they were rotated.** A portrait v3 label converted
+  to the landscape frame reports the rotation instead of silently moving its
+  elements.
+- **A hostile or oversized import is bounded before it is echoed.** The format
+  name in an import error is a bounded, escaped excerpt, so a one-megabyte
+  value cannot become a one-megabyte message.
+- **The printer gate names the missing fact.** A printer that reports a
+  resolution but no head width says the head width is missing, a printer that
+  reports a head width but no usable resolution says the resolution is missing,
+  and only a printer missing both gets the generic message.
+- **Six more printer ids are named and refused.** B18, B18S, N1, H1, H1S and
+  D101 are now in the model table with their scope, so an owned but unsupported
+  printer is refused by name instead of falling through to an unknown id.
+- **The raster width follows the head.** Rendering uses the printer's reported
+  head width instead of assuming one 384-dot head, so a 192-dot or 576-dot head
+  gets a correctly sized frame.
+- **The compact shell paints in its final order.** The phone layout no longer
+  shifts when the first script runs, and the sidebar keeps its landmark and
+  accessible name in the accessibility tree.
+- **The hidden page heading is inside the banner landmark**, so the page has one
+  heading and no orphaned region.
+- **The image source budget is one decision at every boundary.** Import,
+  hydration and replacement all consult the same 16-source limit, and the undo
+  history is bounded by an escape-exact byte estimate.
+- **A file the deploy can lose now fails the smoke test.** The deployment smoke
+  test requests every precached file, checks its content type against its
+  extension, and fails when a `.js` file is served as HTML.
+
+### Changed
+
+- The service worker's content types are generated from one owner and stamped
+  into `sw.js`, keeping the worker, the dev server, the browser harness and the
+  Pages smoke test in agreement.
+- The release workflow creates a throwaway signing key only in CI, signs the
+  published APK with the release key in a separate job, binds the attestation to
+  the resolved tag commit, and asserts the exact package, version code and
+  version name before publishing.
+- The workflow policy is now the one trusted gate: it rejects a release
+  environment or secret outside the signing job, a masked aggregate command, a
+  local action inside the trusted jobs, and any workflow file it does not own.
+- Release notes are generated from their owners; the repeated documentation
+  tables and marker blocks are generated or contract-tested against the code,
+  while the prose is maintained.
 
 ## [1.0.2] - 2026-11-16
+
+<!-- release-notes: the blockquote below is the top of the corrected v1.0.2 release body -->
+> **Android 1.0.2 limitation (recorded 2026-11-16).** The APK's system file
+> picker in this build is filtered to images, so **Document → Import label**
+> cannot select a label `.json` file on Android. Label import works in the web
+> app; it is fixed in 1.0.3.
 
 ### Added
 
 - **Label export and import.** The Document panel saves the current label as
-  one JSON file and loads it again on any device. This is the backup path a
-  signing-key change or a device replacement needs; before this version only
-  diagnostics could be exported.
-- The print refusal reason is visible above the action bar, not only in a
-  tooltip, so a disabled Print button explains itself on a phone.
+  one JSON file and loads it again in the web app; the 1.0.2 APK filters the
+  picker to images (see the note above), so on Android this build can export but
+  not import. This is the backup path a signing-key change or a device
+  replacement needs; before this version only diagnostics could be exported.
+- A model or geometry refusal is visible above the action bar, not only in a
+  tooltip, so a disabled Print button names the unsupported model or guessed
+  head on a phone. Printing, empty, offline and reading states explain
+  themselves through the button label and title.
 
 ### Fixed
 
@@ -55,8 +143,9 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
   from every job in the workflow.
 - Pages checks out `main` and asserts it equals the validated `Checks` commit,
   removing the untrusted-checkout pattern.
-- The browser suite runs at most two Chromiums at once, and its mount timeout
-  honours `D110_CHROME_TIMEOUT_MS`.
+- The browser suite runs two Chromiums at once by default —
+  `D110_BROWSER_CONCURRENCY` raises or lowers it — and its mount timeout honours
+  `D110_CHROME_TIMEOUT_MS`.
 - The release attaches its provenance bundle, prints the signing certificate
   fingerprint, and asserts the built APK's contents, permissions and backup
   setting. The Android manifest package comes from `brand.json`.
@@ -76,8 +165,10 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
   installing this build.
 - Pages deploys only after the `Checks` run for the same commit succeeds, and
   its smoke test now requests every precached file instead of four.
-- The APK is byte-reproducible: generated ZIP entries carry a fixed timestamp,
-  and the signing block is the only part a rebuild cannot reproduce.
+- The APK is byte-reproducible with the same key and `apksigner`: generated ZIP
+  entries carry a fixed timestamp, and a different key changes only the signing
+  block. The signing block's bytes belong to the signing tool, so a different
+  `apksigner` version can change them.
 - Documentation was corrected against the code: refusal wording, LAN binding,
   browser support, dpi class versus capability value, ownership and limits.
 
@@ -99,7 +190,20 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
 - The test suite is split by the real Chromium import, so only the browser job
   launches a browser.
 
+<!-- release-notes: the published v1.0.1 body is left as published; this note supersedes it -->
+> **Historical note (added 2026-11-16).** The published v1.0.1 release body says
+> the v1.0.0 key "was retired before any public install" and that "the signing
+> block is the only part a rebuild cannot reproduce". Both are superseded here:
+> the 1.0.0 APK had been downloaded, and a rebuild with the same key and
+> `apksigner` build is byte-identical. The published body is not edited; this
+> changelog is the corrected record.
+
+<!-- release-notes: no signing footer; the v1.0.1 body was published before the generated footer -->
+
 ## [1.0.0] - 2026-11-15
+
+<!-- release-notes: the blockquote below is the published v1.0.0 release-page banner -->
+> **Do not install this build for new work.** v1.0.0 is signed with a retired key and cannot be upgraded to v1.0.1; uninstalling it deletes every label, because this build has no project export. Use [v1.0.1](https://github.com/LLM-4-People/drypoint/releases/tag/v1.0.1) for a fresh install.
 
 First public release: a static, offline editor and printer client for 12 mm
 labels on the NIIMBOT D110 family, plus a self-signed Android app.
@@ -165,3 +269,6 @@ labels on the NIIMBOT D110 family, plus a self-signed Android app.
 - A privacy gate fails the build when a private host, an absolute home
   directory, the reference unit's serial or a non-fixture e-mail address
   reaches the published tree.
+
+<!-- release-notes: no signing footer; the v1.0.0 body was published before the generated footer -->
+<!-- release-notes: one trailing blank line; the published v1.0.0 body ended with it -->

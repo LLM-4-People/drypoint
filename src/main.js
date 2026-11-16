@@ -1,11 +1,11 @@
 /**
  * Composition root: wires the editor, panels, device manager and print flow.
- * No business logic lives here — only orchestration.
+ * No business logic lives here: only orchestration.
  */
 
 import { CONFIG, storageKey } from './core/config.js';
 import { geometry } from './core/geometry.js';
-import { $, on, el, downloadJson, captureFocus, restoreFocus, movePreservingFocus, setText } from './core/dom.js';
+import { $, on, el, downloadJson, downloadText, captureFocus, restoreFocus, movePreservingFocus, setText } from './core/dom.js';
 import { round1 } from './core/format.js';
 import { createLogger, setLogLevel, getLogEntries, exportLogReport } from './core/log.js';
 import { bootOfflineShell } from './core/precache-status.js';
@@ -20,22 +20,25 @@ import { createCanvasEditor } from './editor/canvas.js';
 import { pickImageFile } from './editor/image-import.js';
 import { createLayersPanel } from './ui/layers.js';
 import { createInspector } from './ui/inspector.js';
-import { clampZoom, fitZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
+import { fitZoom, initialZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
 import { createPrintPanel } from './ui/print-panel.js';
-import { createPrintFlow, printButtonState } from './ui/print-flow.js';
+import { connectionStatus, createPrintFlow, printButtonState } from './ui/print-flow.js';
+import { createStatusLine } from './ui/status-line.js';
 import { reportDisconnect } from './ui/disconnect-report.js';
 import { openSettingsSheet } from './ui/settings-sheet.js';
 import { applyTheme as applyThemeSetting } from './ui/theme.js';
 import { createSaveFailureNotice } from './ui/save-failure.js';
+import { createStorageAlert } from './ui/storage-alert.js';
+import { labelCanvasName } from './ui/canvas-name.js';
 import { createDeviceManager } from './device/manager.js';
 import { applyRollProfile } from './device/roll-profiles.js';
 import { describeDeviceStatus, labelTypeName, supportGate } from './device/capabilities.js';
 import { resolveRenderOptions } from './device/print-options.js';
-import { createDocument, createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, migrateDocument, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
+import { createDocument, createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, hydrateStoredDocument, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
 import { summariseWarnings } from './label/render.js';
 import { TEMPLATES, testDocument } from './label/templates.js';
 import { barcodeFitMessage, barcodeFrame } from './label/barcode.js';
-import { createVisibleImageHydrator, hydrateImages } from './label/images.js';
+import { createVisibleImageHydrator, hydrateImages, sourceBudgetProblem } from './label/images.js';
 import { documentFilename, parseDocument, serializeDocument, transferTooLargeMessage, TRANSFER_MAX_BYTES } from './label/transfer.js';
 
 const log = createLogger('main');
@@ -79,29 +82,62 @@ const ui = {
 /** One owner of "the label is not being saved", shared by every failure. */
 const saveFailure = createSaveFailureNotice();
 /**
+ * The stored label could not be read: keep the raw text and refuse to write
+ * until the operator exports it or resets the label. Created before the store,
+ * because the store's load failure is what fills it.
+ */
+const storageAlert = createStorageAlert({
+  container: $('#storageAlert'),
+  textNode: $('#storageAlertText'),
+  exportButton: $('#storageExportRaw'),
+  resetButton: $('#storageReset'),
+  // The raw value is written exactly as storage held it: JSON.stringify would
+  // refuse to round-trip the truncation that made it unreadable.
+  exportRaw: (filename) => downloadText(filename, storageAlert.raw ?? '', 'application/json'),
+  onReset: () => {
+    // The operator answered: the current label replaces the unreadable value,
+    // as one write, now.
+    documentStore.replace(controller.documentForDisplay());
+    toast('The unreadable label was reset', { tone: 'ok' });
+  },
+  // The one confirmation owner and tone; the alert owns the wording of the
+  // loss, this adapter maps it to the shared dialog.
+  confirm: (request) =>
+    confirmDialog(request.title, request.message, { confirmLabel: request.confirmLabel, tone: 'danger' }),
+  toast,
+});
+/**
  * The label is persisted raw (no version envelope) through the shared store:
  * one debounce, one failure channel, and a dirty flag that pagehide can trust.
  */
 const documentStore = createStore(createDocument(), {
   key: storageKey('document'),
   envelope: false,
-  hydrate: (data) => migrateDocument(data),
+  // Storage is a trust boundary: a value that is not a label is refused, and
+  // its raw text is quarantined instead of being replaced by a fresh label.
+  hydrate: (data) => hydrateStoredDocument(data),
   persistMs: CONFIG.ui.debounceMs,
-  onError: (error, phase) => {
+  // No write may overwrite a value the operator has not answered yet.
+  canPersist: () => !storageAlert.active,
+  onError: (error, phase, context) => {
     if (phase === 'persist') saveFailure.report(error);
-    else log.warn('stored label could not be read', { message: error.message });
+    else if (!storageAlert.capture(context?.raw ?? null, error)) log.warn('stored label could not be read', { message: error.message });
   },
   onPersist: saveFailure.clear,
 });
 
 const device = createDeviceManager();
 /** Zoom is a view preference: a storage failure must not stop the app. */
+/** The stored deliberate scale, or null when the key is absent or unreadable. */
 function loadZoom() {
   try {
-    return clampZoom(localStorage.getItem(storageKey('zoom')));
+    const raw = localStorage.getItem(storageKey('zoom'));
+    if (raw === null || raw === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
   } catch (error) {
     log.warn('stored zoom could not be read', { message: error.message });
-    return CONFIG.ui.zoom.default;
+    return null;
   }
 }
 function saveZoom() {
@@ -111,7 +147,8 @@ function saveZoom() {
     log.warn('could not persist zoom', { message: error.message });
   }
 }
-let zoom = loadZoom();
+const storedZoom = loadZoom();
+let zoom = storedZoom ?? CONFIG.ui.zoom.default;
 /**
  * The last scale an automatic fit chose (boot, Fit, stage clamp, document
  * change). A user zoom is anything else: the stage must not silently replace
@@ -129,6 +166,13 @@ const controller = createEditor({
     inspector.render();
     layers.render();
   },
+  // One refusal channel: an Add that the element or image budget refused is a
+  // fact about the click, not a layout hint, so it must not be buried in a
+  // saturated stage summary.
+  onRefusal: (message) => {
+    log.warn('editor refused a change', { message });
+    toast(message, { tone: 'error' });
+  },
 });
 
 const canvasEditor = createCanvasEditor({
@@ -145,6 +189,15 @@ const canvasEditor = createCanvasEditor({
   getRenderOptions: () => resolveRenderOptions(printSettingsSnapshot()),
   scrollContainer: ui.stageScroll,
 });
+
+// A toned status holds for CONFIG.ui.statusHoldMs and falls back to the live
+// connection state; an untoned status stands until it is replaced. The owner is
+// testable on a fake clock instead of hiding a timer in this file.
+const setStatus = createStatusLine({
+  element: ui.status,
+  connected: () => device.connected,
+  holdMs: CONFIG.ui.statusHoldMs,
+}).write;
 
 /**
  * The print flow owns the in-flight guard and the job state. It is created
@@ -250,12 +303,12 @@ function placeInspector() {
 
 /** The raw stage viewport the fit math measures. */
 function stageViewport() {
-  // On compact widths the stage caps itself with a CSS max-height (40vh). Use
-  // that cap, not the current content-driven height, or the fit would chase the
-  // canvas it is sizing. getComputedStyle resolves the cap to pixels.
-  const maxHeight = parseFloat(getComputedStyle(ui.stageScroll).maxHeight);
-  const cap = Number.isFinite(maxHeight) && maxHeight > 0 ? maxHeight : ui.stageScroll.clientHeight;
-  return { availableWidth: ui.stageScroll.clientWidth, availableHeight: cap };
+  // On compact widths the stage owns a fixed height (40vh), so the fit is not
+  // chasing the canvas it is sizing. getComputedStyle resolves that constant to
+  // pixels; on desktop it resolves the stage row the grid already sized.
+  const height = parseFloat(getComputedStyle(ui.stageScroll).height);
+  const available = Number.isFinite(height) && height > 0 ? height : ui.stageScroll.clientHeight;
+  return { availableWidth: ui.stageScroll.clientWidth, availableHeight: available };
 }
 
 /**
@@ -350,7 +403,15 @@ function rerender() {
   const warnings = canvasEditor.render();
   const active = geometry();
   ui.labelSize.textContent = `${round1(active.widthMm)} × ${controller.document.lengthMm} mm`;
-  ui.labelPx.textContent = `${documentWidthPx(controller.document)} × ${documentHeightPx(controller.document)} px · ${round1(active.dotsPerMm)} dots/mm (${active.dpi} dpi${active.reported ? '' : ' assumed'})`;
+  // The canvas is the label: its accessible name carries the size and how much
+  // is on it, written only when it changes.
+  const canvasName = labelCanvasName({
+    widthMm: active.widthMm,
+    lengthMm: controller.document.lengthMm,
+    count: controller.document.elements.length,
+  });
+  if (ui.labelCanvas.getAttribute('aria-label') !== canvasName) ui.labelCanvas.setAttribute('aria-label', canvasName);
+  ui.labelPx.textContent = `${documentWidthPx(controller.document)} × ${documentHeightPx(controller.document)} px · ${round1(active.dotsPerMm)} dots/mm (${active.dpi ?? 'unknown'} dpi${active.reported ? '' : ' assumed'})`;
   setStageWarnings(warnings);
   layers.render();
   inspector.sync();
@@ -530,6 +591,15 @@ function applyTemplate(template) {
  * already holds.
  */
 function exportDocument() {
+  // Both source budgets are authoring boundaries, not normalise steps: a
+  // document that already exists in memory is exported or refused whole, with
+  // the importer's own decision and wording, so an export always re-imports.
+  const problem = sourceBudgetProblem(controller.document, { action: 'exporting this label' });
+  if (problem) {
+    log.warn('label export refused an over-budget document', { message: problem });
+    toast(problem, { tone: 'error' });
+    return;
+  }
   try {
     const saved = downloadJson(documentFilename(controller.document.name), serializeDocument(controller.document));
     if (saved === false) {
@@ -727,8 +797,10 @@ device.events.on('discovered', (capabilities) => {
     rerender();
   }
   printPanel.render();
-  const remaining = capabilities.roll?.remaining;
-  setStatus(remaining != null ? `Connected · ${remaining} labels left` : 'Connected', 'ok');
+  // The post-print refresh also publishes this event, while `#status` belongs
+  // to the finished job: the connection line must not overwrite the outcome.
+  const line = connectionStatus({ jobBusy: printFlow.busy, remaining: capabilities.roll?.remaining });
+  if (line) setStatus(line, 'ok');
 });
 
 device.events.on('roll-profile', (profile) => {
@@ -752,12 +824,14 @@ device.events.on('printer-error', (error) => {
   toast(error.message, { tone: 'error' });
 });
 
-device.events.on('disconnected', () => {
+device.events.on('disconnected', (detail) => {
   setDeviceState();
   // The same owner reports every lost link: an idle disconnect is status only,
-  // while a job phase makes it one specific toast. The print flow stays silent
-  // for a lost link, so the operator never hears two versions of one event.
-  reportDisconnect({ phase: printFlow.phase, setStatus });
+  // while a job phase makes it one specific toast. A job whose printEnd was
+  // already committed carries that fact, because the flow has not emitted
+  // `finishing` yet when the link drops during the ack. The print flow stays
+  // silent for a lost link, so the operator never hears two versions.
+  reportDisconnect({ phase: printFlow.phase, committed: detail?.committed === true, setStatus });
 });
 
 /**
@@ -785,19 +859,6 @@ ui.deviceButton.addEventListener('click', async () => {
 
 /* ---------------- status ---------------- */
 
-let statusTimer = 0;
-function setStatus(text, tone = '') {
-  ui.status.textContent = text;
-  ui.status.dataset.tone = tone;
-  clearTimeout(statusTimer);
-  if (tone) {
-    statusTimer = setTimeout(() => {
-      ui.status.textContent = device.connected ? 'Ready' : '';
-      ui.status.dataset.tone = '';
-    }, CONFIG.ui.statusHoldMs);
-  }
-}
-
 function setProgress(ratio) {
   ui.progress.style.width = `${Math.round(Math.min(1, Math.max(0, ratio)) * 100)}%`;
 }
@@ -814,8 +875,10 @@ function updatePrintButton() {
     finishing: printFlow.finishing,
     empty: !controller.document.elements.some((element) => element.visible !== false),
     offline: !device.connected,
-    // A device-info read owns the link: starting a job would interleave frames.
+    // A device-info read or a maintenance command owns the link: starting a
+    // job would interleave frames.
     reading: Boolean(device.state.readingInfo),
+    maintaining: Boolean(device.state.maintaining),
     // The same print-boundary predicate the flow uses: an undo can restore a
     // label the live printer cannot hold. The flow revalidates it before the
     // raster; the button says so instead of pretending it is print-ready.
@@ -827,10 +890,12 @@ function updatePrintButton() {
   ui.testButton.disabled = state.testDisabled;
   ui.testButton.title = state.testTitle;
   // The same reason is the accessible description, not only a tooltip, and a
-  // visible banner above the action bar so a sighted user does not have to open
-  // the Print tab to learn why the buttons are disabled. It is absolutely
-  // positioned: showing it never reflows the bar.
-  ui.printGateReason.textContent = state.supportBlocked;
+  // visible banner above the action row so a sighted user does not have to open
+  // the Print tab to learn why the buttons are disabled. It sits in normal
+  // flow: an overlay used to block the controls underneath it on a phone.
+  // The banner is a live region: only a changed reason is written, so a
+  // rerender while typing the same label never re-announces the refusal.
+  setText(ui.printGateReason, state.supportBlocked);
   ui.printGateReason.hidden = !state.supportBlocked;
   for (const button of [ui.printButton, ui.testButton]) {
     if (state.supportBlocked) button.setAttribute('aria-describedby', 'printGateReason');
@@ -874,7 +939,7 @@ ui.printButton.addEventListener('click', () => {
 });
 
 /**
- * A test label prints paper, so it asks first — exactly like the printer's
+ * A test label prints paper, so it asks first: exactly like the printer's
  * self-test page in the Print panel.
  */
 ui.testButton.addEventListener('click', async () => {
@@ -946,7 +1011,7 @@ function openLogViewer() {
   const render = () => {
     view.textContent = '';
     for (const entry of getLogEntries().slice(-CONFIG.diagnostics.maxEntriesInReport)) {
-      view.append(el('div', {}, `${entry.at.slice(11, 19)} [${entry.level}] ${entry.scope}: ${entry.message}${entry.detail ? ` — ${entry.detail}` : ''}`));
+      view.append(el('div', {}, `${entry.at.slice(11, 19)} [${entry.level}] ${entry.scope}: ${entry.message}${entry.detail ? `: ${entry.detail}` : ''}`));
     }
   };
   render();
@@ -1024,7 +1089,7 @@ window.addEventListener('pagehide', () => {
   // Only an owed write is flushed: a tab that never edited the document must
   // not rewrite storage, or the last tab to close would overwrite newer work
   // (two dirty tabs remain last-writer-wins). A failed final write is only
-  // logged — the page is gone, and the persistent toast already reported the
+  // logged: the page is gone, and the persistent toast already reported the
   // write that failed first.
   try {
     documentStore.flush();
@@ -1043,16 +1108,15 @@ placeDocName();
 // now that the toast host exists, instead of logging a warning nobody sees.
 const settingsIssue = takeSettingsLoadIssue();
 if (settingsIssue) toast(settingsIssue.message, { tone: 'error' });
-// Choose the first compact zoom before painting: rendering at a desktop zoom
-// and then clamping would resize the canvas after the first frame. An
-// automatic boot fit is not persisted: the shared zoom key belongs to the
-// user's last deliberate choice, not to this viewport.
-const initialFit = stageFitZoom();
-if (initialFit !== null && zoom > initialFit) {
-  zoom = initialFit;
-  autoZoom = initialFit;
-  updateZoomLabel();
-}
+// Choose the first scale before painting: rendering at a desktop zoom and then
+// clamping would resize the canvas after the first frame. A stored value is the
+// operator's deliberate choice and survives the boot fit (bounded only by this
+// layout's manual limits); only a first visit takes the automatic fit, and that
+// value is never persisted.
+const boot = initialZoom({ stored: storedZoom, fit: stageFitZoom(), compact: compactQuery.matches });
+zoom = boot.value;
+autoZoom = boot.auto ? boot.value : null;
+updateZoomLabel();
 rerender();
 printPanel.render();
 setDeviceState();

@@ -4,19 +4,20 @@
 
 Drypoint is a static page and an Android WebView shell. It has no backend, no
 server component and no cloud account. The security boundary is therefore the
-browser sandbox, the printer link and the signing key — not a database or an
+browser sandbox, the printer link and the signing key, not a database or an
 API.
 
 **What the app can reach**
 
-- **Web Serial** — a user-granted serial port, used for Bluetooth Classic SPP on
+- **Web Serial**: a user-granted serial port, used for Bluetooth Classic SPP on
   desktop Chrome/Edge. The browser owns the permission.
-- **Web Bluetooth** — a user-granted GATT device, used in Chrome and Edge on
+- **Web Bluetooth**: a user-granted GATT device, used in Chrome and Edge on
   desktop and in Chrome on Android.
-- **The Android bridge** — inside the APK, a `JavascriptInterface` that exposes
-  BLE scan/connect/write, one diagnostics file save and the system-bar colour.
-  It is reachable only from the bundled page at the app's own origin.
-- **`localStorage`** — the label, settings, roll profiles and zoom.
+- **The Android bridge**: inside the APK, a `JavascriptInterface` that exposes
+  BLE scan/connect/write, one `saveFile` method (label export, diagnostics
+  report, or the raw copy of an unreadable stored label) and the system-bar
+  colour. It is reachable only from the bundled page at the app's own origin.
+- **`localStorage`**: the label, settings, roll profiles and zoom.
 
 **What it cannot do**
 
@@ -25,8 +26,10 @@ API.
   scripts from a CDN. The only requests are for the app's own files from the
   host that served them, and the printer link.
 - No account, no identifier, no cookie set by the page.
-- No file-system access beyond the image picker and the diagnostics download,
-  and no background execution after the page is closed.
+- No file-system access beyond the system picker (images and label JSON) and
+  the native save bridge (label export, diagnostics report, and the raw copy of
+  an unreadable stored label), and no background execution after the page is
+  closed.
 - The APK package is self-signed and sideloaded; it is not distributed through a
   store and has no auto-update channel.
 
@@ -39,8 +42,9 @@ bytes cannot poison the cache.
 
 | Version | Supported |
 | --- | --- |
-| 1.x | Yes — fixes land on `main` and are released as a new tag |
-| Anything older than 1.0 | No — there is no compatibility branch |
+| 1.x, except 1.0.0 | Yes: fixes land on `main` and are released as a new tag. The 1.0.2 APK cannot import an exported label; the fix ships in 1.0.3. |
+| 1.0.0 | No: do not install it. Its key was retired before any known install (the 1.0.0 APK had been downloaded); it cannot be upgraded in place, and has no label export, so uninstalling it deletes every label. |
+| Anything older than 1.0 | No: there is no compatibility branch |
 
 Releases are the signed APK and the static site at
 <https://llm-4-people.github.io/drypoint/>. The APK's signing certificate is
@@ -92,8 +96,8 @@ hardware. It is not an official SDK and makes no claim to be complete.
   self-test. A sensor refusal is not a zero-frame refusal: a supported model
   with real geometry is allowed to read one heartbeat, which decides the job,
   and prints nothing when the lid, paper or battery blocks it.
-- Reply layouts that were not verified — paper info (`0x69`), print history
-  (`0x62`) and the print area (`0x0F`) — are exposed as raw bytes, never as
+- Reply layouts that were not verified are exposed as raw bytes: paper info
+  (`0x69`), print history (`0x62`) and the print area (`0x0F`), never as
   guessed fields.
 - A malformed or hostile reply is treated as absent or as an error, not as a
   default: a truncated head width, an inverted range and a zero-length model id
