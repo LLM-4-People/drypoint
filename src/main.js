@@ -23,6 +23,7 @@ import { createInspector } from './ui/inspector.js';
 import { clampZoom, fitZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
 import { createPrintPanel } from './ui/print-panel.js';
 import { connectionStatus, createPrintFlow, printButtonState } from './ui/print-flow.js';
+import { createStatusLine } from './ui/status-line.js';
 import { reportDisconnect } from './ui/disconnect-report.js';
 import { openSettingsSheet } from './ui/settings-sheet.js';
 import { applyTheme as applyThemeSetting } from './ui/theme.js';
@@ -179,6 +180,15 @@ const canvasEditor = createCanvasEditor({
   getRenderOptions: () => resolveRenderOptions(printSettingsSnapshot()),
   scrollContainer: ui.stageScroll,
 });
+
+// A toned status holds for CONFIG.ui.statusHoldMs and falls back to the live
+// connection state; an untoned status stands until it is replaced. The owner is
+// testable on a fake clock instead of hiding a timer in this file.
+const setStatus = createStatusLine({
+  element: ui.status,
+  connected: () => device.connected,
+  holdMs: CONFIG.ui.statusHoldMs,
+}).write;
 
 /**
  * The print flow owns the in-flight guard and the job state. It is created
@@ -837,19 +847,6 @@ ui.deviceButton.addEventListener('click', async () => {
 });
 
 /* ---------------- status ---------------- */
-
-let statusTimer = 0;
-function setStatus(text, tone = '') {
-  ui.status.textContent = text;
-  ui.status.dataset.tone = tone;
-  clearTimeout(statusTimer);
-  if (tone) {
-    statusTimer = setTimeout(() => {
-      ui.status.textContent = device.connected ? 'Ready' : '';
-      ui.status.dataset.tone = '';
-    }, CONFIG.ui.statusHoldMs);
-  }
-}
 
 function setProgress(ratio) {
   ui.progress.style.width = `${Math.round(Math.min(1, Math.max(0, ratio)) * 100)}%`;

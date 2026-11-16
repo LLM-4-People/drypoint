@@ -260,3 +260,22 @@ test('one decision covers the distinct count and the image-text budget', () => {
   assert.match(sourceBudgetProblem(chars, { refusal: true }), /Adding this image would give the label/);
   assert.match(sourceBudgetProblem(chars, { action: 'exporting this label' }), /import or save/);
 });
+
+test('a new document revision clears the one-attempt memory', () => {
+  // K-F11: the hydrator attempts each source once per revision. Without the
+  // clear, a revision that re-references a source still decoding (or refused
+  // and still within the cache) would never be attempted again — the 17th
+  // refused image path depends on the next revision being fresh.
+  let resolveDecode;
+  const decode = () => new Promise((resolve) => { resolveDecode = resolve; });
+  const hydrate = createVisibleImageHydrator({ decode, state: () => 'missing' });
+  const first = { elements: [{ type: 'image', src: 'revision.png' }] };
+
+  assert.equal(hydrate(first), 1, 'the first revision starts the decode');
+  assert.equal(hydrate(first), 0, 'the same revision is never decoded twice');
+
+  const second = { elements: [{ type: 'image', src: 'revision.png' }] };
+  assert.equal(hydrate(second), 1, 'a new revision clears the attempt memory');
+  assert.equal(hydrate(second), 0, 'and the new revision is attempted only once');
+  resolveDecode();
+});

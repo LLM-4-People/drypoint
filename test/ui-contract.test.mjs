@@ -496,8 +496,11 @@ test('the Print and Test buttons quote the support gate in title and description
 });
 
 test('the gate reason is visible above the action bar and hidden when allowed', () => {
+  // The class is pinned positively: the gate reason is not screen-reader-only.
+  // (K-F6: `.visually-hidden` is live CSS now — the P-F4 h1 uses it — so the
+  // old negative assertion, which could never match the element's attribute
+  // order, is gone rather than kept as a vacuous pass.)
   assert.match(html, /<p class="gate-reason" id="printGateReason" role="status" hidden><\/p>/);
-  assert.doesNotMatch(html, /class="visually-hidden" id="printGateReason"/, 'the refusal is not screen-reader-only');
   assert.match(css, /\.gate-reason\s*\{[^}]*position:\s*absolute/, 'showing it never reflows the bar');
   assert.match(css, /\.gate-reason\s*\{[^}]*bottom:\s*100%/, 'it sits directly above the bar');
   assert.match(css, /\.gate-reason\[hidden\]\s*\{[^}]*display:\s*none/);

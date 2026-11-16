@@ -36,7 +36,7 @@ export function imageSources(labelDocument, { visibleOnly = false, excludeId = n
 }
 
 /** The one wording for the distinct-source limit, shared by print and add. */
-export function imageSourceLimitMessage(count, action = 'printing') {
+function imageSourceLimitMessage(count, action = 'printing') {
   return (
     `A label can use at most ${IMAGE_SOURCE_LIMIT} different images; this one uses ${count}. ` +
     `Remove or reuse an image before ${action}.`
@@ -80,7 +80,7 @@ export function documentSourceBudgetMessage(chars) {
  * budget. Same limit and the same measurement as the transfer boundary, a
  * different action.
  */
-export function sourceBudgetRefusalNotice() {
+function sourceBudgetRefusalNotice() {
   return `Adding this image would give the label more than ${CONFIG.bounds.maxSourceChars} characters of image data. Remove or reuse an image first.`;
 }
 

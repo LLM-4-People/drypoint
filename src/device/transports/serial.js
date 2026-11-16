@@ -37,7 +37,7 @@ const SPP_SHORT_ID = Number.parseInt(SPP_SERVICE_ID, 16);
  * whose message is only "Permission denied". The operator cannot act on that:
  * the fix is a site setting, not a retry.
  */
-export const SERIAL_PERMISSION_HINT = 'Allow serial access for this site in the browser’s site settings, then reconnect.';
+const SERIAL_PERMISSION_HINT = 'Allow serial access for this site in the browser’s site settings, then reconnect.';
 
 /**
  * Add the concrete next step to a permission refusal, and leave every other
@@ -46,7 +46,7 @@ export const SERIAL_PERMISSION_HINT = 'Allow serial access for this site in the 
  * @param {T} error
  * @returns {T|Error}
  */
-export function withPermissionHint(error) {
+function withPermissionHint(error) {
   const name = error?.name ?? '';
   const denied = name === 'SecurityError' || name === 'NotAllowedError' || /permission denied/i.test(error?.message ?? '');
   if (!denied) return error;

@@ -67,7 +67,7 @@ export function describeErrorCode(code) {
 }
 
 /** The one "the operator asked for this" error: every layer reports it the same way. */
-export function cancelledError(message = 'Print cancelled') {
+function cancelledError(message = 'Print cancelled') {
   return new PrinterError(message, { cancelled: true, fatal: true });
 }
 

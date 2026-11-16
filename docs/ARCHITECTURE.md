@@ -89,6 +89,7 @@ src/
     setting-control.js     schema → control
     settings-sheet.js      settings modal
     stage-layout.js        compact/desktop placement and fit decisions
+    status-line.js         the status line's hold, revert and cancellation
     theme.js               theme decision, theme-color meta and native bars
     toast.js               single live region
     z-order.js             the one restack action spec

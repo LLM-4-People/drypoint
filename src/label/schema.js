@@ -282,7 +282,7 @@ const GEOMETRY_FIELDS = Object.freeze(['x', 'y', 'w', 'h']);
  *
  * @param {Iterable<string>} fields the field names that were replaced
  */
-export function adjustedGeometryNotice(fields) {
+function adjustedGeometryNotice(fields) {
   const names = [...new Set(fields)].sort((a, b) => GEOMETRY_FIELDS.indexOf(a) - GEOMETRY_FIELDS.indexOf(b));
   const subject =
     names.length === 1

@@ -422,6 +422,8 @@ test('a response whose content type contradicts the file extension is rejected',
   await assert.rejects(worker.dispatch('install', {}), /content type/);
   assert.ok(worker.state.messages.at(-1).problems.some((problem) => problem.includes('src/main.js')));
   assert.equal(worker.stores.size, 0);
+  // V4: a host that answered is never retried, even for a wrong type.
+  assert.equal(worker.state.attempts.get(`${BASE}src/main.js`), 1, 'one attempt, no retry');
 });
 
 test('a known extension without a Content-Type fails the install', async () => {
@@ -431,6 +433,7 @@ test('a known extension without a Content-Type fails the install', async () => {
     assert.equal(worker.state.messages.at(-1)?.type, 'precache-error');
     assert.ok(worker.state.messages.at(-1).problems.some((problem) => problem.includes('src/main.js')));
     assert.equal(worker.stores.size, 0, 'nothing is promoted');
+    assert.equal(worker.state.attempts.get(`${BASE}src/main.js`), 1, 'one attempt, no retry');
   }
 });
 
@@ -446,6 +449,7 @@ test('a body that does not match its manifest digest fails the install', async (
   );
   assert.equal(worker.stores.size, 0, 'nothing is promoted');
   assert.equal(worker.state.skipped, 0);
+  assert.equal(worker.state.attempts.get(`${BASE}src/main.js`), 1, 'one attempt, no retry');
 });
 
 test('a missing digest fails the install instead of trusting the body', async () => {
@@ -473,6 +477,7 @@ test('a redirected precache response is rejected', async () => {
   });
   await assert.rejects(worker.dispatch('install', {}), /redirected/);
   assert.equal(worker.stores.size, 0);
+  assert.equal(worker.state.attempts.get(`${BASE}assets/app.css`), 1, 'a redirect is not retried');
 });
 
 test('a missing manifest still fails the install with a posted error', async () => {
