@@ -14,11 +14,18 @@
  *   node scripts/check-privacy.mjs --list   # print the scanned file count
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ROOT, isTextBuffer, listFiles } from './lib/tree.mjs';
+
+/**
+ * Paths every scan of this repository must contain. A scan that silently
+ * misses `src/` or `README.md` reports zero findings for the files that matter
+ * most; the gate fails closed instead.
+ */
+export const REQUIRED_ROOTS = Object.freeze(['src', 'docs', 'index.html', 'sw.js', 'README.md']);
 
 /**
  * The reference unit's serial. Split into two fragments so this file — which
@@ -81,13 +88,32 @@ export const DENY = Object.freeze([
 ]);
 
 /**
+ * Fail closed when the tree is not the repository surface.
+ *
+ * @param {string} root
+ * @param {string[]} files the walker's result
+ * @returns {Promise<void>}
+ */
+export async function assertCoverage(root, files) {
+  for (const path of REQUIRED_ROOTS) {
+    try {
+      await stat(join(root, path));
+    } catch {
+      throw new Error(`required root missing from ${root}: ${path}; refusing an incomplete scan`);
+    }
+  }
+  if (files.length === 0) throw new Error(`the scan found no files under ${root}; refusing an empty tree`);
+}
+
+/**
  * Scan one tree and return every finding.
  *
- * @param {{root?: string, rules?: object[]}} [options]
+ * @param {{root?: string, rules?: object[], requireRoots?: boolean}} [options]
  * @returns {Promise<{findings: {file: string, line: number, rule: string, why: string, text: string}[], scanned: number}>}
  */
-export async function scanTree({ root = ROOT, rules } = {}) {
+export async function scanTree({ root = ROOT, rules, requireRoots = true } = {}) {
   const files = await listFiles({ root, rules });
+  if (requireRoots) await assertCoverage(root, files);
   const findings = [];
   for (const file of files) {
     const bytes = await readFile(join(root, file));
@@ -137,7 +163,11 @@ async function main(argv) {
     console.error('usage: node scripts/check-privacy.mjs [--list] [--root <dir>]');
     return 2;
   }
-  const { findings, scanned } = await scanTree({ root });
+  const { findings, scanned } = await scanTree({ root }).catch((error) => {
+    console.error(`privacy: ${error.message}`);
+    return { findings: null, scanned: 0 };
+  });
+  if (findings == null) return 1;
   if (flags.includes('--list')) console.log(`privacy: ${scanned} files scanned`);
   if (!findings.length) return 0;
   for (const finding of findings) console.error(formatFinding(finding));

@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { parse } from 'yaml';
+
 import { projectRoot, readProjectFile as read } from './helpers/project-files.mjs';
 import { BRAND } from '../src/core/brand.js';
 
@@ -158,16 +160,31 @@ test('CODEOWNERS names the one default owner', () => {
   assert.match(owners, /^\* @amberflag48$/m);
 });
 
-test('dependabot tracks the actions weekly, grouped, and targets main', () => {
+test('dependabot tracks Actions and the one dev-only npm dependency', () => {
+  const config = parse(read('.github/dependabot.yml'));
+  assert.equal(config.version, 2);
+  const updates = config.updates;
+  assert.deepEqual(
+    updates.map((entry) => entry['package-ecosystem']).sort(),
+    ['github-actions', 'npm'],
+    'both ecosystems are declared'
+  );
+  for (const entry of updates) {
+    assert.equal(entry.directory, '/');
+    assert.equal(entry['target-branch'], 'main');
+    assert.equal(entry.schedule.interval, 'weekly');
+    assert.equal(entry['open-pull-requests-limit'], 3);
+    assert.ok(entry.groups && Object.keys(entry.groups).length === 1, `${entry['package-ecosystem']} groups minor and patch`);
+  }
+  const npm = updates.find((entry) => entry['package-ecosystem'] === 'npm');
+  assert.equal(npm['commit-message'].prefix, 'deps');
+  const actions = updates.find((entry) => entry['package-ecosystem'] === 'github-actions');
+  assert.equal(actions['commit-message'].prefix, 'ci');
+  // The comment owner states the real distinction: no runtime dependency,
+  // one tracked dev-only dependency.
   const dependabot = read('.github/dependabot.yml');
-  assert.match(dependabot, /^version: 2$/m);
-  assert.match(dependabot, /package-ecosystem: github-actions/);
-  assert.doesNotMatch(dependabot, /package-ecosystem: npm/, 'the app has no npm dependencies');
-  assert.match(dependabot, /interval: weekly/);
-  assert.match(dependabot, /target-branch: main/);
-  assert.match(dependabot, /open-pull-requests-limit: 3/);
-  assert.match(dependabot, /update-types:\n\s+- minor\n\s+- patch/);
-  assert.match(dependabot, /groups:/);
+  assert.match(dependabot, /no npm runtime dependency/i);
+  assert.match(dependabot, /package-lock\.json/);
 });
 
 test('the README is the public front door', () => {

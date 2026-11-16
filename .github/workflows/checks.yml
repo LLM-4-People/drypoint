@@ -75,15 +75,10 @@ jobs:
       - name: Install the one dev-only dependency
         run: npm ci
       - name: Locate a Chromium binary
-        run: |
-          set -euo pipefail
-          chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
-          if [ -z "$chrome" ]; then
-            echo "::error::no Chromium on this runner; the measured layout suites cannot run"
-            exit 1
-          fi
-          "$chrome" --version
-          echo "D110_CHROME=$chrome" >> "$GITHUB_ENV"
+        # One owner for discovery, the major floor and the logged versions;
+        # the same script runs in the release build. It writes D110_CHROME to
+        # GITHUB_ENV, so a missing or too-old browser fails before the suites.
+        run: node scripts/find-chrome.mjs
       - name: Measured layout suites
         env:
           # The helper turns a missing browser into a failure, never a skip.
@@ -139,23 +134,35 @@ jobs:
             -dname "CN=CI Throwaway, O=LLM-4-People, C=CA"
           chmod 600 "$keystore"
           echo "ANDROID_KEYSTORE_FILE=$keystore" >> "$GITHUB_ENV"
-      - name: Build, sign and verify the APK
+      - name: Build and sign the APK
+        # CI=true makes a missing keystore a hard failure, never a new key. The
+        # build also signs and verifies its own artifact.
+        run: npm run build:android
+      - name: Prove the package identity and print the digest
         run: |
           set -euo pipefail
-          # CI=true makes a missing keystore a hard failure, never a new key.
-          npm run build:android
           version="$(node -p "require('./package.json').version")"
           package_id="$(node -p "require('./brand.json').appId")"
           version_code="$(node scripts/build-android.mjs --version-code)"
           apk="android/build/drypoint-${version}.apk"
           test -f "$apk"
-          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --print-certs "$apk"
           badging="$("$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" dump badging "$apk")"
           # The package the phone installs must be the one brand.json names,
           # with the versionCode the version arithmetic produces — not only the
           # human-readable versionName.
           printf '%s\n' "$badging" | grep -F "package: name='${package_id}' versionCode='${version_code}' versionName='${version}'"
           sha256sum "$apk"
+      - name: The built APK matches its manifest and policy
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          node scripts/check-apk.mjs --apk "android/build/drypoint-${version}.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
+      - name: No tracked file changed
+        # The build regenerates resources and the precache stamp. A tracked
+        # file that moved means the committed generated files are stale.
+        run: git diff --exit-code
+      - name: No untracked file was left behind
+        run: test -z "$(git status --porcelain)"
       - name: Upload the APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -171,20 +178,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Every leg must have succeeded
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      - name: Checkout
+        # The bootstrap aggregate reads the candidate tree. A2 moves this
+        # checkout to main so a pull request cannot replace the script that
+        # decides its own required check.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          script: |
-            // The legs are this job's own `needs:` map, so a leg added there is
-            // inspected without editing this step. An explicit list would go
-            // green for a leg it forgot: the drift `npm run workflows:check`
-            // also refuses.
-            const results = ${{ toJSON(needs) }};
-            const notSuccessful = Object.entries(results)
-              .filter(([, job]) => job.result !== 'success')
-              .map(([name, job]) => `${name}=${job.result}`);
-            if (notSuccessful.length > 0) {
-              core.setFailed(`required leg(s) did not succeed: ${notSuccessful.join(', ')}`);
-            } else {
-              core.info(`${Object.keys(results).join(', ')} all succeeded`);
-            }
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Every leg must have succeeded
+        env:
+          # The legs are this job's own `needs:` map, so a leg added there is
+          # inspected without editing this step. The script fails on failure,
+          # skipped and cancelled alike.
+          NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/check-required.mjs

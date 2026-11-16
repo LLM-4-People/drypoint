@@ -300,10 +300,11 @@ when its head width is unknown, the app uses the configured fallback (203 dpi,
 ## Development
 
 The app has **no npm runtime dependencies** — it ships only `node:` built-ins.
-One dev-only dependency is installed from a tracked `package-lock.json` with
-`npm ci`; the app itself needs no install to run. CI runs `npm ci` before
-`npm run test:unit`, `npm run test:browser` and the Android build, then proves
-the tree is clean.
+One dev-only dependency, the ISC `yaml` parser, backs the workflow policy gate
+and is installed with `npm ci`; `package-lock.json` is tracked so that install is
+reproducible. CI runs `npm ci` before the gates that use it, then
+`npm run test:unit`, `npm run test:browser` and the Android build, and proves the
+tree is clean.
 
 Requirements:
 

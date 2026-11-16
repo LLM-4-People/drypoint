@@ -188,8 +188,12 @@ export async function checkSite({ out = join(ROOT, SITE_DIR), basePath = pagesBa
     const bytes = entry.content === null ? await readFile(join(ROOT, entry.path)) : Buffer.from(entry.content);
     expected.set(entry.path, digest(bytes));
   }
+  const staged = await walk(out);
+  if (staged.length === 0) {
+    throw new Error(`no staged tree at ${out}; run: npm run pages:build first`);
+  }
   const actual = new Map();
-  for (const path of await walk(out)) actual.set(path, digest(await readFile(join(out, path))));
+  for (const path of staged) actual.set(path, digest(await readFile(join(out, path))));
 
   const findings = [];
   for (const [path, hash] of expected) {

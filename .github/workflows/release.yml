@@ -1,8 +1,24 @@
 name: Release
 
+# This workflow is read from `main`, not from the tag it releases. A tag can
+# only supply a commit for the resolve step to verify; it cannot redefine the
+# signing logic. The key is visible only in the `sign` job, whose steps are all
+# workflow-owned commands, so no process started by repository code can read it.
 on:
-  push:
-    tags: ['v*']
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vMAJOR.MINOR.PATCH) or full 40-character commit SHA for a dry run
+        required: true
+        type: string
+      publish:
+        description: Publish the release (false builds and signs only)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -12,47 +28,181 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve:
+    name: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # A failed, cancelled or pull-request Checks run must not reach the tag
+    # lookup: a failed tag run still has the tag at head_sha and would
+    # otherwise publish. A normal main push resolves to publish=false.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
+    outputs:
+      publish: ${{ steps.tag.outputs.publish }}
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+      version: ${{ steps.tag.outputs.version }}
+      ref: ${{ steps.tag.outputs.ref }}
+      existing: ${{ steps.tag.outputs.existing }}
+    steps:
+      - name: Checkout main with tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Resolve the tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          out() { printf '%s\n' "$1" >> "$GITHUB_OUTPUT"; }
+
+          if [ "$EVENT" = workflow_dispatch ]; then
+            input="$INPUT_TAG"
+            # A full SHA is the pre-tag dry run: the commit is built and signed,
+            # but a synthetic tag name is never treated as a real tag.
+            if [[ "$input" =~ ^[0-9a-f]{40}$ ]]; then
+              if [ "$INPUT_PUBLISH" = true ]; then
+                echo "::error::publish=true requires a release tag, not the commit $input; a SHA dry run never publishes"
+                exit 1
+              fi
+              if ! git cat-file -e "${input}^{commit}" 2>/dev/null; then
+                echo "::error::commit $input does not exist in this repository"
+                exit 1
+              fi
+              if ! git merge-base --is-ancestor "$input" origin/main; then
+                echo "::error::$input is not an ancestor of origin/main"
+                exit 1
+              fi
+              sha="$input"
+              version="$(git show "$sha:package.json" | jq -r .version)"
+              if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "::error::package.json at $sha has no strict semantic version (got $version)"
+                exit 1
+              fi
+              # The tag is the notes and version binding only; the commit is
+              # what gets checked out, and nothing is published.
+              tag="v$version"
+              ref="$sha"
+              publish=false
+            elif [[ "$input" =~ ^[0-9a-f]{7,39}$ ]]; then
+              echo "::error::commit $input is not a full 40-character SHA; pass the full SHA for a dry run"
+              exit 1
+            else
+              tag="$input"
+              if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "::error::$tag is not a strict release tag or a full 40-character commit SHA"
+                exit 1
+              fi
+              if ! git rev-parse --verify --quiet "refs/tags/$tag" > /dev/null; then
+                echo "::error::tag $tag does not exist"
+                exit 1
+              fi
+              sha="$(git rev-list -n1 "$tag")"
+              if ! git merge-base --is-ancestor "$sha" origin/main; then
+                echo "::error::$sha is not an ancestor of origin/main"
+                exit 1
+              fi
+              version="$(git show "$tag:package.json" | jq -r .version)"
+              if [ "$version" != "${tag#v}" ]; then
+                echo "::error::tag $tag does not match package.json version $version"
+                exit 1
+              fi
+              ref="$tag"
+              publish="$INPUT_PUBLISH"
+            fi
+          else
+            # A tag that points at main HEAD produces two successful Checks
+            # runs for one commit (the branch push and the tag push). Deriving
+            # the tag from the commit makes both runs agree without depending
+            # on head_branch.
+            sha="$RUN_SHA"
+            mapfile -t tags < <(git tag --points-at "$sha" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+            if [ "${#tags[@]}" -eq 0 ]; then
+              out "publish=false"
+              echo "no release tag at $sha"
+              exit 0
+            fi
+            if [ "${#tags[@]}" -ne 1 ]; then
+              echo "::error::multiple release tags at $sha: ${tags[*]}"
+              exit 1
+            fi
+            tag="${tags[0]}"
+            if ! git merge-base --is-ancestor "$sha" origin/main; then
+              echo "::error::$sha is not an ancestor of origin/main"
+              exit 1
+            fi
+            version="$(git show "$tag:package.json" | jq -r .version)"
+            if [ "$version" != "${tag#v}" ]; then
+              echo "::error::tag $tag does not match package.json version $version"
+              exit 1
+            fi
+            ref="$tag"
+            publish=true
+          fi
+
+          existing=false
+          if gh release view "$tag" > /dev/null 2>&1; then
+            existing=true
+          fi
+          out "publish=$publish"
+          out "tag=$tag"
+          out "sha=$sha"
+          out "version=$version"
+          out "ref=$ref"
+          out "existing=$existing"
+
   build:
     name: build
+    needs: resolve
+    # A workflow_run with no tag stops after resolve. A manual dispatch always
+    # builds, so a SHA dry run knows the tree passes before a tag exists.
+    if: needs.resolve.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # The environment (and, once they are moved, its secrets) is scoped to a
-    # `v*` tag policy in the repository settings; a branch cannot use it.
-    environment: release
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     env:
-      # The release must be built by the same toolchain the pull-request gate
-      # proves, not by whatever the runner happens to preinstall.
+      TAG: ${{ needs.resolve.outputs.tag }}
+      SHA: ${{ needs.resolve.outputs.sha }}
+      VERSION: ${{ needs.resolve.outputs.version }}
       ANDROID_PLATFORM: android-36
       ANDROID_BUILD_TOOLS: '36.0.0'
     steps:
-      - name: Checkout
+      - name: Checkout the resolved ref
+        # `ref` is the tag for a release and the commit for a SHA dry run. The
+        # synthetic tag from a dry run may not exist, so it is never checked out.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
-          # The ancestry check below needs the history and the tags, which a
-          # depth-1 clone that fetches one tag does not have.
+          ref: ${{ needs.resolve.outputs.ref }}
           fetch-depth: 0
-          fetch-tags: true
-      - name: The tagged commit is on main
-        run: |
-          set -euo pipefail
-          git rev-parse --verify origin/main > /dev/null
-          # A tag must name a commit main contains. With a shallow clone this
-          # check cannot answer, which is why the checkout fetches everything:
-          # refusing is the safe answer, never "assume it is on main".
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_SHA is not an ancestor of origin/main; a tag off main may not publish"
-            exit 1
-          fi
-          echo "$GITHUB_SHA is on main"
+          persist-credentials: false
       - name: Use the pinned Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
+      - name: Install the one dev-only dependency
+        run: npm ci
+      - name: Locate a Chromium binary
+        run: node scripts/find-chrome.mjs
+      - name: Gate the resolved tree
+        env:
+          CI: 'true'
+        run: npm run verify:all
+      - name: Release notes from the changelog
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          node scripts/release-notes.mjs --tag "$TAG" --commit "$SHA" --out dist/notes.md
       - name: Use JDK 21
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -60,162 +210,293 @@ jobs:
           java-version: '21'
       - name: Install the pinned SDK packages
         run: bash scripts/android-sdk.sh
-      - name: Locate a Chromium binary
+      - name: Build the unsigned APK with a throwaway key
+        # No release secret is present. The test key only keeps CI's
+        # no-new-key rule out of the way; the sign job replaces its signature.
+        env:
+          ANDROID_ALLOW_TEST_KEY: 'true'
+        run: npm run build:android
+      - name: Package the unsigned artifact
         run: |
           set -euo pipefail
-          chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
-          if [ -z "$chrome" ]; then
-            echo "::error::no Chromium on this runner; the measured layout suites cannot run"
-            exit 1
-          fi
-          "$chrome" --version
-          echo "D110_CHROME=$chrome" >> "$GITHUB_ENV"
-      - name: The tagged commit passes every gate
+          apk="android/build/drypoint-${VERSION}.apk"
+          test -f "$apk"
+          cp "$apk" "dist/drypoint-${VERSION}-unsigned.apk"
+          (
+            cd dist
+            sha256sum "drypoint-${VERSION}-unsigned.apk" > "drypoint-${VERSION}-unsigned.apk.sha256"
+            cat "drypoint-${VERSION}-unsigned.apk.sha256"
+          )
+          # Data for the sign job's independent package and certificate checks.
+          # It is read with jq there, never executed.
+          cp brand.json dist/brand.json
+      - name: The built APK matches its manifest and policy
         run: |
           set -euo pipefail
-          # The web gates plus the browser suites. The Android build, artifact
-          # check and clean-tree proof follow below; a tag cannot publish a red
-          # commit.
-          npm run verify:all
-          node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/notes.md"
-      - name: Decode the release keystore
+          node scripts/check-apk.mjs \
+            --apk "dist/drypoint-${VERSION}-unsigned.apk" \
+            --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" \
+            --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
+      - name: The build changed no tracked file
+        run: git diff --exit-code
+      - name: The build left no untracked file
+        run: test -z "$(git status --porcelain)"
+      - name: Upload the unsigned artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drypoint-unsigned
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    name: sign
+    needs: [resolve, build]
+    if: needs.resolve.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The only job that can read the signing key. Every command in it is
+    # written here; no checkout and no repository script runs in this job.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+      SHA: ${{ needs.resolve.outputs.sha }}
+      EXPECTED_CERT: ${{ vars.RELEASE_CERT_SHA256 }}
+      ANDROID_PLATFORM: android-36
+      ANDROID_BUILD_TOOLS: '36.0.0'
+    steps:
+      - name: Download the unsigned artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: drypoint-unsigned
+          path: dist
+      - name: Install the pinned build tools
+        # Workflow-owned copy of scripts/android-sdk.sh's package list; a test
+        # keeps the two lists equal so they cannot drift.
+        run: |
+          set -euo pipefail
+          sdkmanager="$(command -v sdkmanager)"
+          "$sdkmanager" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}"
+      - name: Sign, verify and describe the APK
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEYSTORE_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS"
+          unsigned="dist/drypoint-${VERSION}-unsigned.apk"
+          signed="dist/drypoint-${VERSION}.apk"
+          notes="dist/notes.md"
+          brand="dist/brand.json"
+          trap 'rm -f "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/ks-pass" "$RUNNER_TEMP/key-pass" "$RUNNER_TEMP/signed.apk"' EXIT
+
+          ( cd dist && sha256sum -c "drypoint-${VERSION}-unsigned.apk.sha256" )
+          test -f "$notes"
+          test -f "$brand"
+          if [ -z "${EXPECTED_CERT:-}" ]; then
+            echo "::error::RELEASE_CERT_SHA256 is not pinned in the release environment"
+            exit 1
+          fi
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
             echo "::error::ANDROID_KEYSTORE_BASE64 is not set; a release must be signed by the project key"
             exit 1
           fi
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
-          chmod 600 "$RUNNER_TEMP/release.jks"
-          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-      - name: Build, sign and package the APK
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEYSTORE_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          # The build refuses to invent a key when CI is set, and compares the
-          # signing certificate with brand.json.
-          CI: 'true'
-        run: |
-          set -euo pipefail
-          npm run build:android
-          version="$(node -p "require('./package.json').version")"
-          apk="android/build/drypoint-${version}.apk"
-          test -f "$apk"
-          mkdir -p dist
-          cp "$apk" "dist/drypoint-${version}.apk"
+          printf '%s' "$ANDROID_KEYSTORE_PASSWORD" > "$RUNNER_TEMP/ks-pass"
+          printf '%s' "$ANDROID_KEYSTORE_KEY_PASSWORD" > "$RUNNER_TEMP/key-pass"
+          chmod 600 "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/ks-pass" "$RUNNER_TEMP/key-pass"
+
+          "$tools/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.jks" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass "file:$RUNNER_TEMP/ks-pass" \
+            --key-pass "file:$RUNNER_TEMP/key-pass" \
+            --min-sdk-version 26 \
+            --v1-signing-enabled false \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$signed" \
+            "$unsigned"
+
+          verify="$("$tools/apksigner" verify --verbose --print-certs "$signed")"
+          printf '%s\n' "$verify"
+          printf '%s\n' "$verify" | grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true'
+          printf '%s\n' "$verify" | grep -F 'Verified using v3 scheme (APK Signature Scheme v3): true'
+
+          signer="$(printf '%s\n' "$verify" | grep -oE 'Signer #1 certificate SHA-256 digest: [0-9a-f]{64}' | awk '{print $NF}')"
+          if [ "$signer" != "$EXPECTED_CERT" ]; then
+            echo "::error::the APK signer $signer is not the pinned $EXPECTED_CERT"
+            exit 1
+          fi
+          # brand.json is repository data, read with jq and never executed. A
+          # silent fingerprint drift must fail even when the key itself is
+          # right, because the downloader reads this file.
+          brand_cert="$(jq -r .androidSigningCertificateSha256 "$brand")"
+          if [ "$brand_cert" != "$EXPECTED_CERT" ]; then
+            echo "::error::brand.json records $brand_cert, not the environment pin $EXPECTED_CERT"
+            exit 1
+          fi
+          notes_cert="$(grep -F 'Signing certificate SHA-256' "$notes" | grep -oE '[0-9a-f]{64}' | tail -1)"
+          if [ "$notes_cert" != "$EXPECTED_CERT" ]; then
+            echo "::error::the release notes name $notes_cert, not the environment pin $EXPECTED_CERT"
+            exit 1
+          fi
+
+          "$tools/zipalign" -c -v 4 "$signed" > /dev/null
+          badging="$("$tools/aapt2" dump badging "$signed")"
+          package_id="$(jq -r .appId "$brand")"
+          printf '%s\n' "$badging" | grep -F "package: name='${package_id}'"
+          printf '%s\n' "$badging" | grep -F "versionName='${VERSION}'"
+          version_code="$(printf '%s\n' "$badging" | sed -n "s/.*versionCode='\([0-9][0-9]*\)'.*/\1/p" | head -1)"
+          if [ -z "$version_code" ] || [ "$version_code" -le 0 ]; then
+            echo "::error::the APK has no positive versionCode"
+            exit 1
+          fi
+          if printf '%s\n' "$badging" | grep -q 'android.permission.INTERNET'; then
+            echo "::error::the APK requests android.permission.INTERNET"
+            exit 1
+          fi
+          launchers="$(printf '%s\n' "$badging" | grep -c "^launchable-activity: name='")"
+          if [ "$launchers" -ne 1 ]; then
+            echo "::error::the APK must have exactly one MAIN/LAUNCHER activity, found $launchers"
+            exit 1
+          fi
+
+          xmltree="$("$tools/aapt2" dump xmltree --file AndroidManifest.xml "$signed")"
+          printf '%s\n' "$xmltree" | grep -qE 'android:allowBackup\([^)]*\)=(false|\(type 0x12\)0x0)'
+          if printf '%s\n' "$xmltree" | grep -q 'android:debuggable'; then
+            echo "::error::the APK is debuggable"
+            exit 1
+          fi
+          if printf '%s\n' "$xmltree" | grep -q 'android:usesCleartextTraffic'; then
+            echo "::error::the APK allows cleartext traffic"
+            exit 1
+          fi
+          if printf '%s\n' "$xmltree" | grep -q 'android.permission.INTERNET'; then
+            echo "::error::the manifest grants android.permission.INTERNET"
+            exit 1
+          fi
+          if printf '%s\n' "$xmltree" | grep -qE 'E: (provider|service|receiver)( |$)'; then
+            echo "::error::the APK declares a provider, service or receiver"
+            exit 1
+          fi
+          activities="$(printf '%s\n' "$xmltree" | grep -cE 'E: activity( |$)')"
+          exported="$(printf '%s\n' "$xmltree" | grep -cE 'android:exported\([^)]*\)=true')"
+          if [ "$activities" -ne 1 ] || [ "$exported" -ne 1 ]; then
+            echo "::error::the APK must have one activity and one exported component (activities=$activities exported=$exported)"
+            exit 1
+          fi
+          if ! printf '%s\n' "$xmltree" | grep -q 'android.intent.action.MAIN'; then
+            echo "::error::the launcher activity has no MAIN action"
+            exit 1
+          fi
+          if ! printf '%s\n' "$xmltree" | grep -q 'android.intent.category.LAUNCHER'; then
+            echo "::error::the launcher activity has no LAUNCHER category"
+            exit 1
+          fi
+
           (
             cd dist
-            sha256sum "drypoint-${version}.apk" > "drypoint-${version}.apk.sha256"
-            cat "drypoint-${version}.apk.sha256"
+            sha256sum "drypoint-${VERSION}.apk" > "drypoint-${VERSION}.apk.sha256"
+            cat "drypoint-${VERSION}.apk.sha256"
           )
-      - name: The built APK matches its manifest and policy
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          apk="android/build/drypoint-${version}.apk"
-          # The template tests prove the source; this proves the bytes that
-          # would be installed: every assets/www entry, no INTERNET permission
-          # and allowBackup=false.
-          node scripts/check-apk.mjs \
-            --apk "$apk" \
-            --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2"
-      - name: Attest the APK's provenance
+      - name: Attest the signed APK
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/drypoint-*.apk
+          subject-path: dist/drypoint-${{ needs.resolve.outputs.version }}.apk
       - name: Download the provenance bundle
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
           (
             cd dist
             # Linux writes sha256:<digest>.jsonl; Windows uses a dash. There is
             # no --bundle flag, so find the one file either spelling wrote.
-            gh attestation download "drypoint-${version}.apk" -R "$GITHUB_REPOSITORY"
+            gh attestation download "drypoint-${VERSION}.apk" -R "$GITHUB_REPOSITORY"
             bundle="$(find . -maxdepth 1 -type f -name 'sha256*.jsonl' -print -quit)"
             if [ -z "$bundle" ]; then
               echo "::error::gh attestation download wrote no bundle"
               exit 1
             fi
-            mv "$bundle" "drypoint-${version}.apk.intoto.jsonl"
+            mv "$bundle" "drypoint-${VERSION}.apk.intoto.jsonl"
           )
-          test -f "dist/drypoint-${version}.apk.intoto.jsonl"
+          test -f "dist/drypoint-${VERSION}.apk.intoto.jsonl"
       - name: Upload the release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: drypoint-release
-          path: dist/*
+          path: |
+            dist/drypoint-${{ needs.resolve.outputs.version }}.apk
+            dist/drypoint-${{ needs.resolve.outputs.version }}.apk.sha256
+            dist/drypoint-${{ needs.resolve.outputs.version }}.apk.intoto.jsonl
+            dist/notes.md
           if-no-files-found: error
           retention-days: 7
-      - name: The build changed no tracked file
-        run: git diff --exit-code
-      - name: The build left no untracked file
-        run: test -z "$(git status --porcelain)"
 
   publish:
     name: publish
-    needs: build
+    needs: [resolve, sign]
+    if: needs.resolve.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # The only job that can write the release. It holds no secret, checks out
+    # nothing and runs no repository code: the assets are the sign job's bytes.
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.resolve.outputs.tag }}
+      VERSION: ${{ needs.resolve.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Use the pinned Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
       - name: Download the release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: drypoint-release
           path: dist
-      - name: Release notes from the changelog
-        run: node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/notes.md"
       - name: Publish the release, or prove it already is
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          apk="dist/drypoint-${version}.apk"
+          apk="dist/drypoint-${VERSION}.apk"
           checksum="${apk}.sha256"
+          bundle="dist/drypoint-${VERSION}.apk.intoto.jsonl"
+          notes="dist/notes.md"
+          for file in "$apk" "$checksum" "$bundle" "$notes"; do test -f "$file"; done
 
           # A re-run of this workflow for the same tag must not fail, and must
           # not silently accept a release that carries different bytes. It
           # exits 0 only when the existing release's assets match the ones this
           # run built and verified.
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/existing" --clobber
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release download "$TAG" --dir "$RUNNER_TEMP/existing" --clobber
             for asset in \
-              "drypoint-${version}.apk" \
-              "drypoint-${version}.apk.sha256" \
-              "drypoint-${version}.apk.intoto.jsonl"; do
+              "drypoint-${VERSION}.apk" \
+              "drypoint-${VERSION}.apk.sha256" \
+              "drypoint-${VERSION}.apk.intoto.jsonl"; do
               if ! cmp -s "dist/${asset}" "$RUNNER_TEMP/existing/${asset}"; then
                 echo "::error::the existing release asset ${asset} differs from this build"
                 exit 1
               fi
             done
-            echo "::notice::release $GITHUB_REF_NAME already exists with these exact assets"
+            echo "::notice::release $TAG already exists with these exact assets"
             exit 0
           fi
 
-          # Tags are strict vMAJOR.MINOR.PATCH (release-notes.mjs refuses
-          # anything else), so a prerelease tag cannot reach this point.
-          gh release create \
-            "$GITHUB_REF_NAME" \
+          # Tags are strict vMAJOR.MINOR.PATCH and the resolve step verified the
+          # tag's own tree, so this command only ever creates the release the
+          # build job proved.
+          gh release create "$TAG" \
             "$apk" \
             "$checksum" \
-            "dist/drypoint-${version}.apk.intoto.jsonl" \
+            "$bundle" \
             --verify-tag \
-            --title "v${version}" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
+            --title "v${VERSION}" \
+            --notes-file "$notes" \
             --latest
