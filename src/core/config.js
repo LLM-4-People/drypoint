@@ -205,7 +205,13 @@ export const CONFIG = deepFreeze({
     sppService: '00001101-0000-1000-8000-00805f9b34fb',
     bleService: 'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
     bleCharacteristic: 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f',
-    bleNamePrefixes: ['D110', 'NIIMBOT', 'B1', 'B21'],
+    /**
+     * The discovery filter, not a support claim: a device whose name starts
+     * with one of these is offered to the picker and then identified by its
+     * reported id, which the model gate alone judges. B1 covers B18/B18S and
+     * B2 covers B2/B21, so the catalogue names are not repeated as prefixes.
+     */
+    bleNamePrefixes: ['D110', 'D11', 'B1', 'B2', 'B21', 'N1', 'H1', 'D101', 'NIIMBOT'],
     bleWritePacingMs: 12,
     /**
      * A transport open() that never settles (a GATT connect that stalls, a port

@@ -203,7 +203,8 @@ test('the README is the public front door', () => {
   assert.match(readme, /releases\/latest/, 'the APK download link');
   assert.match(readme, /\*\*D110_M\*\* \| Tested/);
   assert.match(readme, /\*\*D11_H\*\* \| Experimental/);
-  assert.match(readme, /Every other known NIIMBOT model \| Not supported/);
+  assert.match(readme, /Every other id the app recognises \| Not supported/);
+  assert.match(readme, /names 21 ids/, 'the README states the named-refusal scope, not every vendor model');
   assert.match(readme, /not affiliated with NIIMBOT/i);
   assert.match(readme, /## Privacy/);
   assert.match(readme, /No network/);

@@ -25,6 +25,12 @@ const CATALOGUE = Object.freeze({
   0x0200: ['D11', 'unsupported'],
   0x0202: ['D11S', 'unsupported'],
   0x0213: ['D11_Pro', 'unsupported'],
+  0x0e00: ['B18', 'unsupported'],
+  0x0e01: ['B18S', 'unsupported'],
+  0x0e02: ['N1', 'unsupported'],
+  0x0f00: ['H1', 'unsupported'],
+  0x1100: ['H1S', 'unsupported'],
+  0x0a00: ['D101', 'unsupported'],
   0x1000: ['B1', 'unsupported'],
   0x1001: ['B1 Pro', 'unsupported'],
   0x1002: ['B1 SE', 'unsupported'],
@@ -77,7 +83,22 @@ test('only D110_M is confirmed and only D11_H is experimental', () => {
     MODELS.filter((entry) => entry.support === 'experimental').map((entry) => entry.name),
     ['D11_H']
   );
-  assert.equal(MODELS.filter((entry) => entry.support === 'unsupported').length, 13);
+  assert.equal(MODELS.filter((entry) => entry.support === 'unsupported').length, 19);
+});
+
+test('every named model is reachable by the one discovery filter', () => {
+  // A row the picker can never offer is dead weight: the prefix list is the
+  // only discovery filter, and the id gate remains the authority afterwards.
+  for (const entry of MODELS) {
+    const first = entry.name.split(' / ')[0];
+    assert.ok(
+      CONFIG.transport.bleNamePrefixes.some((prefix) => first.startsWith(prefix)),
+      `${entry.name} (${first}) starts with no configured BLE prefix`
+    );
+  }
+  // A discovery filter is not a support claim.
+  assert.ok(CONFIG.transport.bleNamePrefixes.includes('N1'));
+  assert.ok(!MODELS.some((entry) => entry.name === 'N1' && entry.support !== 'unsupported'));
 });
 
 test('the one-byte model reply still resolves the high-byte id', () => {
@@ -147,6 +168,12 @@ test('the gate blocks an unsupported model with its real name and sends nothing'
     [0x1000, 'B1'],
     [0x0900, 'D110'],
     [0x0210, 'D11_H'],
+    [0x0e00, 'B18'],
+    [0x0e01, 'B18S'],
+    [0x0e02, 'N1'],
+    [0x0f00, 'H1'],
+    [0x1100, 'H1S'],
+    [0x0a00, 'D101'],
   ]) {
     const entry = modelFor(code);
     const merged = printable({

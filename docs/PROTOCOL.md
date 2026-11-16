@@ -208,26 +208,11 @@ event and otherwise ignored.
 
 ## Supported models and the print gate
 
-`src/protocol/models.js` is the one model table. `support` is a product fact,
+`src/protocol/models.js` is the one model table, and
+[the printer support matrix](PRINTERS.md) is the one human-readable copy: one
+row per id, with the head evidence and what a new model would need. This page
+does not repeat the list, so the two cannot drift. `support` is a product fact,
 not a firmware guess:
-
-| Id | Vendor name | Support |
-| --- | --- | --- |
-| `0x0900` | D110 | not supported |
-| `0x0910` | D110_M | **confirmed** |
-| `0x0210` | D11_H | experimental |
-| `0x0200` | D11 | not supported |
-| `0x0202` | D11S | not supported |
-| `0x0213` | D11_Pro | not supported |
-| `0x1000` | B1 | not supported |
-| `0x1001` | B1 Pro | not supported |
-| `0x1002` | B1 SE | not supported |
-| `0x1B00` | B2 Pro | not supported |
-| `0x1B01` | B2 | not supported |
-| `0x0300` | B21 | not supported |
-| `0x0309` | B21S | not supported |
-| `0x0311` | B21 Pro | not supported |
-| `0x0901` | D110 / Hi-D110 (vendor-ambiguous) | not supported |
 
 - **confirmed** — the D110M V4 sequence is verified on that hardware.
 - **experimental** — the sequence is offered, but the one pre-print confirmation

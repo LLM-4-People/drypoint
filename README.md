@@ -17,7 +17,7 @@ hardware you already own; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 | --- | --- | --- |
 | **D110_M** | Tested | The reference unit: discovery, the print sequence and every fact below were captured from and verified on retail hardware. |
 | **D11_H** | Experimental | Same protocol family, but the D110M V4 print sequence has not been verified on this model. The app asks for confirmation before it prints or runs the self-test. |
-| Every other known NIIMBOT model | Not supported | The model is recognised and named; every command that writes to the printer is refused before a frame, while read-only diagnostics remain available. |
+| Every other id the app recognises | Not supported | The id is recognised and named in [docs/PRINTERS.md](docs/PRINTERS.md); every command that writes to the printer is refused before a frame, while read-only diagnostics remain available. The table names 21 ids; the vendor catalogue has more models, and an id outside the table is `Unknown` and blocked. |
 | Any model the printer reports outside the table | Unknown | Every write stays disabled: the app never guesses a model. |
 
 The table of every recognised id, the one measured head and what each model

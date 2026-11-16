@@ -35,6 +35,12 @@ property of the head, not a claim about the roll in the printer.
 | D11 | `0x0200` | Not supported | Not measured | Not measured | Known id outside the verified path; the D110M V4 sequence is not established for it. | The same evidence as above. |
 | D11S | `0x0202` | Not supported | Not measured | Not measured | Known id outside the verified path. | The same evidence as above. |
 | D11_Pro | `0x0213` | Not supported | Not measured | Not measured | Known id outside the verified path. | The same evidence as above. |
+| B18 | `0x0e00` | Not supported | Vendor: 96 dots at 203 dpi; not measured here | Not measured | A 12 mm sibling from the vendor catalogue; its print task is not established and no D110M V4 print was captured. | A captured handshake and print, and the task its firmware accepts. |
+| B18S | `0x0e01` | Not supported | Vendor: 96 dots at 203 dpi; not measured here | Not measured | The same 12 mm sibling family; the print task is not established. | The same evidence as B18. |
+| N1 | `0x0e02` | Not supported | Vendor: 96 dots at 203 dpi; no head-width report on the device | Not measured | An independent capture shows its firmware refusing the 13-byte `SetPageSize`/`PageEnd` of the D110M V4 sequence (`0xDB 06`) and printing with the `b1` task; it reports no head width on the `0xDC[0x03]` probe. | A captured handshake and the task its firmware accepts; head-width evidence. |
+| H1 | `0x0f00` | Not supported | Vendor: 96 dots at 203 dpi; not measured here | Not measured | A 12 mm sibling from the vendor catalogue; its print task is not established. | A captured handshake and print. |
+| H1S | `0x1100` | Not supported | Vendor: 96 dots at 203 dpi; not measured here | Not measured | It uses its own task (2-byte `PrintStart`, 9-byte `SetPageSize`, `PageStart`), not the D110M V4 sequence. | A model-specific implementation and a hardware test. |
+| D101 | `0x0a00` | Not supported | Vendor: 192 dots at 203 dpi; 24 mm head | 24 mm stock | The D110M V4 sequence is reported to work, but the D101 head is 24 mm and this app is scoped to 12 mm; the geometry gate would refuse the label. This is a scope refusal, not a protocol failure. | A 24 mm product scope decision and a capture in this repo. |
 | B1 | `0x1000` | Not supported | Not measured | Not measured | A different printer family; this app only speaks the 12 mm D110 path. | A model-specific protocol implementation, not just an id. |
 | B1 Pro | `0x1001` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
 | B1 SE | `0x1002` | Not supported | Not measured | Not measured | A different printer family. | A model-specific protocol implementation. |
@@ -82,8 +88,10 @@ Align one label**, then set the document length to match the stock.
 
 ## How to propose a new model
 
-A model is added when there is evidence, never when a name looks close. A pull
-request that adds one should carry:
+A model is added when there is evidence, never when a name looks close. The two
+additions have different bars.
+
+**A supported model** (tested or experimental) needs all of:
 
 1. The id the printer reports (`GetInfo` key `0x08`, the `0xDE` heartbeat, and
    the capability TLV `0x0A` head width if it answers them).
@@ -93,6 +101,13 @@ request that adds one should carry:
    tag.
 5. The change in `src/protocol/models.js` plus this page, and a test that pins
    the new id.
+
+**A named refusal** may be added from the vendor catalogue's `codes[]`
+(`https://print.niimbot.com/api/hardware/list`), because it only ever blocks:
+the row must say the print task is unestablished and that no print was
+captured here. Promotion to experimental or tested still needs the full
+evidence above. This is why B18, B18S, N1, H1, H1S and D101 are listed as
+named refusals.
 
 An unsupported id is not a bug. Refusing every write to a model whose task is
 unknown is the safety property: a guessed sequence can feed the wrong rows to a

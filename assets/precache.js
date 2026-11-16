@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: '7041369040da404a',
+  version: 'b1f21fa9443815e8',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -93,7 +93,7 @@ self.__PRECACHE = {
     'index.html': 'ee2d184889efc6eada1bc579b5bf353ff5da4d514088c31906800cc021b4ce6d',
     'manifest.webmanifest': 'a10e67c48b85ab46e6ed82d1e0069c11c1bf41f14ced34af76e987c54e629c64',
     'src/core/brand.js': '32c84f1ae52254f0948feb3f4513b5124ec8e46c7063adf7ec55bdcd63c9017f',
-    'src/core/config.js': '45115fc7f6955ab0a532d775e892f4206735ff37304f90f3f3ba70fe2fbde796',
+    'src/core/config.js': '451648701eaf4d85f18e7664d688acf01ae2de4d96a204767ed8cb48dfc69444',
     'src/core/dom.js': '104d1f832a8421d800ff0c87d9b776d9f9daa3fe83748906ac6b230936c56f3f',
     'src/core/events.js': 'f5f36474ae1e697206e4997916dcd865f86ea364f9cc3ef176f1e2e0feb6ec9f',
     'src/core/format.js': '45b3775d02e1322d3795b8b9be89ebeaff9f7ec298796a5e03edfe8d17ba1842',
@@ -122,7 +122,7 @@ self.__PRECACHE = {
     'src/label/history.js': 'f3fc8d4307a33bca893a1598a5aa7dbd62465dcbc6168b6d1f7bb5837ec69beb',
     'src/label/images.js': 'ae47a4225dcbb5e4ac57aec4b6b393bd8639962069034d743affc97eb3467ac9',
     'src/label/qr.js': '69299f52d5ecb7ac786c62ad352903ca1ffe7aeaa29c195245173684e9f1e393',
-    'src/label/raster.js': 'aef492e9ca07c2a2719d95795bb4d8e5c9b27ba6a32ab968dea22cfe84c9baa6',
+    'src/label/raster.js': '169d9a237956126ee79084bba5ddb047c1675caf213cb6d2bce62685fde409d3',
     'src/label/render.js': 'd3975ae54530d9490e2195c4aa3ed1d205157de888bbcb8bce919c7420d8f375',
     'src/label/schema.js': '141ff28dd1e8efc1a4c093d4f381f97eb71df561d26bcc9971b0a48dc2e2408b',
     'src/label/templates.js': '165b47fc6bee66c8f7121053bd24d26227ac0d951300b56714b0c0e2fc17142a',
@@ -133,7 +133,7 @@ self.__PRECACHE = {
     'src/protocol/commands.js': 'fb406fce789c8007e8d929148c92f697c4d1b36a3279eb32af9deaf7b6f5c2b6',
     'src/protocol/errors.js': '2ab17da4ec3ed375bfcf49cd7ef6daef721374b5dfe7c8958e2c874455a9505d',
     'src/protocol/frames.js': '10e783b8d7ce95683e984f9b042595daa178f0d205291ae888aa967af406739d',
-    'src/protocol/models.js': 'c746fc21451066a03a595951e1ea7827d07bd3f368dc2dfe4257f8faec4317e0',
+    'src/protocol/models.js': 'e516fd91174c95fbbed9a85c27f9e34814f6954850ed312247c9054223920305',
     'src/protocol/replies.js': '2b0dc78eda71a2cb88c6ca0a561bbc9e8743130f53f4901015cf19cb0bc2b041',
     'src/protocol/session.js': '1fb73b4637a9d94195a970eeb8b1f721ff27a86b08fbe5d4940d4dfdf1d5a2e8',
     'src/ui/canvas-name.js': 'ddb034abbadc4540847243f58a54b9dd18727a86666b90b4a547a73d18e1030c',
