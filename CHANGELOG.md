@@ -15,6 +15,17 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 
 ### Added
 
+- **Labels live in an IndexedDB library.** The single stored document is
+  migrated into label metadata, validated documents, undo histories and view
+  sessions. An unreadable legacy value stays quarantined while every other label
+  keeps saving.
+- **Undo and redo survive a reload.** History is persisted separately from the
+  document and hydrated without turning the load into an undo step.
+- **The last view returns with the label.** Selection, tab and scroll offsets are
+  stored per label and restored after the first render.
+- **The last printer is preferred on reconnect.** The web app remembers the BLE
+  or serial identity and uses it on the next automatic or manual connect. A
+  reload never claims the old connection is still live.
 - The site publishes a generated social card and Open Graph and Twitter
   metadata, so a shared link previews the product instead of a bare URL.
 
@@ -36,7 +47,8 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - **An unreadable stored label is quarantined, not replaced.** A label whose
   stored value cannot be parsed is kept as raw bytes behind a banner; edits
   cannot overwrite it until the operator resets it, and Reset now asks first.
-  A v3 label with no valid element list is quarantined; a v3 label whose
+  Other labels keep saving, and Reset removes the legacy value and opens a fresh
+  label. A v3 label with no valid element list is quarantined; a v3 label whose
   geometry has to be bounded loads with a notice. Both report what changed.
 - **A lost link is described honestly.** A disconnect after the page counter
   proved the copies, but before the printer confirmed the end of the job, says

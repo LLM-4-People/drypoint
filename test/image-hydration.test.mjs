@@ -9,7 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { openApp, withPage } from './helpers/browser-page.mjs';
+import { clearStorage, openApp, withPage } from './helpers/browser-page.mjs';
 
 const IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR42mO4IyLyHxkzkC4AAEOYIDG5ZtfkAAAAAElFTkSuQmCC';
 
@@ -17,6 +17,9 @@ test('a hidden image revealed after boot is decoded and painted', async (t) => {
   await withPage(t, async ({ cdp, port }) => {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 900, deviceScaleFactor: 1, mobile: false });
     await openApp(cdp, port);
+    // Start from an empty library so the seeded legacy value is the one the
+    // migration reads, not a second label beside the boot default.
+    await clearStorage(cdp);
 
     // Seed the one stored document the app reads at boot. The image starts
     // hidden, so neither the boot hydration nor the first render decodes it.

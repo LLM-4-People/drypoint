@@ -205,10 +205,17 @@ time.
 ## How the web app is hosted
 
 `MainActivity` intercepts requests for `https://drypoint.local` and serves them from
-`assets/www`. A stable https origin is what makes ES modules, `localStorage` and
-the normal code paths work; no HTTP server, port or cleartext traffic is
-involved. The service worker is skipped in the shell because the assets are
-already on disk (and a stale worker cache would survive an APK update).
+`assets/www`. A stable https origin is what makes ES modules, `localStorage`,
+IndexedDB and the normal code paths work; no HTTP server, port or cleartext
+traffic is involved. The service worker is skipped in the shell because the
+assets are already on disk (and a stale worker cache would survive an APK
+update).
+
+The WebView stores IndexedDB in the app's private data directory. It survives an
+APK update, but an uninstall or Clear storage removes the whole label library.
+The website and the APK are different origins, so their stores are separate.
+On-device IndexedDB persistence in the real WebView is not covered by the desktop
+Chromium tests and stays unverified hardware.
 
 `MainActivity.isAppUrl` is the one definition of "the app": an `https` URL on the
 one host. `isEmbeddedScheme` is the one definition of a locally resolved
@@ -228,11 +235,11 @@ this order:
 
 The manifest declares no `INTERNET` permission, no `provider`, `service` or
 `receiver`, and `android:exported="true"` only on the launcher activity.
-`android:allowBackup="false"` disables cloud backup for the label documents,
-the layout state and the paired printer's Bluetooth address; device-to-device
-migration is controlled by the manufacturer and cannot be disabled by the app on
-every device targeting Android 12+ (API 31). Some device makers still copy app
-files during a device transfer.
+`android:allowBackup="false"` disables cloud backup for the label library and
+its view state, the layout state and the paired printer's Bluetooth address;
+device-to-device migration is controlled by the manufacturer and cannot be
+disabled by the app on every device targeting Android 12+ (API 31). Some device
+makers still copy app files during a device transfer.
 
 **On-device check for the scheme policy.** The native WebView path cannot run in
 CI, so verify it once on a phone:

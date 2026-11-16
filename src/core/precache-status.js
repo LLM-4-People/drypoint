@@ -50,16 +50,28 @@ export function registerPrecacheErrors(serviceWorker, { log, toast }) {
  * test failure, not an invisible regression.
  *
  * @param {{serviceWorker?: object|null, isAndroidShell?: boolean,
- *          addWindowListener: Function, log: object, toast: Function}} options
+ *          addWindowListener: Function, log: object, toast: Function,
+ *          readyState?: string}} options
  * @returns {boolean} whether this boot registered the offline shell
  */
-export function bootOfflineShell({ serviceWorker = null, isAndroidShell = false, addWindowListener, log, toast }) {
+export function bootOfflineShell({
+  serviceWorker = null,
+  isAndroidShell = false,
+  addWindowListener,
+  log,
+  toast,
+  // The page may finish loading during a top-level await before this owner
+  // runs. Registering only on a future `load` would then never happen.
+  readyState = 'loading',
+}) {
   if (!serviceWorker || isAndroidShell) return false;
   registerPrecacheErrors(serviceWorker, { log, toast });
-  addWindowListener('load', () => {
+  const register = () => {
     // Bypass the HTTP cache for the worker and its imported manifest so a
     // deploy is picked up even behind an aggressively caching static host.
     serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch((error) => log.warn('service worker failed', { message: error.message }));
-  });
+  };
+  if (readyState === 'complete') register();
+  else addWindowListener('load', register);
   return true;
 }

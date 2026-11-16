@@ -684,6 +684,30 @@ test('the boot boundary does nothing without a worker or inside the Android shel
   assert.equal(windowTouched, 0, 'neither shell subscribes to load or a failure message');
 });
 
+test('a boot that finishes after load registers immediately', async () => {
+  const registered = [];
+  let windowTouched = 0;
+  const serviceWorker = {
+    addEventListener() {},
+    async register(url, options) {
+      registered.push([url, options]);
+    },
+  };
+  assert.equal(
+    bootOfflineShell({
+      serviceWorker,
+      readyState: 'complete',
+      addWindowListener: () => { windowTouched += 1; },
+      log: { error() {}, warn() {} },
+      toast() {},
+    }),
+    true
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(registered, [['sw.js', { updateViaCache: 'none' }]], 'a completed load has no future event to wait for');
+  assert.equal(windowTouched, 0, 'no stale load listener is installed');
+});
+
 /* ---------------- deep in-scope navigations keep their assets (P-F1) ---------------- */
 
 /** The index document the fake cache serves, as text. */

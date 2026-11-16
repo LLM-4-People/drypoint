@@ -286,7 +286,7 @@ test('the file surface names every saveFile caller', () => {
 });
 
 test('the backup claim does not promise a D2D copy is impossible', () => {
-  const clause = /device-to-device\s+migration is controlled by the manufacturer and\s+cannot be disabled by the app on/;
+  const clause = /device-to-device\s+migration is controlled by the manufacturer and\s+cannot be\s+disabled by the app on/;
   assert.match(read('docs/ANDROID.md'), clause);
   assert.match(read('android/AndroidManifest.template.xml'), clause);
   assert.doesNotMatch(read('docs/ANDROID.md'), /never copied into a cloud or\s+device-to-device backup/);
@@ -373,7 +373,7 @@ test('the README and ARCHITECTURE storage-key tables are the storageKey() calls'
     }
   }
   const expected = [...keys].sort();
-  assert.equal(expected.length, 4, 'document, settings, rolls and zoom are the whole set');
+  assert.equal(expected.length, 5, 'document, settings, rolls, zoom and printer are the whole set');
 
   const readmeRows = tableRows(read('README.md'), '## Storage keys');
   const readmeKeys = readmeRows.map(([key]) => key.replaceAll('`', '').trim()).sort();
@@ -445,7 +445,7 @@ test('the 12 mm scope and the protocol-compatible refusals are stated', () => {
 test('the README states when printer settings are mirrored and where copies lives', () => {
   const readme = read('README.md');
   const start = readme.indexOf('**Density and tape type come from the printer when');
-  const end = readme.indexOf('- **One document at a time.**');
+  const end = readme.indexOf('- **Labels are local to one origin.**');
   const bullet = readme.slice(start, end);
   assert.ok(start >= 0 && end > start, 'the settings limitation bullet exists');
   assert.match(bullet, /`Read printer settings`/);

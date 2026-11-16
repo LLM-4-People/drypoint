@@ -58,7 +58,8 @@ function withPermissionHint(error) {
 }
 
 export class SerialTransport {
-  kind = 'serial';
+  static kind = 'serial';
+  kind = SerialTransport.kind;
   #port = null;
   #reader = null;
   #writer = null;
@@ -70,7 +71,11 @@ export class SerialTransport {
     return typeof navigator !== 'undefined' && 'serial' in navigator;
   }
 
-  static async granted() {
+  /**
+   * Web Serial has no stable port identity. The signature accepts the saved
+   * preference for contract symmetry, then keeps the first granted SPP port.
+   */
+  static async granted(_preferred = null) {
     if (!SerialTransport.available()) return null;
     let ports;
     try {
@@ -153,6 +158,11 @@ export class SerialTransport {
 
   describe() {
     return 'Bluetooth serial (SPP)';
+  }
+
+  /** Web Serial exposes no stable port id; the kind and name are the identity. */
+  identity() {
+    return { kind: SerialTransport.kind, id: '', name: 'Bluetooth serial (SPP)' };
   }
 
   async close() {

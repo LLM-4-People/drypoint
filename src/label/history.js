@@ -5,6 +5,7 @@
 
 import { CONFIG } from '../core/config.js';
 import { deepClone } from '../core/format.js';
+import { validateDocument } from './schema.js';
 
 /** Per-snapshot overhead that excludes the strings inside the snapshot. */
 const DOCUMENT_OVERHEAD_BYTES = 256;
@@ -92,6 +93,51 @@ export function estimateDocumentBytes(document) {
 }
 
 /**
+ * Normalize a persisted `{ past, future }` history.
+ *
+ * Persistence is a trust boundary: every snapshot must pass
+ * `validateDocument`; an invalid one is dropped without rejecting the rest.
+ * The entry cap and the byte budget are reapplied, so a stored history cannot
+ * exceed the limits the live history already enforces. The one-step floor is
+ * kept: a single past snapshot larger than the budget still remains so the
+ * operator has an honest undo target.
+ *
+ * @param {unknown} value
+ * @param {{limit?: number, maxBytes?: number}} [options]
+ * @returns {{past: object[], future: object[]}}
+ */
+export function normaliseHistory(value, { limit = CONFIG.history.maxEntries, maxBytes = CONFIG.history.maxBytes } = {}) {
+  const entryLimit = Number.isFinite(limit) && limit > 0 ? Math.max(1, Math.floor(limit)) : CONFIG.history.maxEntries;
+  const byteBudget = Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : CONFIG.history.maxBytes;
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const valid = (list) => {
+    const snapshots = [];
+    for (const entry of Array.isArray(list) ? list : []) {
+      try {
+        snapshots.push(validateDocument(entry));
+      } catch {
+        // One unreadable snapshot costs that snapshot, not the label history.
+      }
+    }
+    return snapshots;
+  };
+  // `past` grows at the end, so the newest entries are kept. `future` is popped
+  // from the end, so the nearest redo entries are the ones at the front.
+  let past = valid(source.past).slice(-entryLimit);
+  let future = valid(source.future).slice(0, entryLimit);
+  let bytes = 0;
+  for (const snapshot of past) bytes += estimateDocumentBytes(snapshot);
+  for (const snapshot of future) bytes += estimateDocumentBytes(snapshot);
+  while (bytes > byteBudget && past.length > 1) {
+    bytes -= estimateDocumentBytes(past.shift());
+  }
+  while (bytes > byteBudget && future.length > 0) {
+    bytes -= estimateDocumentBytes(future.pop());
+  }
+  return { past, future };
+}
+
+/**
  * Structural comparison that ignores object key order. Documents are plain
  * JSON, so a clone that only reordered keys must not create an undo step.
  */
@@ -154,6 +200,27 @@ export function createHistory({
     /** Snapshots still retained, including the present document. */
     get retainedEntries() {
       return past.length + future.length + (present === null ? 0 : 1);
+    },
+    /** The persisted half of the history: every undo and redo document. */
+    snapshot() {
+      return { past: deepClone(past), future: deepClone(future) };
+    },
+    /**
+     * Replace the present document and both stacks without recording an undo
+     * step. Hydration passes `silent: true`; a later edit, undo or redo still
+     * notifies normally.
+     *
+     * @param {{present: object, past?: object[], future?: object[]}} value
+     * @param {{silent?: boolean}} [options]
+     */
+    restore({ present: nextPresent, past: nextPast = [], future: nextFuture = [] } = {}, { silent = false } = {}) {
+      const normalised = normaliseHistory({ past: nextPast, future: nextFuture }, { limit: entryLimit, maxBytes: byteBudget });
+      present = nextPresent === null || nextPresent === undefined ? null : deepClone(nextPresent);
+      past = normalised.past;
+      future = normalised.future;
+      coalesce = { key: null, at: 0 };
+      trim();
+      if (!silent) notify();
     },
     reset(document) {
       present = deepClone(document);

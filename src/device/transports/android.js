@@ -138,7 +138,8 @@ function cancelPick() {
 }
 
 export class AndroidTransport {
-  kind = 'android';
+  static kind = 'android';
+  kind = AndroidTransport.kind;
   #device = null;
   #onData = () => {};
   #onClose = () => {};
@@ -148,7 +149,11 @@ export class AndroidTransport {
     return Boolean(bridge());
   }
 
-  static async granted() {
+  /**
+   * The native bridge already owns `lastDevice`, so the web identity is
+   * ignored. The argument keeps the transport contract symmetric.
+   */
+  static async granted(_preferred = null) {
     const api = bridge();
     if (!api || typeof api.lastDevice !== 'function') return null;
     try {
@@ -220,6 +225,15 @@ export class AndroidTransport {
 
   describe() {
     return `Bluetooth LE (${this.#device?.name ?? 'D110'})`;
+  }
+
+  /** Reported to the manager; the web key is not written for Android. */
+  identity() {
+    return {
+      kind: AndroidTransport.kind,
+      id: typeof this.#device?.id === 'string' ? this.#device.id : '',
+      name: typeof this.#device?.name === 'string' ? this.#device.name : '',
+    };
   }
 
   async close() {

@@ -43,6 +43,9 @@ export const INVALID_ELEMENT_LIST_MESSAGE = 'That label has no valid element lis
  */
 export const DOCUMENT_TOO_DEEP_MESSAGE = 'That label is nested too deeply to be read.';
 
+/** The one fallback name for a document whose own name is empty. */
+export const DEFAULT_LABEL_NAME = 'Untitled';
+
 function defaultsFor(type) {
   const widthPx = geometry().widthPx;
   const common = {
@@ -81,7 +84,7 @@ export function createElement(type, props = {}) {
 export function createDocument(overrides = {}) {
   const document = {
     version: CONFIG.app.documentVersion,
-    name: 'Untitled',
+    name: DEFAULT_LABEL_NAME,
     copies: CONFIG.print.copies.default,
     ...overrides,
     // The length is clamped before anything sizes itself from it, so a seeded
@@ -440,7 +443,7 @@ export function validateDocument(input) {
   // or future field can never ride along into history or a saved file.
   const document = {
     version: CONFIG.app.documentVersion,
-    name: clampText(typeof source.name === 'string' ? source.name : 'Untitled', maxNameChars),
+    name: clampText(typeof source.name === 'string' ? source.name : DEFAULT_LABEL_NAME, maxNameChars),
     lengthMm,
     copies: clamp(Math.round(finite(source.copies, 1)), CONFIG.print.copies.min, CONFIG.print.copies.max),
     elements: [],

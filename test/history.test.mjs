@@ -96,6 +96,50 @@ test('the size estimate counts the image source and every element, without seria
   assert.ok(large > small + IMAGE_SRC.length / 2, 'the image dominates the estimate');
 });
 
+/* ---------------- persisted snapshot and restore ---------------- */
+
+test('snapshot returns an independent copy of both stacks', () => {
+  const history = createHistory({ initial: doc('A') });
+  history.commit(doc('B'));
+  const snapshot = history.snapshot();
+  assert.equal(snapshot.past.length, 1);
+  assert.equal(snapshot.future.length, 0);
+  snapshot.past[0].elements[0].text = 'mutated';
+  assert.equal(history.undo().elements[0].text, 'A', 'mutating a snapshot must not rewrite history');
+});
+
+test('restore replaces present and both stacks without an undo step', () => {
+  const changes = [];
+  const history = createHistory({ initial: doc('A'), onChange: (state) => changes.push(state) });
+  history.restore({ present: doc('Present'), past: [doc('Past')], future: [doc('Future')] }, { silent: true });
+  assert.deepEqual(changes, [], 'silent restore does not notify');
+  assert.equal(history.present.elements[0].text, 'Present');
+  assert.equal(history.canUndo(), true);
+  assert.equal(history.canRedo(), true);
+  assert.equal(history.undo().elements[0].text, 'Past', 'the restored past is the undo target');
+  assert.equal(history.redo().elements[0].text, 'Present');
+  assert.equal(history.redo().elements[0].text, 'Future');
+});
+
+test('a non-silent restore notifies and resets coalescing', () => {
+  const changes = [];
+  const history = createHistory({ initial: doc('A'), onChange: (state) => changes.push(state) });
+  history.commit(doc('B'), { coalesceKey: 'typing' });
+  history.restore({ present: doc('Restored'), past: [doc('Old')], future: [] });
+  assert.equal(changes.length, 2, 'the commit and the restore each notified');
+  history.commit(doc('After'), { coalesceKey: 'typing' });
+  assert.equal(history.undo().elements[0].text, 'Restored', 'a restore breaks the old coalescing window');
+});
+
+test('restore reapplies the entry cap and the byte budget', () => {
+  const past = Array.from({ length: CONFIG.history.maxEntries + 3 }, (_, index) => doc(`Past ${index}`));
+  const history = createHistory({ initial: doc('Present') });
+  history.restore({ present: doc('Present'), past, future: [] }, { silent: true });
+  assert.equal(history.retainedEntries, CONFIG.history.maxEntries + 1);
+  assert.equal(history.undo().elements[0].text, `Past ${CONFIG.history.maxEntries + 2}`, 'the newest past entry survives');
+});
+
+
 /* ---------------- the estimate is a memory bound, not a schema (K-F2) ---------------- */
 
 test('the estimate counts every retained string, whatever its key', () => {

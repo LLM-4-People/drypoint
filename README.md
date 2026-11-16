@@ -90,7 +90,8 @@ The file is the only backup outside this browser's storage, so export before
 uninstalling, clearing site data or changing browsers. Export for a device
 replacement or a future re-upgrade: a file exported by 1.0.2 can only be
 imported by 1.0.2 or newer, so it cannot restore a label inside a downgraded
-1.0.0 or 1.0.1 build (neither has an importer).
+1.0.0 or 1.0.1 build (neither has an importer). Each label exports on its own;
+there is no whole-library backup file.
 
 v1.0.0 has a different signing key and must be uninstalled before 1.0.1+. That
 uninstall deletes the labels stored by 1.0.0, because 1.0.0 has no export. Do
@@ -185,9 +186,10 @@ The design is stored locally; reopening the page keeps the label.
   local BLE bridge. There is no analytics, no crash reporter, no remote logging
   and no update check.
 - **No account.** Nothing to sign in to, nothing to sign up for.
-- **Local storage only.** The label, settings, roll profiles and zoom live in
-  the browser's `localStorage`. Diagnostics are generated on demand and
-  downloaded as a file you own; they are never uploaded.
+- **Local storage only.** Labels live in the browser's IndexedDB. Settings, roll
+  profiles, zoom and the last printer identity live in `localStorage`.
+  Diagnostics are generated on demand and downloaded as a file you own; they are
+  never uploaded.
 - **No secrets.** A repository privacy gate fails the build if the published tree
   contains a private host name, an absolute home directory, an absolute
   browser-cache path, the reference unit's serial or an e-mail address outside
@@ -430,20 +432,42 @@ Or put any TLS terminator in front of `npm start`.
 
 ## Storage keys
 
+`localStorage` keeps the small synchronous preferences and the one migration
+key. The label library lives in IndexedDB.
+
 | Key | Contents |
 | --- | --- |
-| `drypoint.document` | the current label document (`version: 4`) |
+| `drypoint.document` | the legacy single label document (`version: 4`); read once by the migration and removed after a successful import |
 | `drypoint.settings` | user settings, validated and coerced on load |
 | `drypoint.rolls` | roll profiles keyed by RFID barcode (bounded to 64) |
 | `drypoint.zoom` | the last canvas zoom |
+| `drypoint.printer` | the last web printer identity (`version: 1`), used to prefer the same BLE or serial device |
 
 The prefixes belong to a new install: there is no migration from the
 pre-release name and no compatibility key.
 
 Settings drop unknown keys and clamp invalid values on load; roll profiles are
 sanitised when written and bounded to 64 entries. A storage read or write
-failure is logged through the diagnostics logger; the app keeps working in
-memory.
+failure is logged through the diagnostics logger.
+
+## Label library
+
+IndexedDB database `drypoint`, version 1, owns the label library:
+
+| Store | Key | Contents |
+| --- | --- | --- |
+| `labels` | `id` | name, creation and update times, element count |
+| `documents` | `id` | the validated label document |
+| `histories` | `labelId` | undo and redo snapshots |
+| `sessions` | `labelId` | selection, active tab and scroll offsets |
+| `meta` | `key` | `currentLabelId` and `legacyMigrated` |
+
+The `labels.updatedAt` index supplies the library order. A valid
+`drypoint.document` is migrated into one label and the key is removed; an
+unreadable value is kept behind the quarantine banner and every other label
+keeps saving. The website and the APK are separate origins with separate stores,
+and there is no cloud sync. If IndexedDB cannot open, the editor still works in
+memory and shows one persistent save-failure notice.
 
 ## Limitations
 
@@ -467,17 +491,20 @@ memory.
   so an edit made while offline is overwritten on the next connection. With the
   setting off, the app's stored values are used. Change them while connected
   (or on the printer itself) when the setting is on.
-- **One document at a time.** There is no multi-label library or cloud sync;
-  images are embedded as data URLs, which count against the browser's
-  localStorage quota.
+- **Labels are local to one origin.** The website and the APK keep separate
+  stores, and there is no cloud sync. Images are embedded as data URLs and count
+  against the browser's storage quota. Each label exports on its own; there is
+  no whole-library backup file.
 - **A maximum-size export is memory-heavy.** The transfer bound is about 65 MB
   of JSON (16 image sources plus envelope overhead), and the Android bridge
   marshals it as one string. On a low-RAM phone that can fail or run out of
   memory; export a smaller label or remove an image first. 1.0.3 has no chunked
   transfer.
-- **Two open tabs are last-writer-wins.** Each tab saves its own label; the last
-  tab to write (or to close while dirty) replaces the other. There is no merge
-  and no revision envelope, so finish in one tab before editing in another.
+- **Two open tabs are last-writer-wins per label.** Each tab writes whole labels
+  to the shared library, so the last write to a label replaces the other. There
+  is no merge and no revision envelope, so finish in one tab before editing in
+  another. The current-label pointer is shared too, so a switch in one tab is
+  the current label on the next boot.
 
 ## Troubleshooting
 

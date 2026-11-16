@@ -63,11 +63,18 @@ export const DIAGNOSTIC_INFO_KEYS = Object.freeze(
 );
 
 /**
- * @param {{candidates?: typeof transportCandidates}} [options] transport resolver
- *        (injectable so lifecycle tests do not need a real browser transport)
+ * @param {{candidates?: typeof transportCandidates, onPrinter?: Function, preferred?: object|null}} [options]
+ *        transport resolver and last-printer hooks (injectable so lifecycle
+ *        tests do not need a real browser transport)
  */
-export function createDeviceManager({ candidates = transportCandidates } = {}) {
+export function createDeviceManager({
+  candidates = transportCandidates,
+  onPrinter = () => {},
+  preferred = null,
+} = {}) {
   const events = createEmitter();
+  /** The last printer identity this manager should prefer on a connect. */
+  let savedPrinter = preferred;
   /** One close promise per transport, shared by every caller that disposes it. */
   const disposals = new WeakMap();
   /** Sessions this module closed on purpose; only they log at info, not warn. */
@@ -396,31 +403,58 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     }
   }
 
-  async function openTransport(preference, { auto = false, choose = false } = {}, attempt) {
+  async function openTransport(preference, { auto = false, choose = false, preferred: target = savedPrinter } = {}, attempt) {
     const errors = [];
     const cancelledAttempt = () => new PrinterError('Connection attempt was cancelled', { cancelled: true });
-    for (const Transport of candidates(preference)) {
+    /** True when the saved transport had no matching granted device. */
+    let savedPrinterMissing = false;
+    for (const Transport of candidates(preference, target)) {
       // A disconnect (or a newer connect) owns the generation now: never build
       // or prompt another candidate for a request the operator stopped.
       if (attempt !== generation) throw cancelledAttempt();
-      if (!Transport.available()) continue;
+      if (!Transport.available()) {
+        // A saved printer whose transport is no longer available must not be
+        // replaced by a different printer during an automatic connect.
+        if (auto && target?.kind && Transport.kind === target.kind) {
+          savedPrinterMissing = true;
+          break;
+        }
+        continue;
+      }
       const instance = new Transport();
       try {
         // Auto-connect must never prompt: a permission request needs a user
         // gesture, so it only ever attaches to an already-granted device.
         // "Choose printer" is the explicit opposite: it always asks the user.
-        const target = choose ? await Transport.request() : auto ? await Transport.granted() : (await Transport.granted()) ?? (await Transport.request());
+        const targetDevice = choose
+          ? await Transport.request()
+          : auto
+            ? await Transport.granted(target)
+            : (await Transport.granted(target)) ?? (await Transport.request());
         if (attempt !== generation) throw cancelledAttempt();
-        if (!target) {
+        if (!targetDevice) {
           errors.push(new PrinterError(choose ? 'No printer selected' : 'No granted printer is available', { cancelled: true }));
+          if (auto && target?.kind && Transport.kind === target.kind) {
+            savedPrinterMissing = true;
+            break;
+          }
           // A cancelled picker is an answer: do not ask the next transport too.
           if (choose || !auto) break;
           continue;
         }
-        await openInstance(instance, target, attempt);
+        await openInstance(instance, targetDevice, attempt);
         if (attempt !== generation) throw cancelledAttempt();
         attach(instance, instance.kind);
         update({ transportKind: instance.kind, transportLabel: instance.describe() });
+        const identity = typeof instance.identity === 'function' ? instance.identity() : null;
+        if (identity) {
+          savedPrinter = identity;
+          try {
+            onPrinter(identity);
+          } catch (error) {
+            log.warn('the printer identity handler threw', { message: error?.message ?? String(error) });
+          }
+        }
         return instance;
       } catch (error) {
         errors.push(error);
@@ -430,12 +464,14 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
         if (error?.cancelled || error?.name === 'NotFoundError') break;
       }
     }
+    if (savedPrinterMissing) throw new PrinterError('The saved printer is not available', { cancelled: true });
     const last = errors.at(-1);
     if (last?.name === 'NotFoundError') throw new PrinterError('No printer selected', { cancelled: true });
     throw last ?? new PrinterError('No compatible transport is available on this device');
   }
 
-  async function connect({ preference = getSetting('device.transport'), auto = false, choose = false } = {}) {
+  async function connect({ preference = getSetting('device.transport'), auto = false, choose = false, preferred: preferredPrinter = savedPrinter } = {}) {
+    if (preferredPrinter !== undefined) savedPrinter = preferredPrinter;
     if (state.status === 'connected') return state.capabilities;
     // Join only the attempt that still owns the connection generation: after a
     // disconnect a stale attempt is dead, and joining it would make every later
@@ -445,7 +481,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     update({ status: 'connecting', error: null });
     const promise = (async () => {
       try {
-        await openTransport(preference, { auto, choose }, attempt);
+        await openTransport(preference, { auto, choose, preferred: savedPrinter }, attempt);
         // disconnect() while open() was pending cancels this attempt: it must
         // not reconnect or publish over the state the user asked for.
         if (attempt !== generation) throw new PrinterError('Connection attempt was cancelled', { cancelled: true });
@@ -553,6 +589,14 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function forgetPrinter({ preference = getSetting('device.transport') } = {}) {
     if (state.status === 'connecting') throw new PrinterError('Wait for the current connection attempt to finish');
     if (state.status === 'connected' || session) await disconnect();
+    // The saved identity is part of what "forget" means, for the web key and
+    // for this manager. Report the removal once, before the native calls.
+    savedPrinter = null;
+    try {
+      onPrinter(null);
+    } catch (error) {
+      log.warn('the printer forget handler threw', { message: error?.message ?? String(error) });
+    }
     const results = [];
     for (const Transport of candidates(preference)) {
       if (!Transport.available() || typeof Transport.forget !== 'function') continue;

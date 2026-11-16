@@ -20,7 +20,7 @@ const log = createLogger('ui.storage-alert');
 
 /** One message, shown for the whole quarantine. */
 export const STORAGE_ALERT_MESSAGE =
-  'The saved label could not be read. It is kept exactly as it is, and nothing is saved, until you reset the label. Export the raw value first if you may need it.';
+  'The saved label could not be read. It is kept exactly as it is until you reset it. Export the raw value first if you may need it. Other labels keep saving.';
 
 /**
  * @param {object} options
@@ -29,7 +29,7 @@ export const STORAGE_ALERT_MESSAGE =
  * @param {HTMLElement} options.exportButton "export the raw value"
  * @param {HTMLElement} options.resetButton "reset the label"
  * @param {(raw: string) => boolean} options.exportRaw writes the raw text
- * @param {() => void} options.onReset called after the quarantine is cleared
+ * @param {(raw: string) => void} options.onReset called after the quarantine is cleared
  * @param {(request: {title: string, message: string, confirmLabel: string}) => Promise<boolean>} [options.confirm]
  *        the shared confirmation owner; the default accepts, so `answer()` and
  *        programmatic resets stay usable
@@ -110,17 +110,19 @@ export function createStorageAlert({
 
   /**
    * The operator accepted the loss. This is the only path that replaces the
-   * stored value: the quarantine ends and the current in-memory label is
-   * persisted. `exportQuarantined` deliberately does not clear either, so a
-   * backup can never destroy the only copy.
+   * legacy value: the quarantine ends and the owner creates a fresh label.
+   * `exportQuarantined` deliberately does not clear either, so a backup can
+   * never destroy the only copy. The raw value is handed to the owner so a
+   * failed reset can restore the banner.
    */
   function answer() {
     if (raw === null) return false;
+    const value = raw;
     raw = null;
     answered = true;
     hide();
     log.warn('the unreadable stored label was reset');
-    onReset();
+    onReset(value);
     return true;
   }
 
@@ -134,7 +136,7 @@ export function createStorageAlert({
     const proceed = await confirm({
       title: 'Reset the unreadable label?',
       message:
-        'The stored value that could not be read will be replaced by the label currently in the editor. Export the raw value first if you may need it. This cannot be undone.',
+        'The stored value that could not be read will be removed and a fresh label will open. Export the raw value first if you may need it. This cannot be undone.',
       confirmLabel: 'Reset the label',
     });
     if (!proceed) return false;

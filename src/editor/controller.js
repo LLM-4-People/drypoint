@@ -3,7 +3,7 @@
  * every mutation the UI can perform. No DOM, no rendering.
  */
 
-import { createHistory } from '../label/history.js';
+import { createHistory, normaliseHistory } from '../label/history.js';
 import {
   ELEMENT_TYPES,
   boundElementText,
@@ -24,19 +24,41 @@ import { sourceBudgetProblem } from '../label/images.js';
 /**
  * @param {object} options
  * @param {object} [options.document] the starting label
+ * @param {string|null} [options.selection] the restored selection; `null` is a
+ *        deliberate deselection, `undefined` means no saved value
+ * @param {{past?: object[], future?: object[]}|null} [options.history] persisted history
  * @param {(document: object) => void} [options.onChange] document publisher
  * @param {(selection: string|null) => void} [options.onSelection] selection publisher
+ * @param {() => void} [options.onHistoryChange] history dirty signal
  * @param {(message: string) => void} [options.onRefusal] one refusal channel: a
  *        refused edit reaches the operator even when the stage summary is
  *        saturated with layout warnings
  */
-export function createEditor({ document: initial, onChange = () => {}, onSelection = () => {}, onRefusal = () => {} } = {}) {
+export function createEditor({
+  document: initial,
+  selection: initialSelection,
+  history: initialHistory = null,
+  onChange = () => {},
+  onSelection = () => {},
+  onHistoryChange = () => {},
+  onRefusal = () => {},
+} = {}) {
   let document = validateDocument(initial ?? createDocument());
-  let selection = document.elements.at(-1)?.id ?? null;
 
   const history = createHistory({
     initial: document,
+    onChange: onHistoryChange,
   });
+  // Hydrate silently: loading persisted history is not an edit and must not
+  // create an undo step or a write of its own.
+  if (initialHistory) history.restore({ present: document, ...normaliseHistory(initialHistory) }, { silent: true });
+
+  const find = (id) => document.elements.find((element) => element.id === id) ?? null;
+  const lastId = () => document.elements.at(-1)?.id ?? null;
+  let selection;
+  if (initialSelection === undefined) selection = lastId();
+  else if (initialSelection === null) selection = null;
+  else selection = find(initialSelection)?.id ?? lastId();
 
   /**
    * Notices the operator has answered. They live outside the history snapshot
@@ -89,8 +111,6 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
   function emitSelection() {
     onSelection(selection);
   }
-
-  const find = (id) => document.elements.find((element) => element.id === id) ?? null;
 
   /** Append one operator-facing notice, bounded and deduplicated. */
   function addNotice(text) {
@@ -326,6 +346,28 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
     emit({ coalesceKey });
   }
 
+  /**
+   * Replace the open label from a persisted payload.
+   *
+   * This is a load, not an edit: the document and both history stacks are
+   * replaced without a commit, so switching labels never appears as an undo
+   * step. The document and selection are announced for the UI, and the history
+   * is marked dirty so the caller's persistence owner can write the loaded
+   * (normalised) stacks for the label it now owns.
+   */
+  function loadDocument(next, { history: nextHistory = null, selection: nextSelection } = {}) {
+    acknowledged.clear();
+    displayCache = null;
+    document = validateDocument(next);
+    history.restore({ present: document, ...normaliseHistory(nextHistory) }, { silent: true });
+    if (nextSelection === undefined) selection = lastId();
+    else if (nextSelection === null) selection = null;
+    else selection = find(nextSelection)?.id ?? lastId();
+    onChange(deepClone(documentForDisplay()));
+    onSelection(selection);
+    onHistoryChange();
+  }
+
   function replaceDocument(next) {
     // A different label has its own notices: nothing carries over from the
     // previous label, but the incoming document's own notices are facts about
@@ -403,6 +445,8 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
     },
     canUndo: () => history.canUndo(),
     canRedo: () => history.canRedo(),
+    /** The persisted half of the undo history, deep-cloned by the owner. */
+    historyState: () => history.snapshot(),
     updateElement,
     addElement,
     removeElement,
@@ -412,6 +456,7 @@ export function createEditor({ document: initial, onChange = () => {}, onSelecti
     revalidate,
     dismissNotices,
     patchDocument,
+    loadDocument,
     replaceDocument,
     select,
     undo,

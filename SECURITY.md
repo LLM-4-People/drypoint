@@ -17,7 +17,11 @@ API.
   BLE scan/connect/write, one `saveFile` method (label export, diagnostics
   report, or the raw copy of an unreadable stored label) and the system-bar
   colour. It is reachable only from the bundled page at the app's own origin.
-- **`localStorage`**: the label, settings, roll profiles and zoom.
+- **`IndexedDB`**: the label library: label metadata, documents, undo
+  histories and per-label view sessions.
+- **`localStorage`**: settings, roll profiles, zoom and the last web printer
+  identity. The old single-label `drypoint.document` key remains only until a
+  successful migration or a confirmed reset.
 
 **What it cannot do**
 

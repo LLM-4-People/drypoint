@@ -377,17 +377,56 @@ test('the finishing callback is wired to the view and refreshes the button', () 
   assert.match(finishingBranch, /updatePrintButton\(\);/, 'the finishing branch recomputes disabled/title, not just the label');
 });
 
-test('the label is persisted through the shared store, raw, with one failure channel', () => {
+test('the label is persisted through the label session, never a second writer', () => {
   const saveFailure = read('src/ui/save-failure.js');
-  assert.match(main, /createStore\(createDocument\(\), \{/, 'the document store is the shared persistence owner');
-  assert.match(main, /envelope: false/, 'the stored format stays the raw document');
+  assert.match(main, /createLabelSession\(\{/, 'the label session is the persistence owner');
+  assert.match(main, /labelSession\.saveDocument\(document\)/, 'the controller change reaches the session');
+  assert.match(main, /labelSession\.saveHistory\(controller\)/, 'history changes reach the session');
+  assert.match(main, /labelSession\.saveSession\(\{ selection \}\)/, 'selection is persisted');
+  assert.match(main, /labelSession\.saveSession\(\{ tab \}\)/, 'the active tab is persisted');
+  assert.match(main, /labelSession\.saveSession\(\{\s*\n\s*scroll:/, 'scroll is persisted');
   assert.match(main, /createSaveFailureNotice\(\)/, 'the save-failure notice has one owner');
   assert.match(saveFailure, /timeout: null/, 'a save failure is a persistent toast');
   assert.match(saveFailure, /key: 'document-save-error'/, 'one deduplicated toast per failure');
   assert.match(saveFailure, /onDismiss:/, 'dismissal clears the “already shown” guard');
+  assert.doesNotMatch(main, /createStore\(createDocument\(\)/, 'the document store is gone');
   assert.doesNotMatch(main, /localStorage\.setItem\(storageKey\('document'\)/, 'no second writer for the label');
-  assert.match(main, /window\.addEventListener\('pagehide'[\s\S]{0,500}documentStore\.flush\(\)/, 'pagehide flushes the owed write');
+  assert.match(
+    main,
+    /window\.addEventListener\('pagehide', flushLabel\)/,
+    'pagehide flushes the owed writes'
+  );
+  assert.match(
+    main,
+    /visibilitychange[\s\S]{0,200}document\.visibilityState === 'hidden'[\s\S]{0,80}flushLabel\(\)/,
+    'a hidden document flushes too'
+  );
+  assert.match(main, /labelSession\.flush\(\)/, 'the shared flush drains every debounce');
 });
+
+test('the library is opened before the controller can read a document', () => {
+  const libraryOpen = main.indexOf('await openLibrary()');
+  const boot = main.indexOf('await library.boot()');
+  const editor = main.indexOf('const controller = createEditor({');
+  assert.ok(libraryOpen >= 0, 'the library opens through its owner');
+  assert.ok(boot > libraryOpen, 'boot follows the open');
+  assert.ok(editor > boot, 'the controller is created only after the boot payload');
+  assert.match(main, /createMemoryLibrary\(\)/, 'unavailable IndexedDB falls back to memory');
+  assert.match(main, /storageAlert\.capture\(\s*bootPayload\.legacyError\.raw/, 'the legacy error reaches the quarantine banner');
+  assert.match(main, /labelSession\.resetLegacy\(\)/, 'the alert reset creates a fresh label through the session');
+  assert.doesNotMatch(main, /hydrateStoredDocument/, 'the legacy hydration lives in the library migration');
+});
+
+test('the boot render restores the saved tab and scroll without writing them back', () => {
+  assert.match(main, /switchTab\(bootPayload\.session\.tab, \{ persist: false \}\)/, 'the tab is restored before the boot render');
+  assert.match(main, /restoreScroll\(bootPayload\.session\.scroll\)/, 'the scroll is restored after the boot render');
+  const restore = main.match(/function restoreScroll\(scroll\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+  assert.match(restore, /requestAnimationFrame\(/, 'scroll restore is one animation frame');
+  assert.match(restore, /ui\.stageScroll\.scrollLeft = scroll\.stageX/);
+  assert.match(restore, /ui\.layerList\.scrollTop = scroll\.layersY/);
+  assert.match(restore, /ui\.panelBody\.scrollTop = scroll\.panelY/);
+});
+
 
 test('the stage gutter constants match the stylesheet padding', () => {
   const paddings = (text) => {
