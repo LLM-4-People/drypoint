@@ -37,6 +37,12 @@ function buildCaps(overrides = {}) {
   const { source = {}, ...rest } = overrides;
   return {
     ...base,
+    // The ordinary fixture is the reference printer: tests that exercise an
+    // unsupported or unknown model say so explicitly.
+    model: 'D110_M',
+    modelSupport: 'confirmed',
+    task: 'd110mv4',
+    deviceType: 0x0910,
     discovered: true,
     headWidthPx: 96,
     dpi: 200,
@@ -470,13 +476,13 @@ test('a rejected printer setting write is reported, not only logged', async () =
   density.dispatch('input');
   await tick();
   assert.equal(toasts.at(-1)?.tone, 'error');
-  assert.match(toasts.at(-1)?.message, /Density was not sent to the printer; the next print retries it/);
+  assert.match(toasts.at(-1)?.message, /print\.density refused/, 'the manager’s specific refusal is shown, not a generic retry claim');
 
   const tape = container.querySelector('select[aria-label="Tape type"]');
   tape.value = '3';
   tape.dispatch('change');
   await tick();
-  assert.match(toasts.at(-1)?.message, /Tape type was not sent to the printer; the next print retries it/);
+  assert.match(toasts.at(-1)?.message, /print\.labelType refused/);
   assert.ok(calls.some(([kind, key]) => kind === 'push' && key === 'print.labelType'), 'the change still reached the push path');
 
   setSetting('print.density', 3);
@@ -937,4 +943,121 @@ test('an experimental model and an unsupported model read differently', () => {
     }).device
   );
   assert.match(unsupported.container.textContent, /B1 — not supported · 0x1000/);
+});
+
+/* ---------------- support gate (P1) ---------------- */
+
+test('an unsupported or unknown model disables every mutating control with the reason', async () => {
+  const cases = [
+    {
+      label: 'B1',
+      caps: buildCaps({ model: 'B1', modelSupport: 'unsupported', task: 'd110mv4', deviceType: 0x1000, autoShutdown: 2 }),
+      reason: /B1 is not supported[\s\S]*no frame was sent/,
+    },
+    {
+      label: 'unknown',
+      caps: buildCaps({ model: 'Unknown', modelSupport: 'unknown', task: null, deviceType: 0x1234, autoShutdown: 2 }),
+      reason: /did not report a model[\s\S]*no frame was sent/i,
+    },
+  ];
+  for (const { label, caps, reason } of cases) {
+    const { device } = fakeDevice({ status: 'connected', caps });
+    const { container } = mount(device);
+    await tick();
+
+    const commands = ['Feed / align paper', 'Self-test page', 'Sync clock', 'Reset settings'];
+    for (const name of commands) {
+      const button = buttonByText(container, name);
+      assert.equal(button?.disabled, true, `${label}: ${name} is disabled`);
+      assert.match(button?.title ?? '', reason, `${label}: ${name} carries the gate reason`);
+    }
+    for (const selector of ['input[aria-label="Density"]', 'select[aria-label="Tape type"]', 'select[aria-label="Auto power-off"]']) {
+      const control = container.querySelector(selector);
+      assert.equal(control?.disabled, true, `${label}: ${selector} is a printer write and is disabled`);
+      assert.match(control?.title ?? '', reason, `${label}: ${selector} carries the gate reason`);
+    }
+    for (const row of switchRows(container)) {
+      assert.equal(row.querySelector('button').disabled, true, `${label}: sound writes are disabled`);
+      assert.match(row.querySelector('button').title ?? '', reason, `${label}: sound write carries the gate reason`);
+    }
+    // Reads are not mutating commands and stay available for diagnosis.
+    for (const name of ['Read paper info', 'Read history', 'Read capabilities', 'Read device info']) {
+      assert.equal(buttonByText(container, name)?.disabled, false, `${label}: ${name} stays a read`);
+    }
+  }
+});
+
+test('a sensor refusal disables paper commands but not configuration writes', async () => {
+  const caps = buildCaps({
+    model: 'D110_M',
+    modelSupport: 'confirmed',
+    task: 'd110mv4',
+    deviceType: 0x0910,
+    autoShutdown: 2,
+    sensors: { lidClosed: false, paperPresent: true },
+  });
+  const { device } = fakeDevice({ status: 'connected', caps });
+  const { container } = mount(device);
+  await tick();
+
+  for (const name of ['Feed / align paper', 'Self-test page']) {
+    const button = buttonByText(container, name);
+    assert.equal(button?.disabled, true, `${name} moves paper and is refused`);
+    assert.match(button?.title ?? '', /lid[\s\S]*nothing was printed/i);
+  }
+  // Resetting settings or syncing the clock does not move paper.
+  assert.equal(buttonByText(container, 'Reset settings')?.disabled, false);
+  assert.equal(buttonByText(container, 'Sync clock')?.disabled, false);
+  assert.equal(container.querySelector('select[aria-label="Auto power-off"]')?.disabled, false);
+});
+
+test('an unknown model is named Unknown model and exposes no print task', () => {
+  const { device } = fakeDevice({
+    status: 'connected',
+    caps: buildCaps({ model: 'Unknown', modelSupport: 'unknown', task: null, deviceType: 0x1234 }),
+  });
+  const { container } = mount(device);
+  const rows = rowsOf(container);
+  assert.equal(rows.get('Model'), 'Unknown model · 0x1234');
+  assert.doesNotMatch(container.textContent, /Unknown — unknown/);
+  assert.equal(rows.get('Protocol'), 'Print task not available for this model');
+  assert.doesNotMatch(container.textContent, /D110M V4/);
+});
+
+test('an unsupported known model exposes no print task', () => {
+  const { device } = fakeDevice({
+    status: 'connected',
+    caps: buildCaps({ model: 'B1', modelSupport: 'unsupported', task: 'd110mv4', deviceType: 0x1000, protocolVersion: 145 }),
+  });
+  const { container } = mount(device);
+  const rows = rowsOf(container);
+  assert.equal(rows.get('Model'), 'B1 — not supported · 0x1000');
+  assert.equal(rows.get('Protocol'), 'Print task not available for this model');
+  assert.doesNotMatch(container.textContent, /D110M V4/);
+});
+
+test('an experimental model still names the print task it may run', () => {
+  const { device } = fakeDevice({
+    status: 'connected',
+    caps: buildCaps({ model: 'D11_H', modelSupport: 'experimental', task: 'd110mv4', deviceType: 0x0210, protocolVersion: 301 }),
+  });
+  const { container } = mount(device);
+  assert.equal(rowsOf(container).get('Protocol'), 'D110M V4 · build 301');
+});
+
+test('the self-test uses the experimental confirmation on D11_H', async () => {
+  const { device, calls } = fakeDevice({
+    status: 'connected',
+    caps: buildCaps({ model: 'D11_H', modelSupport: 'experimental', task: 'd110mv4', deviceType: 0x0210 }),
+  });
+  const { container, dialogs } = mount(device);
+  await tick();
+
+  buttonByText(container, 'Self-test page').dispatch('click');
+  await tick();
+  assert.ok(calls.some(([kind]) => kind === 'test-page'), 'the self-test runs after confirmation');
+  assert.equal(dialogs.length, 1);
+  assert.match(dialogs[0].title, /experimental/i);
+  assert.match(dialogs[0].message, /D11_H/);
+  assert.match(dialogs[0].message, /This model is experimental/);
 });

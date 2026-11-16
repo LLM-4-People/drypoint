@@ -1253,3 +1253,159 @@ test('a reconnect during a cancelled open starts a fresh attempt, not the dead o
   await stopping;
   assert.equal(manager.state.status, 'connected');
 });
+
+/* ---------------- the support gate covers every mutating command (P1) ---------------- */
+
+const GUESSED_CAPS = (() => {
+  const bytes = [...CAPS];
+  const index = bytes.findIndex((byte, at) => byte === 0x0a && bytes[at + 1] === 0x02 && bytes[at + 2] === 0x00 && bytes[at + 3] === 0x60);
+  assert.ok(index >= 0, 'the head-width TLV is present in the captured capabilities');
+  bytes[index + 2] = 0;
+  bytes[index + 3] = 0;
+  return bytes;
+})();
+
+function managerForModel(code, { advanced = ADVANCED, guessedHead = false } = {}) {
+  const fake = harness({
+    advanced,
+    override: (cmd, data) => {
+      if (cmd === 0x40 && data[0] === 0x08) return [{ cmd: 0x48, data: [code >> 8, code & 0xff] }];
+      if (cmd === 0x59) return [{ cmd: 0x69, data: [0] }];
+      if (cmd === 0x52) return [{ cmd: 0x62, data: [0] }];
+      if (guessedHead && cmd === 0xdc && data[0] === 0x03) {
+        const heartbeat = [...HEARTBEAT];
+        heartbeat[4] = 0;
+        heartbeat[5] = 0;
+        return [{ cmd: 0xde, data: heartbeat }];
+      }
+      if (guessedHead && cmd === 0xaf) return [{ cmd: 0xbf, data: [...GUESSED_CAPS] }];
+      return undefined;
+    },
+  });
+  const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });
+  return { fake, manager };
+}
+
+const MUTATING_COMMANDS = [
+  ['self-test', (manager) => manager.testPage()],
+  ['feed', (manager) => manager.calibrate()],
+  ['reset', (manager) => manager.resetPrinter()],
+  ['clock', (manager) => manager.syncClock()],
+  ['density', (manager) => manager.pushSetting('print.density', 3)],
+  ['tape', (manager) => manager.pushSetting('print.labelType', 1)],
+  ['auto-off', (manager) => manager.setAutoShutdown(2)],
+  ['sound write', (manager) => manager.soundSettings(1, 0x01)],
+  ['cancel on idle', (manager) => manager.cancel()],
+  ['print', (manager) => manager.print(raster, { lengthMm: 40 })],
+];
+
+test('every mutating command is gated before a frame: allowed models run, blocked models do not', async () => {
+  const cases = [
+    { label: 'D110_M', code: 0x0910, allowed: true },
+    { label: 'D11_H', code: 0x0210, allowed: true },
+    { label: 'B1', code: 0x1000, allowed: false, reason: /B1 is not supported[\s\S]*no frame was sent/ },
+    { label: 'unknown', code: 0x1234, allowed: false, reason: /did not report a model[\s\S]*no frame was sent/i },
+    { label: 'guessed head', code: 0x0910, guessedHead: true, allowed: false, reason: /did not report its head width[\s\S]*no frame was sent/ },
+  ];
+  for (const entry of cases) {
+    const { fake, manager } = managerForModel(entry.code, { guessedHead: entry.guessedHead });
+    const capabilities = await manager.connect();
+    const instance = fake.instances[0];
+    if (entry.guessedHead) {
+      assert.equal(capabilities.source.geometry, 'default', 'a zero head is not reported geometry');
+    }
+    for (const [name, run] of MUTATING_COMMANDS) {
+      const before = instance.writes.length;
+      let error = null;
+      try {
+        await run(manager);
+      } catch (caught) {
+        error = caught;
+      }
+      const commands = frameCommands(instance).slice(before);
+      const detail = `${entry.label} / ${name}: ${commands.map((cmd) => `0x${cmd.toString(16)}`).join(' ')}`;
+      if (entry.allowed) {
+        assert.equal(error, null, `${detail} is allowed`);
+        assert.ok(commands.length > 0, `${detail} reaches the printer`);
+      } else {
+        assert.ok(error instanceof Error, `${detail} is refused`);
+        assert.match(error.message, entry.reason, detail);
+        assert.equal(commands.length, 0, `${detail} writes zero frames`);
+      }
+    }
+  }
+});
+
+test('a model or geometry refused print sends zero frames and runs no discovery', async () => {
+  for (const entry of [
+    { label: 'B1', code: 0x1000, reason: /B1 is not supported/ },
+    { label: 'unknown', code: 0x1234, reason: /did not report a model/i },
+    { label: 'guessed head', code: 0x0910, guessedHead: true, reason: /did not report its head width/ },
+  ]) {
+    const { fake, manager } = managerForModel(entry.code, { guessedHead: entry.guessedHead });
+    await manager.connect();
+    const instance = fake.instances[0];
+    const before = instance.writes.length;
+    await assert.rejects(manager.print(raster, { lengthMm: 40 }), entry.reason);
+    const frames = instance.writes.slice(before).map(frameOf);
+    assert.deepEqual(frames, [], `${entry.label}: a refused print writes nothing, not even a heartbeat or discovery probe`);
+  }
+});
+
+test('a sensor refusal sends only the job heartbeat, then stops without discovery', async () => {
+  const cases = [
+    {
+      label: 'lid open',
+      advanced: Uint8Array.from([...ADVANCED.slice(0, 4), 1, 0, ...ADVANCED.slice(6)]),
+      reason: /lid[\s\S]*nothing was printed/i,
+    },
+    {
+      label: 'no paper',
+      advanced: Uint8Array.from([...ADVANCED.slice(0, 5), 1, ...ADVANCED.slice(6)]),
+      reason: /label roll[\s\S]*nothing was printed/i,
+    },
+    {
+      label: 'critical battery',
+      advanced: Uint8Array.from([ADVANCED[0], ADVANCED[1], 0, ...ADVANCED.slice(3)]),
+      reason: /Battery is too low[\s\S]*nothing was printed/i,
+    },
+  ];
+  for (const entry of cases) {
+    const fake = harness({ advanced: entry.advanced });
+    const manager = createDeviceManager({ candidates: () => [fake.FakeTransport] });
+    await manager.connect();
+    const instance = fake.instances[0];
+    const before = instance.writes.length;
+    let error = null;
+    try {
+      await manager.print(raster, { lengthMm: 40 });
+    } catch (caught) {
+      error = caught;
+    }
+    assert.ok(error instanceof Error, entry.label);
+    assert.match(error.message, entry.reason, entry.label);
+    assert.doesNotMatch(error.message, /nothing was sent/, `${entry.label}: a sensor refusal never claims nothing was sent`);
+    const frames = instance.writes.slice(before).map(frameOf);
+    assert.equal(frames.length, 1, `${entry.label}: at most the heartbeat is read`);
+    assert.equal(frames[0].cmd, 0xdc, `${entry.label}: the one frame is the heartbeat query`);
+    assert.equal(frames[0].data[0], 0x04, `${entry.label}: it is the advanced heartbeat`);
+    const commands = frames.map(({ cmd }) => cmd);
+    for (const forbidden of [0x01, 0x21, 0x23, 0xe3, 0xf3, 0xda, 0xa5, 0xaf, 0x40, 0x1a]) {
+      assert.equal(commands.includes(forbidden), false, `${entry.label}: no 0x${forbidden.toString(16)} after the refusal`);
+    }
+  }
+});
+
+test('reads stay allowed on an unsupported model', async () => {
+  const { fake, manager } = managerForModel(0x1000);
+  await manager.connect();
+  const instance = fake.instances[0];
+  const before = instance.writes.length;
+  await manager.diagnostic('paperInfo');
+  await manager.diagnostic('printHistory');
+  assert.equal(await manager.soundSettings(1), true, 'reading the sound switch is a read');
+  await manager.readInfoDiagnostics();
+  await manager.refresh();
+  assert.ok(instance.writes.length > before, 'the reads reached the printer');
+  assert.ok(frameCommands(instance).slice(before).includes(0x59), 'paper info was read');
+});

@@ -160,7 +160,7 @@ test('the gate blocks an unsupported model with its real name and sends nothing'
     assert.ok(reason, `${name} is blocked`);
     assert.match(reason, new RegExp(`${name} is not supported`));
     assert.equal(reason.endsWith(CONFIG.device.printGate.unsupported), true, 'the one configured reason is quoted');
-    assert.match(reason, /nothing was sent/);
+    assert.match(reason, /no frame was sent/);
   }
 });
 

@@ -472,3 +472,14 @@ test('the display document is the one the print flow and the renderer read', () 
   const canvas = read('src/editor/canvas.js');
   assert.match(canvas, /const document = controller\.documentForDisplay\(\)/);
 });
+
+test('the Print and Test buttons quote the support gate in title and description', () => {
+  const update = main.match(/function updatePrintButton\(\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(update, 'updatePrintButton exists');
+  assert.match(update, /gate: supportGate\(device\.state\.capabilities\)/, 'the one gate owns the button answer');
+  assert.match(update, /ui\.printButton\.title = state\.title/);
+  assert.match(update, /ui\.testButton\.title = state\.testTitle/);
+  assert.match(update, /state\.supportBlocked/, 'the gate reason reaches the description');
+  assert.match(update, /setAttribute\('aria-describedby', 'printGateReason'\)/);
+  assert.match(html, /id="printGateReason"/, 'the description target exists in the page');
+});

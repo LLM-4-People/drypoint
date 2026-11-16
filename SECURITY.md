@@ -84,9 +84,11 @@ export that has not been redacted.
 This project implements the printer protocol it could observe on retail
 hardware. It is not an official SDK and makes no claim to be complete.
 
-- The D110M V4 sequence is the only print task implemented. Models outside the
-  tested one are refused before a frame is sent; the D11_H is experimental and
-  asks for confirmation.
+- The D110M V4 sequence is the only print task implemented. Every command that
+  writes to a model outside the tested or experimental table is refused before a
+  frame is sent; read-only diagnostics remain available. The D11_H is
+  experimental and asks for confirmation before printing or running the
+  self-test.
 - Reply layouts that were not verified — paper info (`0x69`), print history
   (`0x62`) and the print area (`0x0F`) — are exposed as raw bytes, never as
   guessed fields.

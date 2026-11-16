@@ -28,7 +28,7 @@ import { applyTheme as applyThemeSetting } from './ui/theme.js';
 import { createSaveFailureNotice } from './ui/save-failure.js';
 import { createDeviceManager } from './device/manager.js';
 import { applyRollProfile } from './device/roll-profiles.js';
-import { describeDeviceStatus, labelTypeName } from './device/capabilities.js';
+import { describeDeviceStatus, labelTypeName, supportGate } from './device/capabilities.js';
 import { resolveRenderOptions } from './device/print-options.js';
 import { createDocument, createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, migrateDocument, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
 import { summariseWarnings } from './label/render.js';
@@ -64,6 +64,7 @@ const ui = {
   progress: $('#progressBar'),
   printButton: $('#printButton'),
   testButton: $('#testButton'),
+  printGateReason: $('#printGateReason'),
   modalRoot: $('#modalRoot'),
 };
 
@@ -711,6 +712,9 @@ function setProgress(ratio) {
 
 /** Print is only available with a live printer, a visible element and an idle link. */
 function updatePrintButton() {
+  // The one support gate: a model or geometry refusal disables both buttons
+  // and is quoted verbatim; a sensor refusal leaves them available so the
+  // press can report the sensor reason.
   const state = printButtonState({
     printing: printFlow.printing,
     finishing: printFlow.finishing,
@@ -722,11 +726,18 @@ function updatePrintButton() {
     // label the live printer cannot hold. The flow revalidates it before the
     // raster; the button says so instead of pretending it is print-ready.
     oversized: exceedsPrinterLimits(controller.document),
+    gate: supportGate(device.state.capabilities),
   });
   ui.printButton.disabled = state.disabled;
   ui.printButton.title = state.title;
   ui.testButton.disabled = state.testDisabled;
   ui.testButton.title = state.testTitle;
+  // The same reason is the accessible description, not only a tooltip.
+  ui.printGateReason.textContent = state.supportBlocked;
+  for (const button of [ui.printButton, ui.testButton]) {
+    if (state.supportBlocked) button.setAttribute('aria-describedby', 'printGateReason');
+    else button.removeAttribute('aria-describedby');
+  }
 }
 
 /** The primary button is also the cancel control while a job is running. */

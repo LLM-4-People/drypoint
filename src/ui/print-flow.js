@@ -27,12 +27,14 @@ const log = createLogger('ui.print-flow');
  * refresh, an empty label, an offline printer and a device-info read cannot
  * disagree between the two buttons. `oversized` only changes the title the
  * operator sees; the flow revalidates the label before it renders, so a print
- * that will be shortened is still allowed.
+ * that will be shortened is still allowed. `gate` is the one support gate's
+ * answer: a model/geometry refusal blocks both buttons with its reason, while
+ * a sensor refusal leaves them available so the press reports that reason.
  *
  * @param {{printing?:boolean, finishing?:boolean, empty?:boolean, offline?:boolean,
- *          reading?:boolean, oversized?:boolean}} state
+ *          reading?:boolean, oversized?:boolean, gate?:{allowed:boolean,reason:string|null,kind:string|null}|null}} state
  */
-export function printButtonState({ printing = false, finishing = false, empty = false, offline = false, reading = false, oversized = false } = {}) {
+export function printButtonState({ printing = false, finishing = false, empty = false, offline = false, reading = false, oversized = false, gate = null } = {}) {
   if (finishing) {
     // The outcome is settled; only the device refresh is left. Nothing on the
     // wire can be cancelled, so the control must not offer Cancel.
@@ -41,6 +43,7 @@ export function printButtonState({ printing = false, finishing = false, empty = 
       title: 'The printer is finishing; nothing can be cancelled',
       testDisabled: true,
       testTitle: '',
+      supportBlocked: '',
     };
   }
   if (printing) {
@@ -49,22 +52,29 @@ export function printButtonState({ printing = false, finishing = false, empty = 
       title: 'Cancel the running print',
       testDisabled: true,
       testTitle: '',
+      supportBlocked: '',
     };
   }
-  const title = offline
-    ? 'Connect the printer to print'
-    : empty
-      ? 'Show at least one element before printing'
-      : reading
-        ? 'Wait for the device info read to finish'
-        : oversized
-          ? 'The label is larger than the printer; it will be shortened to fit'
-          : '';
+  // A sensor refusal is a paper prerequisite, not a model/geometry refusal:
+  // the buttons stay enabled so the press can show the sensor reason.
+  const blocked = gate && !gate.allowed && gate.kind !== 'sensor' ? String(gate.reason ?? '') : '';
+  const title = blocked
+    ? blocked
+    : offline
+      ? 'Connect the printer to print'
+      : empty
+        ? 'Show at least one element before printing'
+        : reading
+          ? 'Wait for the device info read to finish'
+          : oversized
+            ? 'The label is larger than the printer; it will be shortened to fit'
+            : '';
   return {
-    disabled: offline || empty || reading,
+    disabled: Boolean(blocked) || offline || empty || reading,
     title,
-    testDisabled: offline || reading,
-    testTitle: offline ? 'Connect the printer first' : reading ? 'Wait for the device info read to finish' : '',
+    testDisabled: Boolean(blocked) || offline || reading,
+    testTitle: blocked || (offline ? 'Connect the printer first' : reading ? 'Wait for the device info read to finish' : ''),
+    supportBlocked: blocked,
   };
 }
 
@@ -125,8 +135,8 @@ export function createPrintFlow({
   // The job's outcome is settled; only the post-print device refresh is left.
   // Every terminal outcome (printed, failed, cancelled) publishes this, so the
   // primary button stops offering a Cancel that has nothing left to abort.
-  // `started` is false when the job was refused before its first frame: paper
-  // never moved, so the flow keeps "Preparing…" and only the error remains.
+  // `started` is false when the job was refused before paper moved: the flow
+  // keeps "Preparing…" and only the error remains.
   device.events?.on?.('finishing', (info) => {
     if (!printing || !info?.started) return;
     setFinishing(true);

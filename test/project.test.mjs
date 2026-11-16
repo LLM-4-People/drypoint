@@ -282,8 +282,8 @@ test('the README server section matches the dev server defaults and surface', ()
 });
 
 test('the README print gate states the silent-heartbeat refusal', () => {
-  assert.match(readme, /heartbeat goes unanswered, the\s+print is refused/);
-  assert.match(read('src/device/manager.js'), /did not report its sensors; refusing to print/);
+  assert.match(readme, /heartbeat goes\s+unanswered, the\s+print is refused/);
+  assert.match(read('src/device/manager.js'), /did not report its sensors, so nothing was printed/);
 });
 
 test('the README source-tree summary names every source area and doc', () => {
@@ -407,8 +407,8 @@ test('PROTOCOL.md boolean TLV list matches the decoder flags', () => {
 
 test('PROTOCOL.md and the manager agree that a silent heartbeat refuses a print', () => {
   const protocol = read('docs/PROTOCOL.md');
-  assert.match(protocol, /refuses the job \("The printer did not report its\s+sensors; refusing to print"\)/);
-  assert.match(read('src/device/manager.js'), /did not report its sensors; refusing to print/);
+  assert.match(protocol, /refuses the job \("The printer did not report its\s+sensors, so nothing was printed\."\)/);
+  assert.match(read('src/device/manager.js'), /did not report its sensors, so nothing was printed/);
 });
 
 test('ANDROID.md keeps the signing, asset and filename contracts', () => {

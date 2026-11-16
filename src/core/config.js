@@ -148,9 +148,9 @@ export const CONFIG = deepFreeze({
      * print flow and the README quote these, never a second copy of the text.
      */
     printGate: {
-      unsupported: 'This app prints 12 mm labels on the NIIMBOT D110 family; nothing was sent.',
-      unknownModel: 'The printer did not report a model this app knows, so printing is disabled.',
-      guessedGeometry: 'The printer did not report its head width, so the label size is a guess; printing is disabled.',
+      unsupported: 'This app prints 12 mm labels on the NIIMBOT D110 family; no frame was sent.',
+      unknownModel: 'Unknown model: the printer did not report a model this app knows; no frame was sent and printing is disabled.',
+      guessedGeometry: 'The printer did not report its head width, so the label size is a guess; no frame was sent and printing is disabled.',
       experimental: 'This model is experimental: the D110M V4 sequence is verified on the D110_M, not on this printer.',
     },
   },

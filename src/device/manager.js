@@ -13,7 +13,7 @@ import { ProtocolClient } from '../protocol/client.js';
 import { INFO_KEYS } from '../protocol/commands.js';
 import { decodeInfo } from '../protocol/replies.js';
 import { PrinterError, abortReason } from '../protocol/errors.js';
-import { emptyCapabilities, mergeCapabilities, clearVolatileCapabilities, applyHeartbeatSample, clampToRange, printBlockReason, CONNECTION_STATUSES } from './capabilities.js';
+import { emptyCapabilities, mergeCapabilities, clearVolatileCapabilities, applyHeartbeatSample, clampToRange, printBlockReason, supportGate, CONNECTION_STATUSES } from './capabilities.js';
 import { runPrintJob } from './print-job.js';
 import { resolvePrintOptions } from './print-options.js';
 import { transportCandidates } from './transports/index.js';
@@ -555,9 +555,26 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     if (state.readingInfo) throw new PrinterError('A device info read is running; wait for it to finish');
   }
 
+  /**
+   * The one write gate. Every mutating command calls it before its first
+   * frame; reads never do. Paper-moving commands ask for the sensor/battery
+   * prerequisites too, configuration commands only need a supported model with
+   * real geometry.
+   */
+  function assertSupported({ requiresPaper = false } = {}) {
+    const gate = supportGate(state.capabilities, { requiresPaper });
+    if (!gate.allowed) throw new PrinterError(gate.reason);
+    return gate;
+  }
+
   async function print(raster, { copies, onProgress, onStart, signal, lengthMm } = {}) {
     assertConnected();
     assertIdle();
+    // A model or geometry refusal is known before a job exists: do not take the
+    // link, read a heartbeat or run discovery. Sensor refusals need the fresh
+    // heartbeat inside the job, so they are allowed this far.
+    const preflight = supportGate(state.capabilities);
+    if (!preflight.allowed && preflight.kind !== 'sensor') throw new PrinterError(preflight.reason);
 
     const activeSession = session;
     const activeClient = client;
@@ -576,6 +593,8 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     const onPrinterError = (error) => controllerAbort.abort(error);
     activeSession?.events.on('error', onPrinterError);
     let started = false;
+    /** True when the job was refused before its first job frame. */
+    let refused = false;
     try {
       // A discovery already running on this session owns the request stream:
       // its probe frames must never land between the job's bitmap rows.
@@ -613,12 +632,16 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
           // "No answer" is not "all clear": when the printer has told us it has
           // sensors, a job without a fresh sample is refused.
           if (!sample && state.capabilities.sensors) {
-            throw new PrinterError('The printer did not report its sensors; refusing to print');
+            refused = true;
+            throw new PrinterError('The printer did not report its sensors, so nothing was printed.');
           }
           const fresh = applyHeartbeatSample(state.capabilities, sample);
           if (fresh !== state.capabilities) update({ capabilities: fresh });
           const blocked = printBlockReason(fresh);
-          if (blocked) throw new PrinterError(blocked);
+          if (blocked) {
+            refused = true;
+            throw new PrinterError(blocked);
+          }
         },
       });
       rememberCurrentRoll(lengthMm);
@@ -641,7 +664,10 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
       // true until the printer state is current again. runDiscovery() rather
       // than discover(): this call owns the stream and must not join (or
       // create) a cached pass that a later caller would share.
-      if (owner && session === activeSession && state.status === 'connected') {
+      // A refused job never reached the printer's paper path. Its post-refusal
+      // discovery would be a second burst of frames after the gate said no, so
+      // the refusal is the whole exchange.
+      if (owner && !refused && session === activeSession && state.status === 'connected') {
         try {
           await runDiscovery(activeSession, activeClient);
         } catch (error) {
@@ -656,6 +682,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function calibrate() {
     assertConnected();
     assertIdle();
+    assertSupported({ requiresPaper: true });
     const data = await client.request('calibrate', { value: 0x01 });
     const accepted = data?.[0] === 0x01;
     log.info('calibrate', { accepted });
@@ -676,6 +703,8 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function soundSettings(item, value) {
     assertConnected();
     assertIdle();
+    // Reading the switches is a read; only the write is a mutating command.
+    if (value !== undefined) assertSupported();
     const data = await client.tryRequest('soundSettings', { action: value === undefined ? 0x02 : 0x01, item, value: value ?? 0x00 });
     if (data === null) return null;
     if (data[2] === 0x01) return true;
@@ -686,6 +715,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function setAutoShutdown(value) {
     assertConnected();
     assertIdle();
+    assertSupported();
     await client.request('setAutoShutdown', { value });
     // The capability model is the single read source for the UI, so a
     // successful write updates it instead of leaving a stale value behind.
@@ -697,6 +727,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function testPage() {
     assertConnected();
     assertIdle();
+    assertSupported({ requiresPaper: true });
     await client.request('testPage');
     log.info('self-test page requested');
   }
@@ -705,6 +736,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function resetPrinter() {
     assertConnected();
     assertIdle();
+    assertSupported();
     await client.request('reset');
     log.warn('printer settings reset');
     // discover() mirrors the printer's stored density and tape type itself, so
@@ -722,6 +754,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function syncClock() {
     assertConnected();
     assertIdle();
+    assertSupported();
     await client.request('setRtc', { date: new Date() });
     log.info('clock synced');
   }
@@ -746,6 +779,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     // is left to cancel, and a cancel frame would interleave with the probes.
     if (state.printing) return false;
     if (state.status !== 'connected' || !client) return false;
+    assertSupported();
     try {
       await client.send('cancelPrint');
     } catch (error) {
@@ -757,6 +791,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   async function pushSetting(key, value) {
     if (state.status !== 'connected') return;
     assertIdle();
+    assertSupported();
     if (key === 'print.density') {
       const density = Math.round(clampToRange(value, state.capabilities.densityRange, CONFIG.print.density.default));
       await client.request('setDensity', { value: density });
