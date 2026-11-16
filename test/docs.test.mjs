@@ -245,6 +245,59 @@ test('ANDROID.md lists both distribution notices beside the precache files', () 
   assert.doesNotMatch(doc, /The APK bundles exactly\s+that list/);
 });
 
+test('the APK is described as BLE-only without claiming Android cannot do SPP', () => {
+  const doc = read('docs/ANDROID.md');
+  assert.match(doc, /\*\*BLE-only\*\*, because a WebView gives the page no Web Serial/);
+  assert.match(doc, /Chrome for Android 148\+ exposes Web Serial, including\s+RFCOMM serial ports/);
+  assert.match(doc, /138–147 exposed it partially/);
+  assert.doesNotMatch(doc, /Android's Web Serial cannot reach Bluetooth Classic SPP/);
+});
+
+test('the backup section states both importers and the 1.0.2 APK limitation', () => {
+  const readme = read('README.md');
+  assert.match(readme, /\*\*Export a label\.\*\* Open \*\*Document → Export label\*\*/);
+  assert.match(readme, /\*\*Import a label\.\*\* Open \*\*Document → Import label\*\*/);
+  assert.match(readme, /Import works\s+in the web app and in the Android APK from 1\.0\.3/);
+  assert.match(readme, /The 1\.0\.2 APK's file picker is\s+filtered to images/);
+  assert.match(readme, /cannot restore a label inside a downgraded\s+1\.0\.0 or 1\.0\.1 build/);
+  assert.match(readme, /importer refuses a file whose image sources\s+exceed the authoring budget/);
+
+  // The retired-key warning is above the install links, not only in Backup.
+  const warning = readme.indexOf('Do not install v1.0.0 for new work');
+  assert.ok(warning >= 0, 'the README carries the v1.0.0 warning');
+  assert.ok(warning < readme.indexOf('**Live app:**'), 'the warning is above the install links');
+});
+
+test('the file surface names every saveFile caller', () => {
+  const saveFile = /label export, the diagnostics report(?:,| and)/;
+  assert.match(read('README.md'), saveFile);
+  assert.match(read('SECURITY.md'), /one file save \(label export, diagnostics report, or\s+the raw copy of an unreadable stored label\)/);
+  assert.match(read('SECURITY.md'), /native save bridge \(label export, diagnostics report, and the raw copy of\s+an unreadable stored label\)/);
+  assert.match(read('docs/ANDROID.md'), /the label export, the\s+diagnostics report and the raw\s+copy of an unreadable stored label/);
+  assert.doesNotMatch(read('SECURITY.md'), /beyond the image picker and the diagnostics download/);
+});
+
+test('the backup claim does not promise a D2D copy is impossible', () => {
+  const clause = /device-to-device\s+migration is controlled by the manufacturer and\s+cannot be disabled by the app on/;
+  assert.match(read('docs/ANDROID.md'), clause);
+  assert.match(read('android/AndroidManifest.template.xml'), clause);
+  assert.doesNotMatch(read('docs/ANDROID.md'), /never copied into a cloud or\s+device-to-device backup/);
+});
+
+test('Edge is an API mirror, not a hardware-tested serial path', () => {
+  const readme = read('README.md');
+  assert.match(readme, /Edge exposes the\s+same Chromium APIs but was not hardware-tested/);
+  assert.doesNotMatch(readme, /Chrome or Edge is the tested serial path/);
+  assert.doesNotMatch(readme, /Web Serial is tested on desktop Chrome\/Edge/);
+});
+
+test('the transfer-memory limit is stated with the bound and the mitigation', () => {
+  const readme = read('README.md');
+  assert.match(readme, /about 65 MB\s+of JSON/);
+  assert.match(readme, /export a smaller label or remove an image first/);
+  assert.match(read('docs/ANDROID.md'), /about 65 MB of JSON/);
+});
+
 test('the documentation index links every page in docs/', () => {
   const index = read('docs/README.md');
   for (const page of ['ARCHITECTURE.md', 'ANDROID.md', 'PRINTERS.md', 'PROTOCOL.md']) {

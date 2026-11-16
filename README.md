@@ -5,6 +5,10 @@ in the browser, entirely offline, with no account, no server and no telemetry.
 
 [![Checks](https://github.com/LLM-4-People/drypoint/actions/workflows/checks.yml/badge.svg)](https://github.com/LLM-4-People/drypoint/actions/workflows/checks.yml)
 
+> **Do not install v1.0.0 for new work.** It is signed with a retired key,
+> cannot be upgraded in place to 1.0.1 or later, and has no label export, so
+> uninstalling it deletes every label. Use the latest release.
+
 - **Live app:** <https://llm-4-people.github.io/drypoint/>
 - **Android APK:** [latest release](https://github.com/LLM-4-People/drypoint/releases/latest)
 
@@ -15,7 +19,7 @@ hardware you already own; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 | Model | Status | What that means |
 | --- | --- | --- |
-| **D110_M** | Tested | The reference unit: discovery, the print sequence and every fact below were captured from and verified on retail hardware. |
+| **D110_M** | Tested | The reference unit: discovery, the print sequence and the facts in [Verified on the reference unit](#verified-on-the-reference-unit) were captured from and verified on retail hardware. Family-known opcode layouts and the reply maps marked unverified are documented but were not verified on it. |
 | **D11_H** | Experimental | Same protocol family, but the D110M V4 print sequence has not been verified on this model. The app asks for confirmation before it prints or runs the self-test. |
 | Every other id the app recognises | Not supported | The id is recognised and named in [docs/PRINTERS.md](docs/PRINTERS.md); every command that writes to the printer is refused before a frame, while read-only diagnostics remain available. The table names 21 ids; the vendor catalogue has more models, and an id outside the table is `Unknown` and blocked. |
 | Any model the printer reports outside the table | Unknown | Every write stays disabled: the app never guesses a model. |
@@ -41,8 +45,9 @@ network and no server. Build and install details:
 [docs/ANDROID.md](docs/ANDROID.md).
 
 Safari implements neither device API, so it can view the app but cannot reach a
-printer. Firefox 151+ exposes Web Serial, but this app's Bluetooth SPP filter
-is unverified there; Chrome or Edge is the tested serial path.
+printer. Firefox 151+ exposes Web Serial, but this app's Bluetooth SPP filter is
+unverified there. Chrome on desktop is the tested serial path; Edge exposes the
+same Chromium APIs but was not hardware-tested.
 
 ### Browser support
 
@@ -64,16 +69,31 @@ was tested on hardware.
 
 ## Backup and upgrade
 
-Export a label as one JSON file from **Document → Export label**, and restore it
-with **Import label**. The import applies as one undoable step and is validated
-by the same document owner as the stored label. The file is the only backup
-outside this browser's storage, so export before uninstalling, clearing site
-data or changing browsers.
+**Export a label.** Open **Document → Export label**. The web app downloads one
+JSON file; the Android app writes the same file to Downloads through its native
+bridge (on Android 8–9, the app's external Downloads directory). The filename
+carries a timestamp, so exporting twice does not overwrite the first file.
+
+**Import a label.** Open **Document → Import label**, pick the `.json` file, and
+the label loads as one undoable step, with any shortening reported. Import works
+in the web app and in the Android APK from 1.0.3. The 1.0.2 APK's file picker is
+filtered to images, so its **Import label** cannot select the file: use the web
+app or a 1.0.3+ APK instead.
+
+The same document model and migration validate the import and the stored label.
+One deliberate difference: the importer refuses a file whose image sources
+exceed the authoring budget, while storage keeps an older over-budget label
+intact rather than destroying it.
+
+The file is the only backup outside this browser's storage, so export before
+uninstalling, clearing site data or changing browsers. Export for a device
+replacement or a future re-upgrade: a file exported by 1.0.2 can only be
+imported by 1.0.2 or newer, so it cannot restore a label inside a downgraded
+1.0.0 or 1.0.1 build (neither has an importer).
 
 v1.0.0 has a different signing key and must be uninstalled before 1.0.1+. That
 uninstall deletes the labels stored by 1.0.0, because 1.0.0 has no export. Do
-not install 1.0.0 for new work. Export the label first if you ever downgrade or
-change devices.
+not install 1.0.0 for new work.
 
 ## What it does
 
@@ -384,10 +404,11 @@ never edit one by hand.
 `npm run build:android` packages the same web app in a small native shell and
 signs a sideloadable APK (`android/build/drypoint.apk`). The shell provides the
 one connectivity API WebView lacks — a BLE GATT bridge — plus two small host
-helpers (`saveFile` for the diagnostics export and `setSystemBars` for the
-native theme bars), and serves the bundled assets from a stable
-`https://drypoint.local` origin, so the editor, storage and print pipeline are
-identical. It needs no internet and no server.
+helpers (`saveFile` for the label export, the diagnostics report and the raw
+copy of an unreadable stored label, and `setSystemBars` for the native theme
+bars), and serves the bundled assets from a stable `https://drypoint.local`
+origin, so the editor, storage and print pipeline are identical. It needs no
+internet and no server.
 
 Running it needs Android 8+; scanning asks for Nearby devices on Android 12+
 and for location on Android 8–11. The APK is self-signed, so install it by
@@ -428,11 +449,12 @@ memory.
 - **Length is a setting, not a measurement.** It is remembered per roll, but if
   prints drift across the gap, set the length to match the tape.
 - **Code 128 B only** (printable ASCII 32–126). QR handles arbitrary text.
-- **Browser APIs decide.** Web Serial is tested on desktop Chrome/Edge. Web
-  Bluetooth is Chrome and Edge on desktop and Chrome on Android; Chromium on
-  Linux ships Web Bluetooth disabled by default. Safari cannot connect a
-  printer; Firefox's serial support is untested with this printer's Bluetooth
-  SPP filter. See [Browser support](#browser-support).
+- **Browser APIs decide.** Web Serial is tested on desktop Chrome. Edge mirrors
+  the Chromium APIs but was not hardware-tested with this printer. Web Bluetooth
+  is Chrome and Edge on desktop and Chrome on Android; Chromium on Linux ships
+  Web Bluetooth disabled by default. Safari cannot connect a printer; Firefox's
+  serial support is untested with this printer's Bluetooth SPP filter. See
+  [Browser support](#browser-support).
 - **BLE writes are paced at ~12 ms**, so a 40 mm label takes a few seconds.
 - **Paper info (`0x69`), print history (`0x62`) and the print area (`0x0F`)
   layouts are unverified.** They are exposed as raw bytes rather than guessed
@@ -444,6 +466,11 @@ memory.
 - **One document at a time.** There is no multi-label library or cloud sync;
   images are embedded as data URLs, which count against the browser's
   localStorage quota.
+- **A maximum-size export is memory-heavy.** The transfer bound is about 65 MB
+  of JSON (16 image sources plus envelope overhead), and the Android bridge
+  marshals it as one string. On a low-RAM phone that can fail or run out of
+  memory; export a smaller label or remove an image first. 1.0.3 has no chunked
+  transfer.
 - **Two open tabs are last-writer-wins.** Each tab saves its own label; the last
   tab to write — or to close while dirty — replaces the other. There is no merge
   and no revision envelope, so finish in one tab before editing in another.

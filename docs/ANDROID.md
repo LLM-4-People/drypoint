@@ -14,13 +14,21 @@ WebView (https://drypoint.local)
 
 ## Why a shell is needed
 
-Android WebView does not implement Web Bluetooth. The shell provides the one
-connectivity API WebView lacks — a GATT client — plus two small host helpers:
-`saveFile` for the diagnostics export and `setSystemBars` for the native theme
-bars. It leaves every protocol decision (ports, frames, rasterisation, retries)
-in the web code. The transport lives in `src/device/transports/android.js` and
-implements the same contract as the serial and BLE transports, so the device
-manager, session and print job are unchanged.
+Android WebView does not implement Web Bluetooth, and it exposes no Web Serial
+either. The shell provides the one connectivity API the WebView lacks — a BLE
+GATT client — plus two small host helpers: `saveFile` for the label export, the
+diagnostics report and the raw copy of an unreadable stored label, and
+`setSystemBars` for the native theme bars. It leaves every protocol decision
+(ports, frames, rasterisation, retries) in the web code. The transport lives in
+`src/device/transports/android.js` and implements the same contract as the
+serial and BLE transports, so the device manager, session and print job are
+unchanged.
+
+This shell is **BLE-only**, because a WebView gives the page no Web Serial to
+reach a Bluetooth Classic SPP port. That is the shell's limit, not Android's:
+Chrome for Android 148+ exposes Web Serial, including RFCOMM serial ports, and
+138–147 exposed it partially (MDN browser compatibility data). The web app can
+therefore use that path on Android in Chrome; the APK cannot.
 
 ## Build
 
@@ -214,9 +222,11 @@ this order:
 
 The manifest declares no `INTERNET` permission, no `provider`, `service` or
 `receiver`, and `android:exported="true"` only on the launcher activity.
-`android:allowBackup="false"`: the label documents, the layout state and the
-paired printer's Bluetooth address are never copied into a cloud or
-device-to-device backup.
+`android:allowBackup="false"` disables cloud backup for the label documents,
+the layout state and the paired printer's Bluetooth address; device-to-device
+migration is controlled by the manufacturer and cannot be disabled by the app on
+every device targeting Android 12+ (API 31). Some device makers still copy app
+files during a device transfer.
 
 **On-device check for the scheme policy.** The native WebView path cannot run in
 CI, so verify it once on a phone:
@@ -240,8 +250,11 @@ it creates itself.
 
 ## Platform notes
 
-- **BLE only.** Android's Web Serial cannot reach Bluetooth Classic SPP, so the
-  printer must be the BLE model path (D110_M exposes the GATT service used here).
+- **BLE only in the APK.** The shell exposes a BLE GATT bridge and no Web
+  Serial, so the APK cannot reach a Bluetooth Classic SPP port. The web app is
+  not limited that way: Chrome for Android 148+ exposes Web Serial, including
+  RFCOMM serial ports, and 138–147 exposed it partially (MDN BCD). The D110_M
+  exposes the GATT service used here.
 - **Android 12+**: scanning asks for Nearby devices (`BLUETOOTH_SCAN` with
   `neverForLocation`); older versions ask for location, which Android requires
   for BLE scans.
@@ -259,7 +272,10 @@ it creates itself.
   timestamp because the bridge refuses a display name Downloads already holds.
 - **Document → Import label** opens the system file picker, checks the file size
   before reading it, and applies the validated document to the editor as one
-  undoable step.
+  undoable step. The picker is built from the page input's `accept` list, so
+  **Import label** offers JSON/`.json` and an image input offers images; the
+  shell does not hard-code `image/*` (`MainActivity.onShowFileChooser` →
+  `acceptTypes`).
 - Diagnostics export uses the same bridge. The bridge accepts only a single filename segment (no empty
   name, separators, NUL, `.` or `..`) and canonicalises the legacy target under the Downloads
   directory before writing.
@@ -274,6 +290,11 @@ it creates itself.
 - Image import uses the system file picker exposed by the shell. The picked file
   becomes a data URL, which the interceptor releases to the WebView (see the
   scheme policy above).
+
+A maximum-size label crosses the bridge as one string — the transfer bound is
+`CONFIG.document.transfer.maxBytes`, about 65 MB of JSON. That is memory-heavy
+on a low-RAM phone and can fail the save or exhaust the WebView. Export a
+smaller label or remove an image first; 1.0.3 has no chunked write.
 
 `LICENSE` and `THIRD_PARTY_NOTICES.md` are staged into `assets/www` from the same
 list the site uses (`scripts/lib/distribution.mjs`), so both distributions carry

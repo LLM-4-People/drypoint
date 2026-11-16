@@ -14,8 +14,9 @@ API.
 - **Web Bluetooth** — a user-granted GATT device, used in Chrome and Edge on
   desktop and in Chrome on Android.
 - **The Android bridge** — inside the APK, a `JavascriptInterface` that exposes
-  BLE scan/connect/write, one diagnostics file save and the system-bar colour.
-  It is reachable only from the bundled page at the app's own origin.
+  BLE scan/connect/write, one file save (label export, diagnostics report, or
+  the raw copy of an unreadable stored label) and the system-bar colour. It is
+  reachable only from the bundled page at the app's own origin.
 - **`localStorage`** — the label, settings, roll profiles and zoom.
 
 **What it cannot do**
@@ -25,8 +26,10 @@ API.
   scripts from a CDN. The only requests are for the app's own files from the
   host that served them, and the printer link.
 - No account, no identifier, no cookie set by the page.
-- No file-system access beyond the image picker and the diagnostics download,
-  and no background execution after the page is closed.
+- No file-system access beyond the system picker (images and label JSON) and
+  the native save bridge (label export, diagnostics report, and the raw copy of
+  an unreadable stored label), and no background execution after the page is
+  closed.
 - The APK package is self-signed and sideloaded; it is not distributed through a
   store and has no auto-update channel.
 
