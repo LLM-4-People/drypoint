@@ -75,8 +75,9 @@ JSON file; the Android app writes the same file to Downloads through its native
 bridge (on Android 8-9, the app's external Downloads directory). The filename
 carries a timestamp, so exporting twice does not overwrite the first file.
 
-**Import a label.** Open **Document → Import label**, pick the `.json` file, and
-the label loads as one undoable step, with any shortening reported. Import works
+**Import a label.** Open **Document → Import label** or **Labels → Import label**,
+pick the `.json` file, and the label is added as a new label and opened, with any
+shortening reported. The label already open stays in the library. Import works
 in the web app and in the Android APK from 1.0.3. The 1.0.2 APK's file picker is
 filtered to images, so its **Import label** cannot select the file: use the web
 app or a 1.0.3+ APK instead.
@@ -119,7 +120,13 @@ not install 1.0.0 for new work.
   starter templates for text, name tag, QR, cable, framed and blank labels.
 - **Export and import**: one JSON file per label, from the Document panel
   beside Templates. Import validates the format, bounds and document version,
-  applies as one undoable step and reports any content it had to shorten.
+  adds the result as a new label, opens it and reports any content it had to
+  shorten; the label already open stays in the library.
+- **Label library**: **Document → Labels** opens the saved labels with a live
+  count. Open, duplicate, export or delete any label; New label and Import label
+  create a label and open it. The current label is marked, and the empty state
+  points at New label. Delete asks first and removes the label's undo history
+  and saved view with it.
 - **Document**: length in millimetres (20-200 mm, clamped to the device
   maximum) and presets. Copies is a document field, but its only control is in
   the Print panel.
@@ -130,7 +137,9 @@ not install 1.0.0 for new work.
   just the panel. **Choose printer** always opens the printer picker, even when
   a printer is already saved. **Forget printer** asks for confirmation and
   clears a saved Android BLE selection; a browser serial-port permission belongs
-  to the browser and can only be removed in its site settings.
+  to the browser and can only be removed in its site settings. While the printer
+  is idle, the Print panel names the last saved printer and says to connect
+  again; the app never claims the old link is still live.
 - Live printer state: transport, model and its support state (tested,
   experimental or not supported), serial, firmware/hardware, the D110M V4 print
   task, head width and dpi, **Output: 1-bit monochrome**, battery, roll tag and
@@ -161,7 +170,9 @@ not install 1.0.0 for new work.
 - Roll profiles: after a successful print the roll's RFID barcode remembers the
   label length and tape type, and reapplies them when that roll is seen again.
 
-The design is stored locally; reopening the page keeps the label.
+Each label keeps its own design, undo and redo history, selection, tab and
+scroll position. Reopening the page opens the last current label with its
+history and view restored.
 
 ### Keyboard shortcuts
 
@@ -468,6 +479,12 @@ unreadable value is kept behind the quarantine banner and every other label
 keeps saving. The website and the APK are separate origins with separate stores,
 and there is no cloud sync. If IndexedDB cannot open, the editor still works in
 memory and shows one persistent save-failure notice.
+
+The visible library is the **Labels** button in the Document panel. Its count is
+the number of saved labels; the dialog lists them by most recently updated and
+marks the current one. Opening, creating, duplicating, deleting and importing all
+switch through the same label-session path. A whole-library backup file does not
+exist, so each label still exports on its own.
 
 ## Limitations
 

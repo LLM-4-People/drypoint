@@ -97,6 +97,8 @@ src/
     icons.js               inline SVG icon set
     inspector.js           document + selected-element properties
     layers.js              layer list, reorder, visibility, lock
+    library-dialog.js      Labels modal: saved rows, actions, empty state
+    library-format.js      pure relative-time, element-count and unique-name text
     modal.js               dialog stack, focus trap, inert background
     print-flow.js          one print flow: in-flight guard, warnings, progress
     print-panel.js         printer state, job settings, maintenance, logs
@@ -197,6 +199,18 @@ survive a reload. The controller hydrates them silently, and `loadDocument`
 replaces the label without recording a switch as an undo step. Session state
 (selection, tab and four scroll offsets) is stored per label and restored after
 placement and the first render; it never enters the document or history.
+
+The Document panel's **Labels** button opens `ui/library-dialog.js` through the
+shared `openModal`. The dialog reads `library.list()` once for that opening
+(already sorted by `updatedAt`), marks the current row with `aria-current="true"`,
+and offers Open, Duplicate, Export and Delete per label. New label and Import label
+create a label and switch to it; Import parses through `label/transfer.js` and
+calls `labelSession.importDocument`, so the previously open label is kept. Every
+switch, create, duplicate, delete and import returns a payload from
+`labelSession` and applies it through the one `applyLabelPayload` path in
+`main.js`, which suppresses the load save, restores the tab and scroll, and
+rerenders. The button's count and accessible name are refreshed after each
+mutation; `ui/library-format.js` owns the relative-time and unique-name text.
 
 A valid `drypoint.document` migrates into one label and the key is removed. An
 unreadable value is kept exactly as it is, reported on every boot, and removed
@@ -413,9 +427,11 @@ over-budget label intact. In order:
    and print, so dropping a source there would destroy a label that already
    exists. Import and export are the two authoring boundaries that refuse.
 
-The UI applies the result through `controller.replaceDocument`, so an import is
-exactly one undo step. There is no second reader, validation path, download path
-or notice vocabulary.
+The UI adds the parsed document as a new label through
+`labelSession.importDocument`, then opens it with `applyLabelPayload`; the label
+that was open stays in the library. `controller.replaceDocument` remains the
+undoable owner for templates. There is no second reader, validation path,
+download path or notice vocabulary.
 
 ## Capability model
 
@@ -514,7 +530,10 @@ Label data is in IndexedDB database `drypoint`, version 1:
 | `meta` | `key` | `{ key, value }` for `currentLabelId` and `legacyMigrated` |
 
 A label record that fails `validateDocument` is reported and left untouched;
-the other labels keep saving.
+the other labels keep saving. The visible Labels dialog reads this store through
+`library.list()`; create, duplicate, delete and import write through
+`labelSession`, so the rows and the Document panel count always come from the
+same records.
 
 ## Offline strategy
 

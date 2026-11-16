@@ -24,8 +24,14 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - **The last view returns with the label.** Selection, tab and scroll offsets are
   stored per label and restored after the first render.
 - **The last printer is preferred on reconnect.** The web app remembers the BLE
-  or serial identity and uses it on the next automatic or manual connect. A
+  or serial identity and uses it on the next automatic or manual connect. While
+  idle, the Print panel names the saved printer and asks to connect again. A
   reload never claims the old connection is still live.
+- **The label library is visible.** The Document panel's **Labels** button shows
+  a live count and opens the saved labels with Open, Duplicate, Export and
+  Delete, a marked current label and an empty state. New label creates a
+  uniquely named default label; Import label adds the file as a new label and
+  opens it without replacing the label already open.
 - The site publishes a generated social card and Open Graph and Twitter
   metadata, so a shared link previews the product instead of a bare URL.
 
@@ -34,7 +40,7 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - **Android label import now works.** The 1.0.2 APK filtered its system file
   picker to images, so **Document → Import label** could not select a label
   `.json` file. The picker now accepts JSON documents and the imported label is
-  validated before it replaces the open one; the 1.0.2 release notes record
+  validated before it is added as a new label; the 1.0.2 release notes record
   that limitation for that build.
 - **A deep in-scope navigation loads its assets.** The document now carries the
   deployment base, so opening a deep path serves the app shell with its modules

@@ -22,6 +22,8 @@ import { createCanvasEditor } from './editor/canvas.js';
 import { pickImageFile } from './editor/image-import.js';
 import { createLayersPanel } from './ui/layers.js';
 import { createInspector } from './ui/inspector.js';
+import { createLibraryDialog } from './ui/library-dialog.js';
+import { nextLabelName } from './ui/library-format.js';
 import { fitZoom, initialZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
 import { createPrintPanel } from './ui/print-panel.js';
 import { connectionStatus, createPrintFlow, printButtonState } from './ui/print-flow.js';
@@ -37,7 +39,7 @@ import { clearLastPrinter, readLastPrinter, writeLastPrinter } from './device/la
 import { applyRollProfile } from './device/roll-profiles.js';
 import { describeDeviceStatus, labelTypeName, supportGate } from './device/capabilities.js';
 import { resolveRenderOptions } from './device/print-options.js';
-import { createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
+import { createDocument, createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
 import { summariseWarnings } from './label/render.js';
 import { TEMPLATES, testDocument } from './label/templates.js';
 import { barcodeFitMessage, barcodeFrame } from './label/barcode.js';
@@ -60,6 +62,8 @@ const ui = {
   layerList: $('#layerList'),
   layerCount: $('#layerCount'),
   templateList: $('#templateList'),
+  openLibraryButton: $('#openLibraryButton'),
+  libraryCount: $('#libraryCount'),
   exportDocument: $('#exportDocumentButton'),
   importDocument: $('#importDocumentButton'),
   importDocumentInput: $('#importDocumentInput'),
@@ -444,6 +448,7 @@ const printPanel = createPrintPanel({
   container: printPanelHost,
   device,
   controller,
+  getLastPrinter: readLastPrinter,
   onOpenLog: openLogViewer,
   onExport: exportDiagnostics,
 });
@@ -469,6 +474,76 @@ function applyLabelPayload(payload) {
   restoreScroll(payload.session.scroll);
 }
 
+/* ---------------- label library ---------------- */
+
+/**
+ * The live label count on the Document panel button. The button's accessible
+ * name carries the same number because the visible count is hidden from the
+ * accessibility tree.
+ */
+async function refreshLibraryCount() {
+  try {
+    const labels = await library.list();
+    const count = labels.length;
+    setText(ui.libraryCount, String(count));
+    ui.openLibraryButton.setAttribute('aria-label', `Open labels, ${count} ${count === 1 ? 'label' : 'labels'}`);
+  } catch (error) {
+    log.warn('the saved label count could not be read', { message: error?.message ?? String(error) });
+  }
+}
+
+/** Open one saved label through the one switch and apply path. */
+async function openSavedLabel(label) {
+  const payload = await labelSession.switchTo(label.id);
+  applyLabelPayload(payload);
+}
+
+/** Create a default label with the next free Untitled name and open it. */
+async function createSavedLabel() {
+  // Read names after the current label is durable: a rename inside its debounce
+  // window must not make an in-use name look free.
+  await labelSession.flush();
+  const names = (await library.list()).map((label) => label.name);
+  const payload = await labelSession.create(createDocument(), { name: nextLabelName(names) });
+  applyLabelPayload(payload);
+  await refreshLibraryCount();
+  toast('New label created', { tone: 'ok' });
+}
+
+/** Duplicate a saved label, then open the copy. */
+async function duplicateSavedLabel(label) {
+  const copy = await labelSession.duplicate(label.id);
+  const payload = await labelSession.switchTo(copy.id);
+  applyLabelPayload(payload);
+  await refreshLibraryCount();
+  toast('Label duplicated', { tone: 'ok' });
+}
+
+/** Delete a label; the session returns a payload when the open one was deleted. */
+async function deleteSavedLabel(label) {
+  const payload = await labelSession.remove(label.id);
+  // The session owns the "was this current" decision, so a stale row from
+  // another tab cannot leave a deleted label on screen.
+  if (payload) applyLabelPayload(payload);
+  await refreshLibraryCount();
+  toast('Label deleted', { tone: 'ok' });
+}
+
+const libraryDialog = createLibraryDialog({
+  list: () => library.list(),
+  currentId: () => labelSession.labelId,
+  onOpen: openSavedLabel,
+  onNew: createSavedLabel,
+  onDuplicate: duplicateSavedLabel,
+  onExport: exportSavedLabel,
+  onDelete: deleteSavedLabel,
+  onImport: () => ui.importDocumentInput.click(),
+});
+
+ui.openLibraryButton.addEventListener('click', () => {
+  void libraryDialog.open();
+});
+
 /**
  * The confirmed reset of the unreadable legacy value. The library removes the
  * key and keeps the current readable label, creating one only when none exists;
@@ -479,6 +554,7 @@ async function resetLegacyLabel(raw) {
   try {
     const payload = await labelSession.resetLegacy();
     applyLabelPayload(payload);
+    await refreshLibraryCount();
     toast('The unreadable label was reset', { tone: 'ok' });
   } catch (error) {
     log.error('the unreadable label could not be reset', { message: error?.message ?? String(error) });
@@ -702,38 +778,73 @@ function applyTemplate(template) {
 /* ---------------- document transfer ---------------- */
 
 /**
- * Export the label through the one download owner. The file name carries a
- * timestamp because the Android bridge refuses a display name Downloads
- * already holds.
+ * Write one label document through the one download owner. The file name
+ * carries a timestamp because the Android bridge refuses a display name
+ * Downloads already holds.
+ *
+ * @param {object} document a validated label document
+ * @returns {boolean} whether a file was written
  */
-function exportDocument() {
+function writeLabelExport(document) {
   // Both source budgets are authoring boundaries, not normalise steps: a
   // document that already exists in memory is exported or refused whole, with
   // the importer's own decision and wording, so an export always re-imports.
-  const problem = sourceBudgetProblem(controller.document, { action: 'exporting this label' });
+  const problem = sourceBudgetProblem(document, { action: 'exporting this label' });
   if (problem) {
     log.warn('label export refused an over-budget document', { message: problem });
     toast(problem, { tone: 'error' });
-    return;
+    return false;
   }
   try {
-    const saved = downloadJson(documentFilename(controller.document.name), serializeDocument(controller.document));
+    const saved = downloadJson(documentFilename(document.name), serializeDocument(document));
     if (saved === false) {
       log.warn('label export was refused by the save bridge');
       toast('Could not save the label file', { tone: 'error' });
-      return;
+      return false;
     }
     toast('Label exported', { tone: 'ok' });
+    return true;
   } catch (error) {
     log.error('label export failed', { message: error?.message ?? String(error) });
     toast(`Could not export the label: ${error?.message ?? String(error)}`, { tone: 'error' });
+    return false;
   }
+}
+
+/** Export the open label as it stands in the editor. */
+function exportDocument() {
+  writeLabelExport(controller.document);
+}
+
+/**
+ * Export one saved row. A readable label uses the normal transfer envelope; an
+ * unreadable record keeps its raw value, which is the only copy the operator
+ * can still take away.
+ */
+async function exportSavedLabel(label) {
+  const result = await library.read(label.id);
+  if (result.ok) {
+    writeLabelExport(result.document);
+    return;
+  }
+  log.warn('a saved label could not be read for export', { id: label.id, reason: result.reason });
+  if (typeof result.raw !== 'string' || !result.raw) {
+    toast('That label could not be read, and it has no raw value to export.', { tone: 'error' });
+    return;
+  }
+  const filename = `${CONFIG.app.id}-unreadable-label-${Date.now()}.json`;
+  const saved = downloadText(filename, result.raw, 'application/json');
+  if (saved === false) {
+    toast('Could not save the raw label file', { tone: 'error' });
+    return;
+  }
+  toast('The unreadable label was exported as raw JSON');
 }
 
 /**
  * Read one picked file, refusing an over-size file before reading it. Parsing,
- * validation and notices belong to `label/transfer.js`; applying the result
- * goes through `replaceDocument`, which is one undoable step.
+ * validation and notices belong to `label/transfer.js`; the parsed document is
+ * added as a new label and opened, so the label already open is kept.
  */
 async function importDocumentFile(file) {
   const size = Number(file?.size);
@@ -757,7 +868,9 @@ async function importDocumentFile(file) {
   }
   try {
     const { document, notices } = parseDocument(text);
-    controller.replaceDocument(document);
+    const payload = await labelSession.importDocument(document);
+    applyLabelPayload(payload);
+    await refreshLibraryCount();
     if (notices.length) {
       log.warn('label imported with notices', { notices: notices.length });
       // The same summary owner as the stage footer, so a notice is never
@@ -1222,6 +1335,9 @@ on(document, 'visibilitychange', () => {
 
 ui.brandLink.href = BRAND.repository;
 applyTheme();
+// The Document panel count is independent of the first paint: a failed list
+// leaves the static 1 in place rather than blocking the editor.
+void refreshLibraryCount();
 placeStage();
 placeInspector();
 placeDocName();
