@@ -421,6 +421,17 @@ test('a tag off main cannot publish, and the build runs in the release environme
   assert.match(build, /^ {4}environment: release$/m, 'the build job uses the v* -scoped environment');
 });
 
+test('the release finds a Chromium before the browser suites run', async () => {
+  const release = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
+  const build = jobsOf(release).find((job) => job.name === 'build').block;
+  const locate = build.indexOf('- name: Locate a Chromium binary');
+  const gate = build.indexOf('- name: The tagged commit passes every gate');
+  assert.ok(locate >= 0, 'the release locates a Chromium');
+  assert.ok(locate < gate, 'the browser is found before verify:all runs in the gate');
+  assert.match(build, /D110_CHROME=\$chrome/, 'the browser path reaches the suites');
+  assert.match(build, /no Chromium on this runner/, 'a missing browser fails the release, never skips');
+});
+
 test('the release publishes the APK, checksum and changelog notes', async () => {
   const release = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
   const jobs = jobsOf(release);
@@ -453,7 +464,13 @@ test('the release attaches the provenance bundle and checks the built APK', asyn
     /gh attestation download "drypoint-\$\{version\}\.apk" -R "\$GITHUB_REPOSITORY"/,
     'the bundle is downloaded for the attested subject'
   );
-  assert.match(release, /sha256-\*\.jsonl/, 'download writes sha256-<digest>.jsonl');
+  assert.match(
+    release,
+    /bundle="\$\(find \. -maxdepth 1 -type f -name 'sha256\*\.jsonl' -print -quit\)"/,
+    'the portable glob matches sha256:<digest>.jsonl on Linux and sha256-<digest>.jsonl on Windows'
+  );
+  assert.match(release, /gh attestation download wrote no bundle/, 'an empty download fails the build');
+  assert.doesNotMatch(release, /sha256-\*\.jsonl/, 'the hyphen-only glob matched nothing on Linux');
   assert.match(release, /drypoint-\$\{version\}\.apk\.intoto\.jsonl/, 'the bundle is renamed to the release asset');
   assert.doesNotMatch(release, /attestation download[^\n]*--bundle/, 'gh attestation download has no --bundle flag');
   const publishes = shellCommands(release).filter((command) => /(?:^|\s)gh\s+release\s+create(?:\s|$)/.test(command));

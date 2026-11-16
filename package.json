@@ -1,6 +1,6 @@
 {
   "name": "drypoint",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "description": "Design and print 12 mm labels on a NIIMBOT D110, entirely offline.",

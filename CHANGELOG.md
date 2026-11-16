@@ -7,6 +7,64 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
 `package.json` is the one owner of that number: a release tag must be exactly
 `v<version>` and its notes are copied from the matching section below.
 
+## [1.0.2] - 2026-11-16
+
+### Added
+
+- **Label export and import.** The Document panel saves the current label as
+  one JSON file and loads it again on any device. This is the backup path a
+  signing-key change or a device replacement needs; before this version only
+  diagnostics could be exported.
+- The print refusal reason is visible above the action bar, not only in a
+  tooltip, so a disabled Print button explains itself on a phone.
+
+### Fixed
+
+- Repainting a label hydrates a hidden image again when it is revealed, so it
+  no longer stays "still loading".
+- Replacing an image cannot push the document past the 16-source cap.
+- Offline Print says "Connect the printer to print" instead of "Unknown model".
+- The first offline install retries a transient network failure (still fails
+  closed, never a partial cache); a 404 is never retried.
+- The maskable icon is opaque, and the Apple touch icon uses the opaque file.
+- A disconnect while preparing says nothing was printed; after the first frame
+  it says the label may be incomplete. One toast, not two.
+- A sensor refusal names the action that was refused — printing, feeding or
+  advancing — instead of always saying nothing was printed.
+- Android: the asset interceptor now lets the WebView handle `data:`, `blob:`
+  and `about:` requests locally and answers 403 only for network schemes, so
+  imported images cannot be blocked by the offline guard.
+- The warning summary no longer counts or can be forged by its own "and N more"
+  tail; a hostile reported dpi is bounded at the geometry choke point; an edit
+  that truncates text reports it.
+- The generated 404 page carries the standard generated-by header.
+- `CONTRIBUTING.md` matches the unit/browser split, and the Android
+  reproducibility example no longer names a past version.
+
+### Changed
+
+- **Upgrading from 1.0.0 still requires an uninstall, and its labels are lost.**
+  1.0.0 was signed with a different key, so Android cannot upgrade it in place,
+  and 1.0.0 has no label export. Uninstall it before installing this build; do
+  not install 1.0.0 for new work. Use **Export label** before any future
+  signing-key change or device replacement.
+- Two builds of the same tree with the same signing key are byte-identical; a
+  different key changes only the signing block.
+- The workflow policy rejects quoted and job-level `write-all`, requires
+  `--verify-tag` on the release command itself, and derives the aggregate check
+  from every job in the workflow.
+- Pages checks out `main` and asserts it equals the validated `Checks` commit,
+  removing the untrusted-checkout pattern.
+- The browser suite runs at most two Chromiums at once, and its mount timeout
+  honours `D110_CHROME_TIMEOUT_MS`.
+- The release attaches its provenance bundle, prints the signing certificate
+  fingerprint, and asserts the built APK's contents, permissions and backup
+  setting. The Android manifest package comes from `brand.json`.
+- Actionlint is downloaded at a pinned version and verified against a pinned
+  SHA-256 instead of an action that fetches an unchecked binary.
+- The redundant `Docs` workflow is removed; `Checks` already runs the docs and
+  workflow-policy gates in every web leg.
+
 ## [1.0.1] - 2026-11-16
 
 ### Changed
