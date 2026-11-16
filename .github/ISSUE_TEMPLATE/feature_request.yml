@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         New printer models need hardware evidence, not a name that looks close.
-        Read [docs/PRINTERS.md](docs/PRINTERS.md#how-to-propose-a-new-model)
+        Read [docs/PRINTERS.md](https://github.com/LLM-4-People/drypoint/blob/main/docs/PRINTERS.md#how-to-propose-a-new-model)
         before requesting one.
   - type: textarea
     id: problem

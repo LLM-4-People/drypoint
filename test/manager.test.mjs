@@ -11,7 +11,14 @@ import { geometry, resetGeometry } from '../src/core/geometry.js';
 import { documentHeightPx } from '../src/label/schema.js';
 import { encodeFrame } from '../src/protocol/frames.js';
 import { fromHex } from '../src/core/format.js';
-import { FIXTURE_SERIAL, ROLL_BARCODE, rollTagBytes, serialBytes } from './fixtures/captured-unit.mjs';
+import {
+  FIXTURE_BLUETOOTH_ADDRESS,
+  FIXTURE_BLUETOOTH_BYTES,
+  FIXTURE_SERIAL,
+  ROLL_BARCODE,
+  rollTagBytes,
+  serialBytes,
+} from './fixtures/captured-unit.mjs';
 
 const HEARTBEAT = fromHex('04 01 04 17 00 60 02 02 01 00');
 const ADVANCED = fromHex('0f e6 04 49 00 00 01 00 00 00 00');
@@ -32,7 +39,7 @@ const INFO_REPLIES = {
   0x0a: [4],
   0x0b: serialBytes(),
   0x0c: [4, 1],
-  0x0d: [1, 0x66, 0xf0, 0x27, 0x25, 0x02],
+  0x0d: [...FIXTURE_BLUETOOTH_BYTES],
   0x0e: [1],
   0x0f: [0x00, 0x60, 0x06, 0x40],
 };
@@ -215,7 +222,7 @@ test('connect merges the real replies and applies device geometry', async (t) =>
   assert.equal(capabilities.sensors.lidClosed, true);
   assert.equal(capabilities.roll.barcode, ROLL_BARCODE);
   assert.equal(documentHeightPx(), 96);
-  assert.ok(Math.abs(geometry().dotsPerMm - 200 / 25.4) < 1e-9, 'the reported 200 dpi class is the pitch');
+  assert.ok(Math.abs(geometry().dotsPerMm - 200 / 25.4) < 1e-9, 'the capability TLV’s 200 dpi is the pitch');
 });
 
 test('every GetInfo key has a declared consumer or is explicitly diagnostic', () => {
@@ -266,7 +273,7 @@ test('diagnostic GetInfo reads every unconsumed key on demand', async () => {
   const area = entries.find(({ key }) => key === INFO_KEYS.area);
   assert.deepEqual(area.decoded.area, { length: 4, raw: [0x00, 0x60, 0x06, 0x40] });
   const address = entries.find(({ key }) => key === INFO_KEYS.bluetoothAddress);
-  assert.equal(address.decoded.bluetoothAddress, '01:66:f0:27:25:02');
+  assert.equal(address.decoded.bluetoothAddress, FIXTURE_BLUETOOTH_ADDRESS);
 });
 
 test('disconnect closes the transport once and emits disconnected once', async () => {

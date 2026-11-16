@@ -493,17 +493,19 @@ Unknown codes are reported as `Printer error 0xNN`.
 ## Verified facts (captured unit)
 
 Captured from a retail D110_M unit used for development and pinned in
-`test/manager.test.mjs`. The unit's serial number and the roll tag's serial are
-hardware identifiers, so this repository does not publish them: the fixtures
-use the clearly synthetic values owned by `test/fixtures/captured-unit.mjs`.
+`test/manager.test.mjs`. The unit's serial number, Bluetooth address and the
+roll tag's serial are hardware identifiers, so this repository does not publish
+them: the fixtures use the clearly synthetic values owned by
+`test/fixtures/captured-unit.mjs`.
 
 | Fact | Value |
 | --- | --- |
 | Model ID | `0x0910` → `D110_M` (confirmed) |
 | Serial | not published; the decoder accepts ASCII (≥8 bytes) or 4-byte hex |
 | Firmware / hardware | 4.23 / 4.01 |
-| Head | 96 dots, reported 200 dpi class → 200 / 25.4 = 7.87 dots/mm; tape width derives to 12.19 mm |
-| Protocol build | 301 → D110M V4 print task |
+| Head | 96 dots, capability TLV reports 200 dpi → 200 / 25.4 = 7.87 dots/mm; tape width derives to 12.19 mm |
+| Heartbeat resolution class | `0xDE` payload byte 6 = `2` → 203 dpi (the TLV's 200 dpi is the pitch authority) |
+| Protocol build | 301; the print task is `D110M V4` from the model table, never derived from this number |
 | Density range | 1–5 |
 | Speed range | 1–5 |
 | Label types | 1, 2, 3, 5 (gap, black mark, continuous, transparent) |

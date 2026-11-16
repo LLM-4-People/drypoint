@@ -14,12 +14,13 @@ WebView (https://drypoint.local)
 
 ## Why a shell is needed
 
-Android WebView does not implement Web Bluetooth. The shell provides exactly the
-one host API the app needs — a GATT client — and leaves every protocol decision
-(ports, frames, rasterisation, retries) in the web code. The transport lives in
-`src/device/transports/android.js` and implements the same contract as the
-serial and BLE transports, so the device manager, session and print job are
-unchanged.
+Android WebView does not implement Web Bluetooth. The shell provides the one
+connectivity API WebView lacks — a GATT client — plus two small host helpers:
+`saveFile` for the diagnostics export and `setSystemBars` for the native theme
+bars. It leaves every protocol decision (ports, frames, rasterisation, retries)
+in the web code. The transport lives in `src/device/transports/android.js` and
+implements the same contract as the serial and BLE transports, so the device
+manager, session and print job are unchanged.
 
 ## Build
 
@@ -142,7 +143,8 @@ keystore, docs, tests and scripts cannot enter the APK.
 
 1. Copy the APK to the phone (USB, cloud drive, or `adb install`).
 2. Allow "install unknown apps" for the file manager when prompted.
-3. Open the app and grant the Nearby devices permission when it scans.
+3. Open the app and grant the Bluetooth scan/connect permission (Nearby devices)
+   on Android 12+, or location on Android 8–11, when it scans.
 4. Print tab → Connect printer (or the header pill) → pick `D110…` from the
    native list.
 
@@ -168,7 +170,7 @@ half of every rule, and neither guesses:
 | Closing | `close()` rejects every pending call and clears its timer | `disconnect()` drops the GATT link |
 | Connect handshake | `open()` awaits the `connect` reply | resolves after the notification descriptor is written **and** the MTU exchange finished, or after a 300 ms fallback |
 | Write pacing | the session serialises requests | each chunk waits for its ack; a 2 s missing ack closes the link with "Printer stopped acknowledging writes" |
-| Chunk size | — | `min(MTU − 3, 512)`, and the MTU resets to 23 on connect and on close |
+| Chunk size | — | `max(20, min(MTU − 3, 512))`, and the MTU resets to 23 on connect and on close |
 | Teardown | a late native event is ignored after close() | `destroy()` clears the main-looper queue, dismisses the picker, stops the scan and never calls a destroyed WebView |
 | Forgetting the printer | `AndroidTransport.forget()` reports `false` on an older bridge | `forgetDevice()` removes `lastDevice`; a browser port permission is not revocable by page script |
 | System bars | `applyTheme` sends the `--bg` token it just applied | `setSystemBars(hex)` colours the status and navigation bars; a malformed value is ignored |
@@ -244,9 +246,10 @@ the same notices.
 
 ## Troubleshooting
 
-- **No printer in the list.** Grant Nearby devices, turn Bluetooth on, and keep
-  the printer awake; scan again from the Print panel. Another host may already
-  hold the single connection.
+- **No printer in the list.** Grant the Bluetooth scan/connect permission (Nearby
+  devices) on Android 12+, or location on Android 8–11, turn Bluetooth on, and
+  keep the printer awake; scan again from the Print panel. Another host may
+  already hold the single connection.
 - **"does not expose its data service".** Pair the printer once in Android
   Settings → Bluetooth, then return to the app. Some units only publish the GATT
   service after bonding.

@@ -17,15 +17,19 @@ page with it, so an invented name or a mismatched state fails the build.
 A model id outside the table is **unknown**. The app never guesses a model, and
 every mutating command stays disabled until the printer reports one it knows.
 
+A model or geometry refusal sends no frame at all. A sensor refusal is different:
+the model is supported and the geometry real, so the print job reads one
+heartbeat, prints nothing and runs no further discovery.
+
 ## Support matrix
 
-The pitch is the reported resolution class divided by 25.4. "Derived" tape
+The pitch is the reported resolution divided by 25.4. "Derived" tape
 width is the reported head width in dots divided by that pitch; it is a
 property of the head, not a claim about the roll in the printer.
 
 | Model | Id | Status | Head and pitch | Tape | Why | What would be needed |
 | --- | --- | --- | --- | --- | --- | --- |
-| **D110_M** | `0x0910` | Tested | 96 dots at the reported 200 dpi class → 7.87 dots/mm | 12.19 mm derived from the head (12 mm stock) | The reference unit; every protocol fact in this repository was captured on it. | Nothing. |
+| **D110_M** | `0x0910` | Tested | 96 dots at the capability TLV's 200 dpi → 7.87 dots/mm | 12.19 mm derived from the head (12 mm stock) | The reference unit; every protocol fact in this repository was captured on it. | Nothing. |
 | **D11_H** | `0x0210` | Experimental | Not measured | Not measured | Reports a known id in the same family, but no print was captured on this model, so its task and page sequence are unverified. | A captured discovery handshake and a test print, and the print task its firmware expects. |
 | D110 | `0x0900` | Not supported | Not measured | Not measured | A separate catalogue id from the D110_M; this release has no captured evidence for its print task. | A captured handshake and print sequence for this exact id, plus a hardware test. |
 | D11 | `0x0200` | Not supported | Not measured | Not measured | Known id outside the verified path; the D110M V4 sequence is not established for it. | The same evidence as above. |
@@ -47,11 +51,13 @@ print was verified on it.
 
 ## Head, pitch and tape
 
-The app reads the head width and the resolution class from the printer, then
+The app reads the head width and the reported resolution from the printer, then
 derives the rest:
 
 - **Pitch** = `dpi / 25.4`. 203 dpi → 7.99 dots/mm, 300 dpi → 11.81 dots/mm.
-  The D110_M reported the 200 dpi class, which gives 7.87 dots/mm.
+  The D110_M's capability TLV reported 200 dpi, which gives 7.87 dots/mm. Its
+  heartbeat's resolution class byte is `2`, which decodes to 203 dpi; the TLV
+  is the pitch authority when it has a usable value.
 - **Tape width** = `headWidthPx / pitch`. For the reference unit,
   `96 / 7.87` = 12.19 mm — slightly wider than the 12 mm stock, because the
   head is wider than the printable area of the label.
