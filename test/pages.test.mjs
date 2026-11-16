@@ -17,6 +17,7 @@ import vm from 'node:vm';
 import {
   NOT_FOUND_FILE,
   NO_JEKYLL_FILE,
+  PRECACHE_FILE,
   SITE_DIR,
   WORKER_FILE,
   assertPrecacheFresh,
@@ -46,15 +47,28 @@ async function temporarySite(t) {
   return out;
 }
 
-test('the staged tree is exactly the runtime files plus the three site files', async (t) => {
+test('the staged tree is exactly the runtime files plus the site files', async (t) => {
   const out = await temporarySite(t);
   const { entries } = await buildPages({ out });
   const runtime = await collectFiles();
-  const expected = [...runtime, WORKER_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE].sort();
+  const expected = [...runtime, WORKER_FILE, PRECACHE_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE].sort();
 
   assert.deepEqual(await walk(out), expected, 'no extra file, no missing file');
-  assert.equal(entries.length, runtime.length + 3);
+  assert.equal(entries.length, runtime.length + 4);
   assert.equal(runtime.length > 0, true, 'the runtime list is not empty');
+});
+
+test('every script the worker imports is staged, or the worker cannot install', async (t) => {
+  const out = await temporarySite(t);
+  await buildPages({ out });
+  const worker = await readFile(join(projectRoot, WORKER_FILE), 'utf8');
+  const imports = [...worker.matchAll(/importScripts\(\s*['"]([^'"]+)['"]\s*\)/g)].map((match) => match[1]);
+  assert.ok(imports.length > 0, 'the worker imports at least its manifest');
+
+  const staged = new Set(await walk(out));
+  for (const path of imports) {
+    assert.ok(staged.has(path), `${WORKER_FILE} imports ${path}, so the site must publish it`);
+  }
 });
 
 test('the deployment never contains a repository-only file', async (t) => {
