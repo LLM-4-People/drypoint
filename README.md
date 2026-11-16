@@ -75,8 +75,9 @@ JSON file; the Android app writes the same file to Downloads through its native
 bridge (on Android 8-9, the app's external Downloads directory). The filename
 carries a timestamp, so exporting twice does not overwrite the first file.
 
-**Import a label.** Open **Document → Import label**, pick the `.json` file, and
-the label loads as one undoable step, with any shortening reported. Import works
+**Import a label.** Open **Document → Import label** or **Labels → Import label**,
+pick the `.json` file, and the label is added as a new label and opened, with any
+shortening reported. The label already open stays in the library. Import works
 in the web app and in the Android APK from 1.0.3. The 1.0.2 APK's file picker is
 filtered to images, so its **Import label** cannot select the file: use the web
 app or a 1.0.3+ APK instead.
@@ -90,7 +91,8 @@ The file is the only backup outside this browser's storage, so export before
 uninstalling, clearing site data or changing browsers. Export for a device
 replacement or a future re-upgrade: a file exported by 1.0.2 can only be
 imported by 1.0.2 or newer, so it cannot restore a label inside a downgraded
-1.0.0 or 1.0.1 build (neither has an importer).
+1.0.0 or 1.0.1 build (neither has an importer). Each label exports on its own;
+there is no whole-library backup file.
 
 v1.0.0 has a different signing key and must be uninstalled before 1.0.1+. That
 uninstall deletes the labels stored by 1.0.0, because 1.0.0 has no export. Do
@@ -118,7 +120,13 @@ not install 1.0.0 for new work.
   starter templates for text, name tag, QR, cable, framed and blank labels.
 - **Export and import**: one JSON file per label, from the Document panel
   beside Templates. Import validates the format, bounds and document version,
-  applies as one undoable step and reports any content it had to shorten.
+  adds the result as a new label, opens it and reports any content it had to
+  shorten; the label already open stays in the library.
+- **Label library**: **Document → Labels** opens the saved labels with a live
+  count. Open, duplicate, export or delete any label; New label and Import label
+  create a label and open it. The current label is marked, and the empty state
+  points at New label. Delete asks first and removes the label's undo history
+  and saved view with it.
 - **Document**: length in millimetres (20-200 mm, clamped to the device
   maximum) and presets. Copies is a document field, but its only control is in
   the Print panel.
@@ -129,7 +137,9 @@ not install 1.0.0 for new work.
   just the panel. **Choose printer** always opens the printer picker, even when
   a printer is already saved. **Forget printer** asks for confirmation and
   clears a saved Android BLE selection; a browser serial-port permission belongs
-  to the browser and can only be removed in its site settings.
+  to the browser and can only be removed in its site settings. While the printer
+  is idle, the Print panel names the last saved printer and says to connect
+  again; the app never claims the old link is still live.
 - Live printer state: transport, model and its support state (tested,
   experimental or not supported), serial, firmware/hardware, the D110M V4 print
   task, head width and dpi, **Output: 1-bit monochrome**, battery, roll tag and
@@ -160,7 +170,9 @@ not install 1.0.0 for new work.
 - Roll profiles: after a successful print the roll's RFID barcode remembers the
   label length and tape type, and reapplies them when that roll is seen again.
 
-The design is stored locally; reopening the page keeps the label.
+Each label keeps its own design, undo and redo history, selection, tab and
+scroll position. Reopening the page opens the last current label with its
+history and view restored.
 
 ### Keyboard shortcuts
 
@@ -185,9 +197,10 @@ The design is stored locally; reopening the page keeps the label.
   local BLE bridge. There is no analytics, no crash reporter, no remote logging
   and no update check.
 - **No account.** Nothing to sign in to, nothing to sign up for.
-- **Local storage only.** The label, settings, roll profiles and zoom live in
-  the browser's `localStorage`. Diagnostics are generated on demand and
-  downloaded as a file you own; they are never uploaded.
+- **Local storage only.** Labels live in the browser's IndexedDB. Settings, roll
+  profiles, zoom and the last printer identity live in `localStorage`.
+  Diagnostics are generated on demand and downloaded as a file you own; they are
+  never uploaded.
 - **No secrets.** A repository privacy gate fails the build if the published tree
   contains a private host name, an absolute home directory, an absolute
   browser-cache path, the reference unit's serial or an e-mail address outside
@@ -430,20 +443,48 @@ Or put any TLS terminator in front of `npm start`.
 
 ## Storage keys
 
+`localStorage` keeps the small synchronous preferences and the one migration
+key. The label library lives in IndexedDB.
+
 | Key | Contents |
 | --- | --- |
-| `drypoint.document` | the current label document (`version: 4`) |
+| `drypoint.document` | the legacy single label document (`version: 4`); read once by the migration and removed after a successful migration |
 | `drypoint.settings` | user settings, validated and coerced on load |
 | `drypoint.rolls` | roll profiles keyed by RFID barcode (bounded to 64) |
 | `drypoint.zoom` | the last canvas zoom |
+| `drypoint.printer` | the last web printer identity (`version: 1`), used to prefer the same BLE or serial device |
 
 The prefixes belong to a new install: there is no migration from the
 pre-release name and no compatibility key.
 
 Settings drop unknown keys and clamp invalid values on load; roll profiles are
 sanitised when written and bounded to 64 entries. A storage read or write
-failure is logged through the diagnostics logger; the app keeps working in
-memory.
+failure is logged through the diagnostics logger.
+
+## Label library
+
+IndexedDB database `drypoint`, version 1, owns the label library:
+
+| Store | Key | Contents |
+| --- | --- | --- |
+| `labels` | `id` | name, creation and update times, element count |
+| `documents` | `id` | the validated label document |
+| `histories` | `labelId` | undo and redo snapshots |
+| `sessions` | `labelId` | selection, active tab and scroll offsets |
+| `meta` | `key` | `currentLabelId` and `legacyMigrated` |
+
+The `labels.updatedAt` index supplies the library order. A valid
+`drypoint.document` is migrated into one label and the key is removed; an
+unreadable value is kept behind the quarantine banner and every other label
+keeps saving. The website and the APK are separate origins with separate stores,
+and there is no cloud sync. If IndexedDB cannot open, the editor still works in
+memory and shows one persistent save-failure notice.
+
+The visible library is the **Labels** button in the Document panel. Its count is
+the number of saved labels; the dialog lists them by most recently updated and
+marks the current one. Opening, creating, duplicating, deleting and importing all
+switch through the same label-session path. A whole-library backup file does not
+exist, so each label still exports on its own.
 
 ## Limitations
 
@@ -467,17 +508,20 @@ memory.
   so an edit made while offline is overwritten on the next connection. With the
   setting off, the app's stored values are used. Change them while connected
   (or on the printer itself) when the setting is on.
-- **One document at a time.** There is no multi-label library or cloud sync;
-  images are embedded as data URLs, which count against the browser's
-  localStorage quota.
+- **Labels are local to one origin.** The website and the APK keep separate
+  stores, and there is no cloud sync. Images are embedded as data URLs and count
+  against the browser's storage quota. Each label exports on its own; there is
+  no whole-library backup file.
 - **A maximum-size export is memory-heavy.** The transfer bound is about 65 MB
   of JSON (16 image sources plus envelope overhead), and the Android bridge
   marshals it as one string. On a low-RAM phone that can fail or run out of
   memory; export a smaller label or remove an image first. 1.0.3 has no chunked
   transfer.
-- **Two open tabs are last-writer-wins.** Each tab saves its own label; the last
-  tab to write (or to close while dirty) replaces the other. There is no merge
-  and no revision envelope, so finish in one tab before editing in another.
+- **Two open tabs are last-writer-wins per label.** Each tab writes whole labels
+  to the shared library, so the last write to a label replaces the other. There
+  is no merge and no revision envelope, so finish in one tab before editing in
+  another. The current-label pointer is shared too, so a switch in one tab is
+  the current label on the next boot.
 
 ## Troubleshooting
 

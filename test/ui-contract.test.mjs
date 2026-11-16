@@ -377,17 +377,56 @@ test('the finishing callback is wired to the view and refreshes the button', () 
   assert.match(finishingBranch, /updatePrintButton\(\);/, 'the finishing branch recomputes disabled/title, not just the label');
 });
 
-test('the label is persisted through the shared store, raw, with one failure channel', () => {
+test('the label is persisted through the label session, never a second writer', () => {
   const saveFailure = read('src/ui/save-failure.js');
-  assert.match(main, /createStore\(createDocument\(\), \{/, 'the document store is the shared persistence owner');
-  assert.match(main, /envelope: false/, 'the stored format stays the raw document');
+  assert.match(main, /createLabelSession\(\{/, 'the label session is the persistence owner');
+  assert.match(main, /labelSession\.saveDocument\(document\)/, 'the controller change reaches the session');
+  assert.match(main, /labelSession\.saveHistory\(controller\)/, 'history changes reach the session');
+  assert.match(main, /labelSession\.saveSession\(\{ selection \}\)/, 'selection is persisted');
+  assert.match(main, /labelSession\.saveSession\(\{ tab \}\)/, 'the active tab is persisted');
+  assert.match(main, /labelSession\.saveSession\(\{\s*\n\s*scroll:/, 'scroll is persisted');
   assert.match(main, /createSaveFailureNotice\(\)/, 'the save-failure notice has one owner');
   assert.match(saveFailure, /timeout: null/, 'a save failure is a persistent toast');
   assert.match(saveFailure, /key: 'document-save-error'/, 'one deduplicated toast per failure');
   assert.match(saveFailure, /onDismiss:/, 'dismissal clears the “already shown” guard');
+  assert.doesNotMatch(main, /createStore\(createDocument\(\)/, 'the document store is gone');
   assert.doesNotMatch(main, /localStorage\.setItem\(storageKey\('document'\)/, 'no second writer for the label');
-  assert.match(main, /window\.addEventListener\('pagehide'[\s\S]{0,500}documentStore\.flush\(\)/, 'pagehide flushes the owed write');
+  assert.match(
+    main,
+    /window\.addEventListener\('pagehide', flushLabel\)/,
+    'pagehide flushes the owed writes'
+  );
+  assert.match(
+    main,
+    /visibilitychange[\s\S]{0,200}document\.visibilityState === 'hidden'[\s\S]{0,80}flushLabel\(\)/,
+    'a hidden document flushes too'
+  );
+  assert.match(main, /labelSession\.flush\(\)/, 'the shared flush drains every debounce');
 });
+
+test('the library is opened before the controller can read a document', () => {
+  const libraryOpen = main.indexOf('await openLibrary()');
+  const boot = main.indexOf('await library.boot()');
+  const editor = main.indexOf('const controller = createEditor({');
+  assert.ok(libraryOpen >= 0, 'the library opens through its owner');
+  assert.ok(boot > libraryOpen, 'boot follows the open');
+  assert.ok(editor > boot, 'the controller is created only after the boot payload');
+  assert.match(main, /createMemoryLibrary\(\)/, 'unavailable IndexedDB falls back to memory');
+  assert.match(main, /storageAlert\.capture\(\s*bootPayload\.legacyError\.raw/, 'the legacy error reaches the quarantine banner');
+  assert.match(main, /labelSession\.resetLegacy\(\)/, 'the alert reset keeps the current label through the session');
+  assert.doesNotMatch(main, /hydrateStoredDocument/, 'the legacy hydration lives in the library migration');
+});
+
+test('the boot render restores the saved tab and scroll without writing them back', () => {
+  assert.match(main, /switchTab\(bootPayload\.session\.tab, \{ persist: false \}\)/, 'the tab is restored before the boot render');
+  assert.match(main, /restoreScroll\(bootPayload\.session\.scroll\)/, 'the scroll is restored after the boot render');
+  const restore = main.match(/function restoreScroll\(scroll\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+  assert.match(restore, /requestAnimationFrame\(/, 'scroll restore is one animation frame');
+  assert.match(restore, /ui\.stageScroll\.scrollLeft = scroll\.stageX/);
+  assert.match(restore, /ui\.layerList\.scrollTop = scroll\.layersY/);
+  assert.match(restore, /ui\.panelBody\.scrollTop = scroll\.panelY/);
+});
+
 
 test('the stage gutter constants match the stylesheet padding', () => {
   const paddings = (text) => {
@@ -560,6 +599,12 @@ test('the gate reason sits in flow above the action row and hides when allowed',
 
 test('the Document panel has one export action, one import action and one hidden input', () => {
   assert.match(html, /<section class="panel document-panel">/);
+  assert.match(html, /<button id="openLibraryButton" class="library-open" type="button" aria-haspopup="dialog">/);
+  assert.match(html, /<span>Labels<\/span>\s*<span id="libraryCount" class="library-count" aria-hidden="true">1<\/span>/);
+  assert.ok(
+    html.indexOf('id="openLibraryButton"') < html.indexOf('class="document-actions"'),
+    'the Labels button sits before the two document actions'
+  );
   assert.match(html, /<button id="exportDocumentButton" type="button">Export label<\/button>/);
   assert.match(html, /<button id="importDocumentButton" type="button">Import label<\/button>/);
   assert.equal((html.match(/id="importDocumentInput"/g) ?? []).length, 1, 'one file input');
@@ -567,19 +612,22 @@ test('the Document panel has one export action, one import action and one hidden
   assert.match(html, /<input id="importDocumentInput"[^>]*accept="application\/json,\.json"/);
 
   assert.match(main, /from '\.\/label\/transfer\.js'/);
-  assert.match(main, /downloadJson\(documentFilename\(controller\.document\.name\), serializeDocument\(controller\.document\)\)/, 'the one download path');
+  assert.match(main, /downloadJson\(documentFilename\(document\.name\), serializeDocument\(document\)\)/, 'the one download path');
   assert.match(main, /const \{ document, notices \} = parseDocument\(text\)/);
-  assert.match(main, /controller\.replaceDocument\(document\)/, 'import applies through the one undoable owner');
+  assert.match(main, /labelSession\.importDocument\(document\)/, 'import creates a label through the one session owner');
+  assert.match(main, /applyLabelPayload\(payload\)/, 'the imported label opens through the one apply path');
+  const importBody = main.slice(main.indexOf('async function importDocumentFile'), main.indexOf('ui.exportDocument.addEventListener'));
+  assert.doesNotMatch(importBody, /controller\.replaceDocument/, 'import never replaces the open label');
   // The export boundary refuses an over-budget in-memory document with the
   // importer's own wording, before any file is written (A-F1).
-  const exportBody = main.slice(main.indexOf('function exportDocument()'), main.indexOf('ui.exportDocument.addEventListener'));
+  const exportBody = main.slice(main.indexOf('function writeLabelExport'), main.indexOf('function exportDocument'));
   assert.ok(
-    exportBody.indexOf('sourceBudgetProblem(controller.document') < exportBody.indexOf('downloadJson('),
+    exportBody.indexOf('sourceBudgetProblem(document') < exportBody.indexOf('downloadJson('),
     'the budget runs before the download'
   );
   assert.match(
     exportBody,
-    /sourceBudgetProblem\(controller\.document, \{ action: 'exporting this label' \}\)/,
+    /sourceBudgetProblem\(document, \{ action: 'exporting this label' \}\)/,
     'the shared budget owner decides, with the boundary named'
   );
   assert.doesNotMatch(
@@ -587,11 +635,72 @@ test('the Document panel has one export action, one import action and one hidden
     /documentSourceChars\(|documentSourceBudgetMessage\(/,
     'no second budget measurement or wording'
   );
-  const importBody = main.slice(main.indexOf('async function importDocumentFile'), main.indexOf('ui.exportDocument.addEventListener'));
   assert.ok(importBody.indexOf('file.text()') > importBody.indexOf('TRANSFER_MAX_BYTES'), 'the size check runs before the file is read');
   assert.match(importBody, /transferTooLargeMessage\(size\)/, 'the same size wording as the parser');
   assert.doesNotMatch(importBody, /JSON\.parse|FileReader|localStorage/, 'no second parser or reader');
   assert.match(read('src/ui/toast.js'), /export function toast/, 'failures use the existing toast channel');
+});
+
+test('the Labels button and modal reuse the shared dialog and list helpers', () => {
+  const dialog = read('src/ui/library-dialog.js');
+  const format = read('src/ui/library-format.js');
+
+  assert.match(main, /openLibraryButton: \$\('#openLibraryButton'\)/);
+  assert.match(main, /libraryCount: \$\('#libraryCount'\)/);
+  assert.match(main, /refreshLibraryCount\(\)/, 'the button count has one refresh owner');
+  assert.match(main, /createLibraryDialog\(\{/, 'the dialog is built through its one owner');
+  assert.match(main, /onImport: \(\) => ui\.importDocumentInput\.click\(\)/, 'the modal reuses the hidden input');
+  assert.match(main, /labelSession\.switchTo\(label\.id\)/, 'opening a row uses the session switch');
+  assert.match(main, /labelSession\.duplicate\(label\.id\)[\s\S]{0,200}labelSession\.switchTo\(copy\.id\)/, 'duplicate switches to the copy');
+  assert.match(main, /labelSession\.remove\(label\.id\)/, 'delete uses the session owner');
+
+  assert.match(dialog, /from '\.\/modal\.js'/, 'the dialog is the shared modal');
+  assert.match(dialog, /openModal\(\{\s*title: 'Labels',\s*wide: true/, 'the shared modal is wide and titled Labels');
+  assert.doesNotMatch(dialog, /createElement\(['"]div['"], \{ class: 'modal-backdrop'/, 'no second dialog implementation');
+  assert.match(dialog, /confirmDialog/, 'delete uses the shared confirmation');
+  assert.match(dialog, /'aria-current': current \? 'true' : null/, 'the current row carries aria-current');
+  assert.match(dialog, /class: 'label-current' \}, 'Current'/, 'the current row has a visible badge');
+  assert.match(dialog, /'aria-label': 'Saved labels'/, 'the list is named');
+  assert.match(dialog, /'aria-label': `\$\{action\} \$\{label\}`/, 'row actions name their label');
+  assert.match(dialog, /relativeLabelTime\(label\.updatedAt\)/, 'the relative time is owned once');
+  assert.match(dialog, /elementCountLabel\(label\.elementCount\)/, 'the element count is owned once');
+  assert.match(dialog, /class: 'empty'/, 'the empty state reuses .empty');
+  assert.match(dialog, /icon\('layers'/, 'the empty state reuses an existing icon');
+
+  assert.match(format, /export function relativeLabelTime/);
+  assert.match(format, /export function nextLabelName/);
+  assert.match(format, /export function elementCountLabel/);
+
+  const libraryOpen = rule('.library-open');
+  assert.match(libraryOpen, /display:\s*flex/);
+  assert.match(libraryOpen, /gap:\s*8px/);
+  assert.match(libraryOpen, /padding:\s*10px/);
+  assert.match(libraryOpen, /border:\s*1px solid var\(--line\)/);
+  assert.match(libraryOpen, /border-radius:\s*9px/);
+  assert.match(libraryOpen, /background:\s*var\(--surface-2\)/);
+  assert.match(libraryOpen, /color:\s*var\(--text\)/);
+  assert.match(libraryOpen, /cursor:\s*pointer/);
+  assert.match(rule('.library-open:hover'), /border-color:\s*var\(--line-2\)/);
+  assert.match(rule('.library-open:hover'), /background:\s*var\(--surface-3\)/);
+  assert.match(rule('.library-open:focus-visible'), /outline:\s*2px solid var\(--accent\)/);
+  assert.match(rule('.library-count'), /margin-left:\s*auto/);
+  assert.match(rule('.library-count'), /background:\s*var\(--accent-soft\)/);
+  assert.match(rule('.library-count'), /color:\s*var\(--accent\)/);
+  assert.match(rule('.library-count'), /font-variant-numeric:\s*tabular-nums/);
+  assert.match(rule('.library'), /flex-direction:\s*column/);
+  assert.match(rule('.label-list'), /list-style:\s*none/);
+  assert.match(rule('.label-row'), /border:\s*1px solid var\(--line\)/);
+  assert.match(rule('.label-row'), /border-radius:\s*10px/);
+  assert.match(rule('.label-row'), /padding:\s*10px/);
+  assert.match(rule('.label-row[aria-current="true"]'), /border-color:\s*var\(--accent\)/);
+  assert.match(rule('.label-open'), /text-overflow:\s*ellipsis/);
+  assert.match(rule('.label-open'), /white-space:\s*nowrap/);
+  assert.match(rule('.label-meta'), /font-size:\s*11px/);
+  assert.match(rule('.label-meta'), /color:\s*var\(--muted\)/);
+  assert.match(rule('.label-actions'), /flex-wrap:\s*wrap/);
+
+  const coarse = css.slice(css.indexOf('@media (pointer: coarse)'));
+  assert.match(coarse, /\.library-open,[\s\S]*?\.label-actions button,[\s\S]*?min-height:\s*44px/);
 });
 
 

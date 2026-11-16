@@ -34,7 +34,7 @@ const log = createLogger('ui.print');
 /** This protocol family prints one bit per dot and has no colour channel. */
 const OUTPUT_DESCRIPTION = '1-bit monochrome';
 
-export function createPrintPanel({ container, device, controller, onOpenLog, onExport, notify = toast, confirm = confirmDialog }) {
+export function createPrintPanel({ container, device, controller, getLastPrinter = () => null, onOpenLog, onExport, notify = toast, confirm = confirmDialog }) {
   /**
    * Every failure in this panel goes through here: one log line at error level
    * and one toast. These paths used to toast with nothing in the diagnostics log
@@ -67,6 +67,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
   let refreshButton = null;
   let shutdown = null;
   let soundHint = null;
+  let lastPrinterHint = null;
 
   function register(control, getValue) {
     fields.push({ control, getValue, node: control.node });
@@ -173,6 +174,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
     refreshButton = null;
     shutdown = null;
     soundHint = null;
+    lastPrinterHint = null;
     soundState = 'idle';
     revision = capabilityRevision();
     built = true;
@@ -192,6 +194,27 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
     applyValues();
     if (connected && !device.state.printing) void loadDeviceSettings(token);
     restoreFocus(focusKey);
+  }
+
+  /**
+   * The saved printer identity is a fact about the last session, not a live
+   * link. It is shown only while no connection exists, with explicit wording
+   * that Connect is required again.
+   */
+  function updateLastPrinterHint() {
+    if (!lastPrinterHint) return;
+    const identity = getLastPrinter() ?? null;
+    const idle = device.state.status === 'idle' || device.state.status === 'error';
+    const show = Boolean(identity) && idle && !device.connected;
+    lastPrinterHint.hidden = !show;
+    if (!show) {
+      lastPrinterHint.textContent = '';
+      return;
+    }
+    const name = typeof identity.name === 'string' ? identity.name.trim() : '';
+    lastPrinterHint.textContent = name
+      ? `Last printer: ${name}. Connect to use it again.`
+      : 'Last printer saved. Connect to use it again.';
   }
 
   function buildPrinterGroup(caps, connected) {
@@ -301,6 +324,9 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
           } else {
             notify('No saved printer was removed. A browser port permission must be cleared in the browser’s site settings.');
           }
+          // The identity may have been cleared while the link was already idle,
+          // so no state event is guaranteed: refresh the hint here.
+          render();
         } catch (error) {
           reportError('forgetting the printer failed', error);
         }
@@ -327,10 +353,11 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
       },
     });
     refreshButton.node.title = connected ? 'Read the printer state again' : 'Connect the printer first';
+    lastPrinterHint = el('div', { class: 'hint printer-hint', hidden: true });
 
     return group(
       'Printer',
-      [deviceRows, el('div', { class: 'btn-row' }, connectButton.node, choose.node, forget.node, refreshButton.node)]
+      [deviceRows, lastPrinterHint, el('div', { class: 'btn-row' }, connectButton.node, choose.node, forget.node, refreshButton.node)]
     );
   }
 
@@ -860,6 +887,7 @@ export function createPrintPanel({ container, device, controller, onOpenLog, onE
       entry.control.setDisabled?.(!connected || busy || configBlocked || entry.state !== 'known');
       setControlTitle(entry.control, configBlocked ? configGate.reason : '');
     }
+    updateLastPrinterHint();
   }
 
   function render() {

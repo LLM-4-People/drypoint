@@ -11,7 +11,8 @@ import { round1 } from './core/format.js';
 import { createLogger, setLogLevel, getLogEntries, exportLogReport } from './core/log.js';
 import { bootOfflineShell } from './core/precache-status.js';
 import { getSetting, printSettingsSnapshot, setSetting, settingsStore, takeSettingsLoadIssue } from './core/settings.js';
-import { createStore } from './core/store.js';
+import { createLabelSession } from './core/label-session.js';
+import { createMemoryLibrary, openLibrary } from './core/library.js';
 import { icon } from './ui/icons.js';
 import { toast } from './ui/toast.js';
 import { confirmDialog, openModal } from './ui/modal.js';
@@ -21,6 +22,8 @@ import { createCanvasEditor } from './editor/canvas.js';
 import { pickImageFile } from './editor/image-import.js';
 import { createLayersPanel } from './ui/layers.js';
 import { createInspector } from './ui/inspector.js';
+import { createLibraryDialog } from './ui/library-dialog.js';
+import { nextLabelName } from './ui/library-format.js';
 import { fitZoom, initialZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
 import { createPrintPanel } from './ui/print-panel.js';
 import { connectionStatus, createPrintFlow, printButtonState } from './ui/print-flow.js';
@@ -32,10 +35,11 @@ import { createSaveFailureNotice } from './ui/save-failure.js';
 import { createStorageAlert } from './ui/storage-alert.js';
 import { labelCanvasName } from './ui/canvas-name.js';
 import { createDeviceManager } from './device/manager.js';
+import { clearLastPrinter, readLastPrinter, writeLastPrinter } from './device/last-printer.js';
 import { applyRollProfile } from './device/roll-profiles.js';
 import { describeDeviceStatus, labelTypeName, supportGate } from './device/capabilities.js';
 import { resolveRenderOptions } from './device/print-options.js';
-import { createDocument, createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, hydrateStoredDocument, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
+import { createDocument, createElement, documentHeightPx, documentWidthPx, exceedsPrinterLimits, newElementFrame, ELEMENT_TYPES } from './label/schema.js';
 import { summariseWarnings } from './label/render.js';
 import { TEMPLATES, testDocument } from './label/templates.js';
 import { barcodeFitMessage, barcodeFrame } from './label/barcode.js';
@@ -58,6 +62,8 @@ const ui = {
   layerList: $('#layerList'),
   layerCount: $('#layerCount'),
   templateList: $('#templateList'),
+  openLibraryButton: $('#openLibraryButton'),
+  libraryCount: $('#libraryCount'),
   exportDocument: $('#exportDocumentButton'),
   importDocument: $('#importDocumentButton'),
   importDocumentInput: $('#importDocumentInput'),
@@ -84,9 +90,10 @@ const ui = {
 /** One owner of "the label is not being saved", shared by every failure. */
 const saveFailure = createSaveFailureNotice();
 /**
- * The stored label could not be read: keep the raw text and refuse to write
- * until the operator exports it or resets the label. Created before the store,
- * because the store's load failure is what fills it.
+ * The legacy single document could not be read: keep the raw text and show the
+ * existing quarantine banner. Unlike the old single-label store, this banner
+ * does not veto the library: every other label keeps saving, and only the
+ * confirmed reset removes the unreadable value.
  */
 const storageAlert = createStorageAlert({
   container: $('#storageAlert'),
@@ -96,11 +103,10 @@ const storageAlert = createStorageAlert({
   // The raw value is written exactly as storage held it: JSON.stringify would
   // refuse to round-trip the truncation that made it unreadable.
   exportRaw: (filename) => downloadText(filename, storageAlert.raw ?? '', 'application/json'),
-  onReset: () => {
-    // The operator answered: the current label replaces the unreadable value,
-    // as one write, now.
-    documentStore.replace(controller.documentForDisplay());
-    toast('The unreadable label was reset', { tone: 'ok' });
+  onReset: (raw) => {
+    // The operator answered: remove the legacy value and keep the current
+    // label. The alert has already hidden; a failure restores it below.
+    void resetLegacyLabel(raw);
   },
   // The one confirmation owner and tone; the alert owns the wording of the
   // loss, this adapter maps it to the shared dialog.
@@ -108,27 +114,65 @@ const storageAlert = createStorageAlert({
     confirmDialog(request.title, request.message, { confirmLabel: request.confirmLabel, tone: 'danger' }),
   toast,
 });
-/**
- * The label is persisted raw (no version envelope) through the shared store:
- * one debounce, one failure channel, and a dirty flag that pagehide can trust.
- */
-const documentStore = createStore(createDocument(), {
-  key: storageKey('document'),
-  envelope: false,
-  // Storage is a trust boundary: a value that is not a label is refused, and
-  // its raw text is quarantined instead of being replaced by a fresh label.
-  hydrate: (data) => hydrateStoredDocument(data),
-  persistMs: CONFIG.ui.debounceMs,
-  // No write may overwrite a value the operator has not answered yet.
-  canPersist: () => !storageAlert.active,
-  onError: (error, phase, context) => {
-    if (phase === 'persist') saveFailure.report(error);
-    else if (!storageAlert.capture(context?.raw ?? null, error)) log.warn('stored label could not be read', { message: error.message });
-  },
-  onPersist: saveFailure.clear,
-});
 
-const device = createDeviceManager();
+/**
+ * Open the library before anything reads a label. This top-level await is the
+ * only safe point: the settings subscription further down renders, so a
+ * placeholder document created first would reach the first frame.
+ */
+let library;
+let bootPayload;
+let storageError = null;
+try {
+  library = await openLibrary();
+  bootPayload = await library.boot();
+} catch (error) {
+  // Storage is unavailable or blocked. Keep the editor usable in memory and
+  // never touch the legacy key: a later boot may still migrate it.
+  storageError = error;
+  log.error('the label library could not be opened; using memory', { message: error?.message ?? String(error) });
+  library = createMemoryLibrary();
+  bootPayload = await library.boot();
+}
+if (bootPayload.legacyError) {
+  const captured = storageAlert.capture(
+    bootPayload.legacyError.raw,
+    new Error(bootPayload.legacyError.message)
+  );
+  if (!captured) log.warn('the unreadable legacy label had no raw text to keep', { message: bootPayload.legacyError.message });
+}
+
+/** Kinds whose latest write failed; the notice clears only when all recover. */
+const failedWrites = new Set();
+const labelSession = createLabelSession({
+  library,
+  boot: bootPayload,
+  onError: (error, kind) => {
+    failedWrites.add(kind);
+    saveFailure.report(error);
+  },
+  onSaved: (kind) => {
+    failedWrites.delete(kind);
+    if (!storageError && failedWrites.size === 0) saveFailure.clear();
+  },
+});
+// The memory fallback is not durable. Its writes succeed, so the persistent
+// notice is owned by this flag rather than by a write permission veto.
+if (storageError) saveFailure.report(storageError);
+else if (bootPayload.bootError) saveFailure.report(bootPayload.bootError);
+
+const device = createDeviceManager({
+  preferred: readLastPrinter(),
+  onPrinter: (identity) => {
+    // The Android shell owns its native lastDevice; the web key is only for
+    // the browser transports. A null identity means "forget".
+    if (!identity) {
+      clearLastPrinter();
+      return;
+    }
+    if (identity.kind === 'ble' || identity.kind === 'serial') writeLastPrinter(identity);
+  },
+});
 /** Zoom is a view preference: a storage failure must not stop the app. */
 /** The stored deliberate scale, or null when the key is absent or unreadable. */
 function loadZoom() {
@@ -158,16 +202,25 @@ let zoom = storedZoom ?? CONFIG.ui.zoom.default;
  */
 let autoZoom = null;
 
+/** True while a loaded label is applied: a load is not an edit to save. */
+let loadingLabel = false;
+
 const controller = createEditor({
-  document: documentStore.get(),
+  document: bootPayload.document,
+  selection: bootPayload.session.selection,
+  history: bootPayload.history,
   onChange: (document) => {
-    documentStore.replace(document);
+    // A switch loads an already persisted document; saving it again would bump
+    // updatedAt and reorder the library for an action that changed nothing.
+    if (!loadingLabel) labelSession.saveDocument(document);
     rerender();
   },
-  onSelection: () => {
+  onSelection: (selection) => {
+    labelSession.saveSession({ selection });
     inspector.render();
     layers.render();
   },
+  onHistoryChange: () => labelSession.saveHistory(controller),
   // One refusal channel: an Add that the element or image budget refused is a
   // fact about the click, not a layout hint, so it must not be buried in a
   // saturated stage summary.
@@ -395,9 +448,146 @@ const printPanel = createPrintPanel({
   container: printPanelHost,
   device,
   controller,
+  getLastPrinter: readLastPrinter,
   onOpenLog: openLogViewer,
   onExport: exportDiagnostics,
 });
+
+/* ---------------- label loading and view state ---------------- */
+
+/**
+ * Apply one persisted label payload after a switch, create, import or reset.
+ * The document is already saved, so the load suppresses its own save while
+ * still rendering the new document and announcing the new selection.
+ */
+function applyLabelPayload(payload) {
+  loadingLabel = true;
+  try {
+    controller.loadDocument(payload.document, { history: payload.history, selection: payload.session.selection });
+  } finally {
+    loadingLabel = false;
+  }
+  // Restore the tab after the payload is in place, and before the scroll frame,
+  // so the panel body measured for scroll belongs to the restored tab.
+  switchTab(payload.session.tab, { persist: false });
+  printPanel.render();
+  restoreScroll(payload.session.scroll);
+}
+
+/* ---------------- label library ---------------- */
+
+/**
+ * The live label count on the Document panel button. The button's accessible
+ * name carries the same number because the visible count is hidden from the
+ * accessibility tree.
+ */
+async function refreshLibraryCount() {
+  try {
+    const labels = await library.list();
+    const count = labels.length;
+    setText(ui.libraryCount, String(count));
+    ui.openLibraryButton.setAttribute('aria-label', `Open labels, ${count} ${count === 1 ? 'label' : 'labels'}`);
+  } catch (error) {
+    log.warn('the saved label count could not be read', { message: error?.message ?? String(error) });
+  }
+}
+
+/** Open one saved label through the one switch and apply path. */
+async function openSavedLabel(label) {
+  const payload = await labelSession.switchTo(label.id);
+  applyLabelPayload(payload);
+}
+
+/** Create a default label with the next free Untitled name and open it. */
+async function createSavedLabel() {
+  // Read names after the current label is durable: a rename inside its debounce
+  // window must not make an in-use name look free.
+  await labelSession.flush();
+  const names = (await library.list()).map((label) => label.name);
+  const payload = await labelSession.create(createDocument(), { name: nextLabelName(names) });
+  applyLabelPayload(payload);
+  await refreshLibraryCount();
+  toast('New label created', { tone: 'ok' });
+}
+
+/** Duplicate a saved label, then open the copy. */
+async function duplicateSavedLabel(label) {
+  const copy = await labelSession.duplicate(label.id);
+  const payload = await labelSession.switchTo(copy.id);
+  applyLabelPayload(payload);
+  await refreshLibraryCount();
+  toast('Label duplicated', { tone: 'ok' });
+}
+
+/** Delete a label; the session returns a payload when the open one was deleted. */
+async function deleteSavedLabel(label) {
+  const payload = await labelSession.remove(label.id);
+  // The session owns the "was this current" decision, so a stale row from
+  // another tab cannot leave a deleted label on screen.
+  if (payload) applyLabelPayload(payload);
+  await refreshLibraryCount();
+  toast('Label deleted', { tone: 'ok' });
+}
+
+const libraryDialog = createLibraryDialog({
+  list: () => library.list(),
+  currentId: () => labelSession.labelId,
+  onOpen: openSavedLabel,
+  onNew: createSavedLabel,
+  onDuplicate: duplicateSavedLabel,
+  onExport: exportSavedLabel,
+  onDelete: deleteSavedLabel,
+  onImport: () => ui.importDocumentInput.click(),
+});
+
+ui.openLibraryButton.addEventListener('click', () => {
+  void libraryDialog.open();
+});
+
+/**
+ * The confirmed reset of the unreadable legacy value. The library removes the
+ * key and keeps the current readable label, creating one only when none exists;
+ * if anything fails the quarantine is put back, because the raw value is still
+ * the only copy.
+ */
+async function resetLegacyLabel(raw) {
+  try {
+    const payload = await labelSession.resetLegacy();
+    applyLabelPayload(payload);
+    await refreshLibraryCount();
+    toast('The unreadable label was reset', { tone: 'ok' });
+  } catch (error) {
+    log.error('the unreadable label could not be reset', { message: error?.message ?? String(error) });
+    if (typeof raw === 'string' && raw) storageAlert.capture(raw, error);
+    saveFailure.report(error);
+    toast(error?.message ?? 'The unreadable label could not be reset', { tone: 'error' });
+  }
+}
+
+/** Put the persisted scroll offsets back after placement and one render. */
+function restoreScroll(scroll) {
+  requestAnimationFrame(() => {
+    ui.stageScroll.scrollLeft = scroll.stageX;
+    ui.stageScroll.scrollTop = scroll.stageY;
+    ui.layerList.scrollTop = scroll.layersY;
+    ui.panelBody.scrollTop = scroll.panelY;
+  });
+}
+
+/** One combined scroll snapshot for the three independent scroll regions. */
+function persistScroll() {
+  labelSession.saveSession({
+    scroll: {
+      stageX: ui.stageScroll.scrollLeft,
+      stageY: ui.stageScroll.scrollTop,
+      layersY: ui.layerList.scrollTop,
+      panelY: ui.panelBody.scrollTop,
+    },
+  });
+}
+on(ui.stageScroll, 'scroll', persistScroll, { passive: true });
+on(ui.layerList, 'scroll', persistScroll, { passive: true });
+on(ui.panelBody, 'scroll', persistScroll, { passive: true });
 
 /* ---------------- rendering ---------------- */
 
@@ -588,38 +778,73 @@ function applyTemplate(template) {
 /* ---------------- document transfer ---------------- */
 
 /**
- * Export the label through the one download owner. The file name carries a
- * timestamp because the Android bridge refuses a display name Downloads
- * already holds.
+ * Write one label document through the one download owner. The file name
+ * carries a timestamp because the Android bridge refuses a display name
+ * Downloads already holds.
+ *
+ * @param {object} document a validated label document
+ * @returns {boolean} whether a file was written
  */
-function exportDocument() {
+function writeLabelExport(document) {
   // Both source budgets are authoring boundaries, not normalise steps: a
   // document that already exists in memory is exported or refused whole, with
   // the importer's own decision and wording, so an export always re-imports.
-  const problem = sourceBudgetProblem(controller.document, { action: 'exporting this label' });
+  const problem = sourceBudgetProblem(document, { action: 'exporting this label' });
   if (problem) {
     log.warn('label export refused an over-budget document', { message: problem });
     toast(problem, { tone: 'error' });
-    return;
+    return false;
   }
   try {
-    const saved = downloadJson(documentFilename(controller.document.name), serializeDocument(controller.document));
+    const saved = downloadJson(documentFilename(document.name), serializeDocument(document));
     if (saved === false) {
       log.warn('label export was refused by the save bridge');
       toast('Could not save the label file', { tone: 'error' });
-      return;
+      return false;
     }
     toast('Label exported', { tone: 'ok' });
+    return true;
   } catch (error) {
     log.error('label export failed', { message: error?.message ?? String(error) });
     toast(`Could not export the label: ${error?.message ?? String(error)}`, { tone: 'error' });
+    return false;
   }
+}
+
+/** Export the open label as it stands in the editor. */
+function exportDocument() {
+  writeLabelExport(controller.document);
+}
+
+/**
+ * Export one saved row. A readable label uses the normal transfer envelope; an
+ * unreadable record keeps its raw value, which is the only copy the operator
+ * can still take away.
+ */
+async function exportSavedLabel(label) {
+  const result = await library.read(label.id);
+  if (result.ok) {
+    writeLabelExport(result.document);
+    return;
+  }
+  log.warn('a saved label could not be read for export', { id: label.id, reason: result.reason });
+  if (typeof result.raw !== 'string' || !result.raw) {
+    toast('That label could not be read, and it has no raw value to export.', { tone: 'error' });
+    return;
+  }
+  const filename = `${CONFIG.app.id}-unreadable-label-${Date.now()}.json`;
+  const saved = downloadText(filename, result.raw, 'application/json');
+  if (saved === false) {
+    toast('Could not save the raw label file', { tone: 'error' });
+    return;
+  }
+  toast('The unreadable label was exported as raw JSON');
 }
 
 /**
  * Read one picked file, refusing an over-size file before reading it. Parsing,
- * validation and notices belong to `label/transfer.js`; applying the result
- * goes through `replaceDocument`, which is one undoable step.
+ * validation and notices belong to `label/transfer.js`; the parsed document is
+ * added as a new label and opened, so the label already open is kept.
  */
 async function importDocumentFile(file) {
   const size = Number(file?.size);
@@ -643,7 +868,9 @@ async function importDocumentFile(file) {
   }
   try {
     const { document, notices } = parseDocument(text);
-    controller.replaceDocument(document);
+    const payload = await labelSession.importDocument(document);
+    applyLabelPayload(payload);
+    await refreshLibraryCount();
     if (notices.length) {
       log.warn('label imported with notices', { notices: notices.length });
       // The same summary owner as the stage footer, so a notice is never
@@ -846,7 +1073,9 @@ ui.deviceButton.addEventListener('click', async () => {
     return;
   }
   try {
-    await device.connect();
+    // Manual connect prefers the last printer the same way the automatic path
+    // does, without ever claiming the old connection is still live.
+    await device.connect({ preferred: readLastPrinter() });
     switchTab('print');
   } catch (error) {
     // Cancelling the browser's port picker is a normal outcome, never an error.
@@ -957,7 +1186,7 @@ ui.testButton.addEventListener('click', async () => {
 
 const tabButtons = [...ui.tabs.querySelectorAll('button[data-tab]')];
 
-function switchTab(tab, { focus = false } = {}) {
+function switchTab(tab, { focus = false, persist = true } = {}) {
   for (const button of tabButtons) {
     const active = button.dataset.tab === tab;
     button.setAttribute('aria-selected', String(active));
@@ -968,6 +1197,7 @@ function switchTab(tab, { focus = false } = {}) {
   ui.panelBody.setAttribute('aria-labelledby', `tab-${tab}`);
   designPanel.hidden = tab !== 'design';
   printPanelHost.hidden = tab !== 'print';
+  if (persist) labelSession.saveSession({ tab });
   if (tab === 'print') printPanel.render();
   else inspector.render();
 }
@@ -1087,23 +1317,27 @@ on(document, 'keydown', (event) => {
 
 /* ---------------- persistence ---------------- */
 
-window.addEventListener('pagehide', () => {
-  // Only an owed write is flushed: a tab that never edited the document must
-  // not rewrite storage, or the last tab to close would overwrite newer work
-  // (two dirty tabs remain last-writer-wins). A failed final write is only
-  // logged: the page is gone, and the persistent toast already reported the
-  // write that failed first.
-  try {
-    documentStore.flush();
-  } catch (error) {
-    log.warn('could not persist label on pagehide', { message: error.message });
-  }
+function flushLabel() {
+  // The IndexedDB write is started, but a page that disappears inside the
+  // debounce window can still lose the last few milliseconds. `pagehide` and a
+  // hidden document are the two last callbacks a page reliably receives.
+  void labelSession.flush().catch((error) => {
+    log.warn('could not flush the label', { message: error?.message ?? String(error) });
+  });
+}
+
+window.addEventListener('pagehide', flushLabel);
+on(document, 'visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushLabel();
 });
 
 /* ---------------- boot ---------------- */
 
 ui.brandLink.href = BRAND.repository;
 applyTheme();
+// The Document panel count is independent of the first paint: a failed list
+// leaves the static 1 in place rather than blocking the editor.
+void refreshLibraryCount();
 placeStage();
 placeInspector();
 placeDocName();
@@ -1111,6 +1345,9 @@ placeDocName();
 // now that the toast host exists, instead of logging a warning nobody sees.
 const settingsIssue = takeSettingsLoadIssue();
 if (settingsIssue) toast(settingsIssue.message, { tone: 'error' });
+// A saved record the boot had to skip is a fact the operator must hear about
+// even though another label is open and editable.
+if (bootPayload.notice) toast(bootPayload.notice, { tone: 'error' });
 // Choose the first scale before painting: rendering at a desktop zoom and then
 // clamping would resize the canvas after the first frame. A stored value is the
 // operator's deliberate choice and survives the boot fit (bounded only by this
@@ -1120,14 +1357,20 @@ const boot = initialZoom({ stored: storedZoom, fit: stageFitZoom(), compact: com
 zoom = boot.value;
 autoZoom = boot.auto ? boot.value : null;
 updateZoomLabel();
+// The tab is restored after its wiring exists and before the boot render; the
+// boot payload's selection was already restored by the controller constructor.
+switchTab(bootPayload.session.tab, { persist: false });
 rerender();
 printPanel.render();
+// Scroll is restored after placement and the first render, in one frame.
+restoreScroll(bootPayload.session.scroll);
 setDeviceState();
 void hydrateAndRepaint();
 
 if (getSetting('device.autoConnect')) {
   // Never prompt on boot: only attach to a device the user already granted.
-  device.connect({ auto: true }).catch((error) => {
+  // The saved identity makes the same printer the first choice.
+  device.connect({ auto: true, preferred: readLastPrinter() }).catch((error) => {
     log.debug('auto-connect skipped', { message: error.message });
     setDeviceState();
   });
@@ -1140,6 +1383,7 @@ bootOfflineShell({
   serviceWorker: 'serviceWorker' in navigator ? navigator.serviceWorker : null,
   isAndroidShell: Boolean(window.NiimbotBLE),
   addWindowListener: (type, handler) => window.addEventListener(type, handler),
+  readyState: document.readyState,
   log,
   toast,
 });

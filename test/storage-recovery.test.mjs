@@ -1,15 +1,13 @@
 /**
- * PR-F1: an unreadable stored label is kept, not replaced.
- *
- * The store hands the raw stored string to its owner on every load failure, and
- * its owner (the storage alert) refuses every write until the operator exports
- * the raw value or resets the label. These tests drive the two halves with a
- * fake `localStorage` and the shared fake DOM.
+ * The unreadable legacy label is kept, exported and only removed by a
+ * confirmed reset. The library keeps saving every other label while the
+ * quarantine banner is up.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createStore } from '../src/core/store.js';
+import { openLibrary } from '../src/core/library.js';
+import { createMemoryDatabase } from '../src/core/library-db.js';
 import { hydrateStoredDocument, INVALID_ELEMENT_LIST_MESSAGE } from '../src/label/schema.js';
 import { createStorageAlert, STORAGE_ALERT_MESSAGE } from '../src/ui/storage-alert.js';
 import { installDom } from './helpers/fake-dom.mjs';
@@ -24,7 +22,7 @@ function fakeStorage(initial = {}) {
     getItem: (key) => (values.has(key) ? values.get(key) : null),
     setItem: (key, value) => {
       writes.push([key, value]);
-      values.set(key, value);
+      values.set(key, String(value));
     },
     removeItem: (key) => values.delete(key),
   };
@@ -55,23 +53,29 @@ function alertHarness({ initial = {}, confirm = async () => true } = {}) {
       exported.push(filename);
       return true;
     },
-    onReset: () => resets.push('reset'),
+    onReset: (raw) => resets.push(raw),
     confirm,
     toast: (message, options) => toasts.push({ message, options }),
   });
-  const errors = [];
-  const store = createStore({ elements: [], lengthMm: 40 }, {
-    key: 'drypoint.document',
-    envelope: false,
-    hydrate: (value) => hydrateStoredDocument(value),
-    persistMs: 0,
-    canPersist: () => !alert.active,
-    onError: (error, phase, context) => {
-      errors.push({ error, phase, context });
-      if (phase === 'load') alert.capture(context?.raw ?? null, error);
-    },
+  // The boot owner reports the unreadable legacy value; the harness does the
+  // same so the alert tests start from the real quarantine state.
+  if (typeof initial['drypoint.document'] === 'string') {
+    alert.capture(initial['drypoint.document'], new Error('unreadable legacy label'));
+  }
+  return { alert, storage, nodes, exported, resets, toasts };
+}
+
+async function libraryHarness(initial) {
+  const storage = fakeStorage(initial);
+  let sequence = 0;
+  let clock = 1000;
+  const library = await openLibrary({
+    db: createMemoryDatabase(),
+    storage,
+    newId: () => `label-${++sequence}`,
+    now: () => (clock += 10),
   });
-  return { alert, store, storage, nodes, exported, resets, toasts, errors };
+  return { library, storage };
 }
 
 const INVALID = '{"lengthMm":40,"elements":"nope"}';
@@ -79,17 +83,16 @@ const TRUNCATED = '{"lengthMm":40,"elements":[{"type":"text","text":"Hi"';
 
 test('an invalid stored element list is quarantined with its raw text', (t) => {
   t.after(() => delete globalThis.localStorage);
-  const { alert, storage, nodes, errors } = alertHarness({ initial: { 'drypoint.document': INVALID } });
+  const { alert, storage, nodes } = alertHarness({ initial: { 'drypoint.document': INVALID } });
   assert.equal(alert.active, true, 'the quarantine is active');
   assert.equal(alert.raw, INVALID, 'the raw value is kept exactly');
-  assert.equal(errors.length, 1);
-  assert.equal(errors[0].phase, 'load');
-  assert.equal(errors[0].context.raw, INVALID, 'the store hands the raw string to its owner');
   assert.equal(nodes.container.hidden, false, 'the notice is visible');
   assert.equal(nodes.textNode.textContent, STORAGE_ALERT_MESSAGE);
+  assert.match(nodes.textNode.textContent, /could not be read/);
   assert.match(nodes.textNode.textContent, /kept exactly as it is/);
-  assert.match(nodes.textNode.textContent, /nothing is saved/);
-  assert.match(nodes.textNode.textContent, /until you reset the label/);
+  assert.match(nodes.textNode.textContent, /until you reset it/);
+  assert.match(nodes.textNode.textContent, /Other labels keep saving/);
+  assert.doesNotMatch(nodes.textNode.textContent, /nothing is saved/, 'the library keeps writing other labels');
   assert.doesNotMatch(nodes.textNode.textContent, /until you export/, 'export is a backup, never the acknowledgement');
   assert.equal(storage.writes.length, 0, 'loading writes nothing');
 });
@@ -109,36 +112,30 @@ test('the reset button asks before it destroys the only copy', async (t) => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(asks.length, 1, 'one confirmation request');
   assert.match(asks[0].title, /Reset the unreadable label/);
-  assert.match(asks[0].message, /replaced by the label currently in the editor/);
+  assert.match(asks[0].message, /removed\. The label open now is kept/);
   assert.match(asks[0].message, /Export the raw value first/);
   assert.match(asks[0].message, /cannot be undone/);
   assert.equal(asks[0].confirmLabel, 'Reset the label');
   assert.deepEqual(resets, [], 'a refusal resets nothing');
-  assert.equal(alert.active, true, 'the write veto holds');
+  assert.equal(alert.active, true, 'the quarantine holds');
   assert.equal(alert.raw, INVALID, 'the raw value is untouched');
   assert.equal(nodes.container.hidden, false, 'the banner stays');
   assert.equal(storage.writes.length, 0, 'nothing was written');
 });
 
-test('confirming replaces the value exactly once', async (t) => {
+test('confirming hands the raw value to the reset owner exactly once', async (t) => {
   t.after(() => delete globalThis.localStorage);
-  let allowed = true;
-  const { alert, nodes, resets } = alertHarness({
-    initial: { 'drypoint.document': INVALID },
-    confirm: async () => allowed,
-  });
+  const { alert, nodes, resets } = alertHarness({ initial: { 'drypoint.document': INVALID } });
 
   nodes.resetButton.click();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(resets, ['reset']);
+  assert.deepEqual(resets, [INVALID], 'the owner can restore the raw value if its reset fails');
   assert.equal(alert.active, false);
   assert.equal(nodes.container.hidden, true);
 
-  // A second click cannot answer again, and a later refusal changes nothing.
-  allowed = false;
   nodes.resetButton.click();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(resets, ['reset'], 'the quarantine is answered once');
+  assert.deepEqual(resets, [INVALID], 'the quarantine is answered once');
 });
 
 test('a truncated stored value is quarantined too', (t) => {
@@ -149,53 +146,51 @@ test('a truncated stored value is quarantined too', (t) => {
   assert.equal(nodes.container.hidden, false);
 });
 
-test('an edit cannot overwrite the quarantined value, and a reload keeps it', (t) => {
+test('a bad legacy record does not stop another label from saving, and survives a reload', async (t) => {
   t.after(() => delete globalThis.localStorage);
-  const { alert, store, storage } = alertHarness({ initial: { 'drypoint.document': INVALID } });
+  const { library, storage } = await libraryHarness({ 'drypoint.document': INVALID });
+  const boot = await library.boot();
+  assert.equal(boot.legacyError.raw, INVALID);
+  const { alert } = alertHarness({ initial: { 'drypoint.document': INVALID } });
+  assert.equal(alert.raw, INVALID);
 
-  store.replace({ lengthMm: 30, elements: [] });
-  store.flush();
-  assert.equal(storage.values.get('drypoint.document'), INVALID, 'the raw value survives an edit');
-  assert.equal(storage.writes.length, 0, 'the store refused every write');
-  assert.equal(store.dirty, true, 'the owed write is still owed, not silently dropped');
+  const saved = await library.save(boot.label.id, {
+    ...boot.document,
+    name: 'Saved beside the unreadable value',
+  });
+  assert.equal(saved.name, 'Saved beside the unreadable value');
+  assert.equal(storage.values.get('drypoint.document'), INVALID, 'the raw legacy value is untouched');
+  assert.equal((await library.read(boot.label.id)).document.name, 'Saved beside the unreadable value');
 
-  // A reload reads the same value and raises the same notice.
-  const again = alertHarness({ initial: { 'drypoint.document': storage.values.get('drypoint.document') } });
-  assert.equal(again.alert.active, true);
-  assert.equal(again.alert.raw, INVALID);
+  // The next boot still reports the same quarantine and reads the saved label.
+  const again = await library.boot();
+  assert.equal(again.legacyError.raw, INVALID);
+  assert.equal(again.document.name, 'Saved beside the unreadable value');
+  assert.equal(alert.active, true);
 });
 
-test('reset is the only path that replaces the quarantined value', (t) => {
+test('reset is the only path that removes the quarantined value', async (t) => {
   t.after(() => delete globalThis.localStorage);
-  const { alert, store, storage, nodes, resets } = alertHarness({ initial: { 'drypoint.document': INVALID } });
-  store.replace({ lengthMm: 30, elements: [] });
-
-  assert.equal(alert.answer(), true, 'the explicit reset answers the quarantine');
-  assert.equal(alert.active, false);
-  assert.equal(resets.length, 1, 'one reset callback, one write owner');
-  assert.equal(nodes.container.hidden, true, 'the notice disappears');
-  store.flush();
-  assert.equal(storage.writes.length, 1, 'the current label is written once');
-  assert.equal(JSON.parse(storage.values.get('drypoint.document')).lengthMm, 30);
-  assert.equal(alert.answer(), false, 'a second reset is a no-op');
+  const { library, storage } = await libraryHarness({ 'drypoint.document': INVALID });
+  const boot = await library.boot();
+  const label = await library.resetLegacy();
+  assert.equal(storage.values.has('drypoint.document'), false, 'the key is removed, not overwritten');
+  assert.equal(label.name, 'Untitled');
+  assert.equal(await library.currentId(), label.id);
+  assert.equal((await library.read(label.id)).document.elements.length, 1);
+  assert.equal(label.id, boot.label.id, 'the label boot opened is kept');
+  assert.equal((await library.list()).length, 1, 'reset does not add a duplicate label');
 });
 
-test('the raw export writes the quarantined text unchanged and never releases the veto', (t) => {
+test('the raw export writes the quarantined text unchanged and never releases the quarantine', (t) => {
   t.after(() => delete globalThis.localStorage);
-  const { alert, store, storage, exported, toasts } = alertHarness({ initial: { 'drypoint.document': TRUNCATED } });
+  const { alert, exported, toasts } = alertHarness({ initial: { 'drypoint.document': TRUNCATED } });
   assert.equal(alert.exportQuarantined(), true);
   assert.equal(exported.length, 1);
   assert.match(exported[0], /^drypoint-unreadable-label-\d+\.json$/);
   assert.equal(toasts.at(-1).message, 'Raw stored label exported');
-
-  // Export is a backup, not an acknowledgement: the value is still kept and
-  // the store still refuses to write over it.
   assert.equal(alert.active, true, 'the quarantine is still active after an export');
   assert.equal(alert.raw, TRUNCATED);
-  store.replace({ lengthMm: 30, elements: [] });
-  store.flush();
-  assert.equal(storage.values.get('drypoint.document'), TRUNCATED, 'nothing was overwritten after the backup');
-  assert.equal(storage.writes.length, 0);
 
   // With no quarantine the call is a no-op, never a zero-byte file.
   alert.answer();
@@ -206,12 +201,9 @@ test('the raw export writes the quarantined text unchanged and never releases th
 
 test('a storage read that never produced a value does not quarantine', (t) => {
   t.after(() => delete globalThis.localStorage);
-  const { alert, nodes, errors } = alertHarness({ initial: {} });
+  const { alert, nodes } = alertHarness();
   assert.equal(alert.active, false, 'there is nothing to keep');
-  assert.equal(errors.length, 0, 'an empty store is not a failure');
   assert.equal(nodes.container.hidden, true);
-  // A null/empty context must never block persistence.
-  delete globalThis.localStorage;
   assert.equal(alert.capture(null), false);
   assert.equal(alert.capture(''), false);
   assert.equal(alert.active, false);

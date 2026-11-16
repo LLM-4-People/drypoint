@@ -15,6 +15,7 @@ import { join, sep } from 'node:path';
 
 import { projectRoot } from './project-files.mjs';
 import { chromeTimeoutMs } from './env-timeout.mjs';
+import { CONFIG } from '../../src/core/config.js';
 import { CHROME } from '../../scripts/lib/chrome.mjs';
 import { contentTypeFor } from '../../scripts/lib/content-types.mjs';
 
@@ -197,6 +198,37 @@ export async function openApp(cdp, port, { timeoutMs = mountTimeoutMs(), path = 
   }
   const dump = await cdp.evaluate('document.body ? document.body.innerText.slice(0, 200) : ""');
   throw new Error(`the editor did not mount within ${timeoutMs} ms (body: ${JSON.stringify(dump)})`);
+}
+
+/**
+ * Reset both stores a test may seed: localStorage and the whole library
+ * database. The page's open connection closes on the `versionchange` the
+ * delete request delivers, so the deletion completes without a reload.
+ *
+ * @param {{evaluate: Function}} cdp
+ */
+export async function clearStorage(cdp) {
+  await cdp.evaluate(`(async () => {
+    try { localStorage.clear(); } catch (error) { /* a blocked origin has nothing to clear */ }
+    await new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      let request;
+      try {
+        request = indexedDB.deleteDatabase(${JSON.stringify(CONFIG.app.id)});
+      } catch (error) {
+        done();
+        return;
+      }
+      request.onsuccess = done;
+      request.onerror = done;
+      setTimeout(done, 3000);
+    });
+  })()`);
 }
 
 /**

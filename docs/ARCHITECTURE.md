@@ -45,8 +45,12 @@ src/
     events.js              tiny emitter used by the device manager and session
     format.js              clamp, hex/MAC, byte concat, sleep, debounce, clone, ids
     geometry.js            the only mm ↔ dot conversion and head geometry
+    label-session.js       current label, three debounces, one flush and failure channel
+    library-db.js          IndexedDB name, stores, upgrade path and memory adapter
+    library.js             label records, migration, boot and unreadable-record isolation
     log.js                 central logger, ring buffer, redaction, export
     precache-status.js     page consumer for the worker's precache-error message
+    session.js             pure normalization of selection, tab and scroll
     settings.js            declarative settings schema + coercion + store
     store.js               reactive store with debounced persistence
   protocol/
@@ -58,13 +62,14 @@ src/
     session.js             one outstanding request, timeouts, abort, errors
     errors.js              PrinterError and the 0xDB error-code table
   device/
-    manager.js             transport lifecycle, discovery, job gating
+    manager.js             transport lifecycle, discovery, job gating, saved-printer preference
+    last-printer.js        versioned web printer identity for the next reconnect
     capabilities.js        merge of every capability source + print gates
     print-job.js           D110M V4 job order, row RLE, completion polling
     print-options.js       settings → density/label type/speed/copies
     roll-profiles.js       per-RFID length + tape memory (bounded map)
     transports/
-      index.js             ordered candidates for a preference
+      index.js             ordered candidates for a preference and saved identity
       serial.js            Web Serial (Bluetooth Classic SPP / COM port)
       ble.js               Web Bluetooth GATT, paced writes
       android.js           native bridge transport for the APK shell
@@ -92,12 +97,14 @@ src/
     icons.js               inline SVG icon set
     inspector.js           document + selected-element properties
     layers.js              layer list, reorder, visibility, lock
+    library-dialog.js      Labels modal: saved rows, actions, empty state
+    library-format.js      pure relative-time, element-count and unique-name text
     modal.js               dialog stack, focus trap, inert background
     print-flow.js          one print flow: in-flight guard, warnings, progress
     print-panel.js         printer state, job settings, maintenance, logs
     canvas-name.js         the one accessible name of the design canvas
     save-failure.js        one owner of the persistent save-failure notice
-    storage-alert.js       keeps an unreadable stored label and blocks every write
+    storage-alert.js       keeps an unreadable legacy label and its raw export
     setting-control.js     schema → control
     settings-sheet.js      settings modal
     stage-layout.js        compact/desktop placement and fit decisions
@@ -157,7 +164,11 @@ pointer / keyboard / inspector
         ↓
 editor/controller.js        validate + clamp, push history
         ↓ onChange
-main.js saveDocument()      debounced localStorage write
+core/label-session.js       debounced document, history and session writes
+        ↓
+core/library.js             one batch: metadata + validated document
+        ↓
+core/library-db.js          IndexedDB transaction
         ↓ rerender
 label/render.js             paint at native printer dots
 editor/canvas.js            copy to the visible canvas + overlay
@@ -166,6 +177,48 @@ editor/canvas.js            copy to the visible canvas + overlay
 `controller.document` is the single in-memory source of truth. Every mutation
 passes through `validateDocument`/`clampElement`; a locked element rejects
 geometry and content edits at that one choke point.
+
+### Label library and restore
+
+Boot awaits `openLibrary()` and `library.boot()` after the UI refs and the
+storage alert, before the controller exists. The first render therefore always
+uses the loaded document, never a placeholder. If IndexedDB cannot open, a
+memory library with one default label keeps the editor usable and one
+persistent notice says the work is not being saved.
+
+`core/library-db.js` owns database `drypoint` at version 1: `labels`,
+`documents`, `histories`, `sessions` and `meta`, plus the `labels.updatedAt`
+index. `core/library.js` validates every document, sorts the list, and returns
+an unreadable record as `{ ok: false, reason, raw }` without overwriting it or
+vetoing writes to another label. `core/label-session.js` is the only caller of
+`library.save`, `writeHistory` and `writeSession`; a failed document write stays
+owed and is retried by the next change or flush.
+
+The history stacks are persisted separately from the document, so undo and redo
+survive a reload. The controller hydrates them silently, and `loadDocument`
+replaces the label without recording a switch as an undo step. Session state
+(selection, tab and four scroll offsets) is stored per label and restored after
+placement and the first render; it never enters the document or history.
+
+The Document panel's **Labels** button opens `ui/library-dialog.js` through the
+shared `openModal`. The dialog reads `library.list()` once for that opening
+(already sorted by `updatedAt`), marks the current row with `aria-current="true"`,
+and offers Open, Duplicate, Export and Delete per label. New label and Import label
+create a label and switch to it; Import parses through `label/transfer.js` and
+calls `labelSession.importDocument`, so the previously open label is kept. Every
+switch, create, duplicate, delete and import returns a payload from
+`labelSession` and applies it through the one `applyLabelPayload` path in
+`main.js`, which suppresses the load save, restores the tab and scroll, and
+rerenders. The button's count and accessible name are refreshed after each
+mutation; `ui/library-format.js` owns the relative-time and unique-name text.
+
+A valid `drypoint.document` migrates into one label and the key is removed. An
+unreadable value is kept exactly as it is, reported on every boot, and removed
+only by the confirmed reset, which keeps the current readable label and
+creates one only when none is readable. The Android native `lastDevice` remains
+the reconnect owner in the APK. On the web, only the BLE or serial printer
+identity is stored under `drypoint.printer`; a reload never claims the old
+connection is still live.
 
 ### Rendering and printing
 
@@ -267,9 +320,9 @@ scripts/build-android.mjs
     assets/precache.js, never a hand-written list.
 ```
 
-The WebView origin is stable (`https://drypoint.local`), so `localStorage` survives
-app restarts. The service worker is skipped inside the shell: the assets are
-already local, and a worker cache would outlive an APK update.
+The WebView origin is stable (`https://drypoint.local`), so `localStorage` and
+IndexedDB survive app restarts. The service worker is skipped inside the shell:
+the assets are already local, and a worker cache would outlive an APK update.
 
 ## Document model
 
@@ -374,9 +427,11 @@ over-budget label intact. In order:
    and print, so dropping a source there would destroy a label that already
    exists. Import and export are the two authoring boundaries that refuse.
 
-The UI applies the result through `controller.replaceDocument`, so an import is
-exactly one undo step. There is no second reader, validation path, download path
-or notice vocabulary.
+The UI adds the parsed document as a new label through
+`labelSession.importDocument`, then opens it with `applyLabelPayload`; the label
+that was open stays in the library. `controller.replaceDocument` remains the
+undoable owner for templates. There is no second reader, validation path,
+download path or notice vocabulary.
 
 ## Capability model
 
@@ -446,20 +501,39 @@ Consumers:
 
 ## Storage keys
 
-All keys share `CONFIG.app.storagePrefix` (`drypoint`).
+All `localStorage` keys share `CONFIG.app.storagePrefix` (`drypoint`).
 
 | Key | Shape | Owner |
 | --- | --- | --- |
-| `drypoint.document` | the document JSON above | `main.js` (`loadDocument`/`saveDocument`) |
+| `drypoint.document` | the legacy document JSON above (`version: 4`), migration only | `core/library.js` |
 | `drypoint.settings` | `{ version: 4, data: { ...settings } }` | `core/settings.js` via `core/store.js` |
 | `drypoint.rolls` | `{ version: 1, data: { profiles: { [barcode]: { lengthMm, labelType, updatedAt } } } }` | `device/roll-profiles.js` |
 | `drypoint.zoom` | a number as a string | `main.js` |
+| `drypoint.printer` | `{ version: 1, data: { kind, id, name } }`, `kind` is `ble` or `serial` | `device/last-printer.js` |
 
 Settings are validated on every load: unknown keys are dropped, enums fall back
 to defaults, numbers are clamped, and a read/write failure is logged instead of
 being silently treated as success. Roll profiles are sanitised when written and
 the map is bounded by `CONFIG.device.maxRollProfiles` (64), evicting the least
 recently updated entry.
+
+## IndexedDB library
+
+Label data is in IndexedDB database `drypoint`, version 1:
+
+| Store | Key | Shape |
+| --- | --- | --- |
+| `labels` | `id` | `{ id, name, createdAt, updatedAt, elementCount }`, indexed by `updatedAt` |
+| `documents` | `id` | `{ id, document }` with the validated document above |
+| `histories` | `labelId` | `{ labelId, past, future, updatedAt }` |
+| `sessions` | `labelId` | `{ labelId, selection, tab, scroll, updatedAt }` |
+| `meta` | `key` | `{ key, value }` for `currentLabelId` and `legacyMigrated` |
+
+A label record that fails `validateDocument` is reported and left untouched;
+the other labels keep saving. The visible Labels dialog reads this store through
+`library.list()`; create, duplicate, delete and import write through
+`labelSession`, so the rows and the Document panel count always come from the
+same records.
 
 ## Offline strategy
 

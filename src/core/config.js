@@ -184,6 +184,8 @@ export const CONFIG = deepFreeze({
       criticalPercent: 15,
     },
     maxRollProfiles: 64,
+    /** Bounds for the web printer identity kept under `drypoint.printer`. */
+    lastPrinter: Object.freeze({ maxIdChars: 512, maxNameChars: 128 }),
     /** Labels for the auto power-off steps (GetInfo 0x07 / TLV 0x11). */
     autoShutdownLabels: { 1: 'Shortest', 2: 'Short', 3: 'Long', 4: 'Longest' },
     /**
@@ -243,6 +245,16 @@ export const CONFIG = deepFreeze({
     wheelZoomStep: 0.0015,
     /** Canvas zoom limits; one owner for the buttons, wheel and fit action. */
     zoom: Object.freeze({ min: 0.5, max: 6, step: 0.2, fitMax: 4, default: 2 }),
+    /**
+     * The library writes separate debounces for the document, history and
+     * session. Scroll offsets are bounded so a hostile stored value cannot
+     * request an absurd layout pass.
+     */
+    persistence: Object.freeze({
+      historyMs: 250,
+      sessionMs: 250,
+      scrollMaxPx: 1_000_000,
+    }),
   },
 
   log: {

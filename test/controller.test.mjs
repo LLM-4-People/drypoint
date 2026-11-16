@@ -624,6 +624,88 @@ test('a refused add reaches the refusal channel even when the stage summary is s
   assert.equal(refusals.length, 1, 'a duplicate refusal is not re-announced');
 });
 
+/* ---------------- persisted selection and history ---------------- */
+
+const sample = (name, ids = ['a']) =>
+  createDocument({
+    name,
+    elements: ids.map((id) => ({ id, type: 'text', text: id })),
+  });
+
+test('persisted selection and history hydrate silently at construction', () => {
+  const historyChanges = [];
+  const editor = createEditor({
+    document: sample('Present', ['a', 'b']),
+    selection: 'a',
+    history: { past: [sample('Past')], future: [sample('Future')] },
+    onHistoryChange: () => historyChanges.push('changed'),
+  });
+  assert.equal(editor.selection, 'a', 'the restored selection is kept');
+  assert.equal(editor.canUndo(), true, 'the past stack hydrated');
+  assert.equal(editor.canRedo(), true, 'the future stack hydrated');
+  assert.deepEqual(historyChanges, [], 'hydration is not a change notification');
+  assert.equal(editor.historyState().past[0].name, 'Past');
+});
+
+test('a persisted null selection stays a deselection, a missing id selects the last element', () => {
+  const deselected = createEditor({ document: sample('Present', ['a', 'b']), selection: null });
+  assert.equal(deselected.selection, null);
+
+  const repaired = createEditor({ document: sample('Present', ['a', 'b']), selection: 'gone' });
+  assert.equal(repaired.selection, 'b', 'a vanished id selects the last element');
+});
+
+test('loadDocument replaces document and history without committing the previous label', () => {
+  const changes = [];
+  const selections = [];
+  const historyChanges = [];
+  const editor = createEditor({
+    document: sample('Before', ['a']),
+    history: { past: [sample('Before past')], future: [] },
+    selection: 'a',
+    onChange: (document) => changes.push(document),
+    onSelection: (selection) => selections.push(selection),
+    onHistoryChange: () => historyChanges.push('changed'),
+  });
+
+  const next = sample('After', ['c', 'd']);
+  editor.loadDocument(next, { history: { past: [sample('After past')], future: [sample('After future')] }, selection: 'missing' });
+
+  assert.equal(editor.document.name, 'After');
+  assert.equal(editor.selection, 'd', 'a missing restored id is repaired');
+  assert.equal(changes.at(-1).name, 'After', 'the new document is announced');
+  assert.deepEqual(selections, ['d'], 'the repaired selection is announced');
+  assert.equal(historyChanges.length, 1, 'the load marks history dirty');
+  assert.equal(editor.historyState().past[0].name, 'After past');
+  assert.equal(editor.historyState().past.some((snapshot) => snapshot.name === 'Before'), false, 'the old label is not an undo step');
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.document.name, 'After past', 'undo follows the loaded history, not the previous label');
+});
+
+test('onHistoryChange fires after commit, undo and redo', () => {
+  let changes = 0;
+  const editor = createEditor({
+    document: sample('Present', ['a']),
+    onHistoryChange: () => { changes += 1; },
+  });
+  const added = editor.addElement('rect', { w: 10, h: 10 });
+  assert.equal(changes, 1, 'commit notified');
+  editor.undo();
+  assert.equal(changes, 2, 'undo notified');
+  editor.redo();
+  assert.equal(changes, 3, 'redo notified');
+  assert.ok(added);
+});
+
+test('replaceDocument stays an undoable edit', () => {
+  const editor = createEditor({ document: sample('Before', ['a']) });
+  editor.replaceDocument(sample('Template', ['b']));
+  assert.equal(editor.canUndo(), true);
+  editor.undo();
+  assert.equal(editor.document.name, 'Before');
+});
+
+
 /* ---------------- the refusal notice list is bounded (B-core-F5) ---------------- */
 
 test('a refused 201st add keeps the cap message inside the notice bound', () => {

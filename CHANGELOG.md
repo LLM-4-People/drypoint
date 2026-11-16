@@ -15,6 +15,23 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 
 ### Added
 
+- **Labels live in an IndexedDB library.** The single stored document is
+  migrated into label metadata, validated documents, undo histories and view
+  sessions. An unreadable legacy value stays quarantined while every other label
+  keeps saving.
+- **Undo and redo survive a reload.** History is persisted separately from the
+  document and hydrated without turning the load into an undo step.
+- **The last view returns with the label.** Selection, tab and scroll offsets are
+  stored per label and restored after the first render.
+- **The last printer is preferred on reconnect.** The web app remembers the BLE
+  or serial identity and uses it on the next automatic or manual connect. While
+  idle, the Print panel names the saved printer and asks to connect again. A
+  reload never claims the old connection is still live.
+- **The label library is visible.** The Document panel's **Labels** button shows
+  a live count and opens the saved labels with Open, Duplicate, Export and
+  Delete, a marked current label and an empty state. New label creates a
+  uniquely named default label; Import label adds the file as a new label and
+  opens it without replacing the label already open.
 - The site publishes a generated social card and Open Graph and Twitter
   metadata, so a shared link previews the product instead of a bare URL.
 
@@ -23,7 +40,7 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - **Android label import now works.** The 1.0.2 APK filtered its system file
   picker to images, so **Document → Import label** could not select a label
   `.json` file. The picker now accepts JSON documents and the imported label is
-  validated before it replaces the open one; the 1.0.2 release notes record
+  validated before it is added as a new label; the 1.0.2 release notes record
   that limitation for that build.
 - **A deep in-scope navigation loads its assets.** The document now carries the
   deployment base, so opening a deep path serves the app shell with its modules
@@ -36,8 +53,11 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - **An unreadable stored label is quarantined, not replaced.** A label whose
   stored value cannot be parsed is kept as raw bytes behind a banner; edits
   cannot overwrite it until the operator resets it, and Reset now asks first.
-  A v3 label with no valid element list is quarantined; a v3 label whose
-  geometry has to be bounded loads with a notice. Both report what changed.
+  Other labels keep saving, and Reset removes the legacy value while keeping the
+  label opened at boot and any edits made since; it creates a label only when
+  none is readable. A v3 label with no valid element list is quarantined; a v3
+  label whose geometry has to be bounded loads with a notice. Both report what
+  changed.
 - **A lost link is described honestly.** A disconnect after the page counter
   proved the copies, but before the printer confirmed the end of the job, says
   so instead of "may be incomplete"; a disconnect before that proof still says

@@ -49,7 +49,7 @@ test('an invalid stored label is kept until the operator resets it', async (t) =
     assert.equal(first.visible, true, 'the persistent notice is visible');
     assert.match(first.text, /could not be read/);
     assert.match(first.text, /kept exactly as it is/);
-    assert.match(first.text, /until you reset the label/);
+    assert.match(first.text, /until you reset it/);
     assert.match(first.text, /Export the raw value first/, 'export is offered as the backup step');
     assert.doesNotMatch(first.text, /or reset the label/, 'export never releases the write veto');
     assert.ok(first.layers > 0, 'the app is still usable with a blank label');
@@ -65,10 +65,12 @@ test('an invalid stored label is kept until the operator resets it', async (t) =
     })()`);
     assert.equal(afterEdit, INVALID, 'the edit was not persisted over the raw value');
 
-    // A reload keeps both the raw value and the notice (the store re-reads it).
+    // A reload keeps both the raw value and the notice, and the unrelated
+    // library label still has the edit that was saved beside it.
     const second = await seedAndReload(cdp, port, INVALID);
     assert.equal(second.raw, INVALID);
     assert.equal(second.visible, true);
+    assert.equal(second.label, 'Edited while unreadable', 'the library label saved and reloaded');
 
     // Export the raw value: the download owner runs and reports success.
     const exported = await cdp.evaluate(`(async () => {
@@ -127,9 +129,13 @@ test('an invalid stored label is kept until the operator resets it', async (t) =
       };
     })()`);
     assert.equal(reset.visible, false, 'the notice disappears after the reset');
-    assert.notEqual(reset.raw, INVALID, 'the stored value was replaced');
-    const parsed = JSON.parse(reset.raw);
-    assert.ok(Array.isArray(parsed.elements), 'a real label document is stored again');
+    assert.equal(reset.raw, null, 'the legacy key is removed, not overwritten');
+    const fresh = await cdp.evaluate(`(() => ({
+      name: document.querySelector('#docName')?.value ?? '',
+      layers: document.querySelectorAll('#layerList .layer-row').length,
+    }))()`);
+    assert.equal(fresh.name, 'Edited after a cancelled reset', 'the label open at boot is kept, with its edit');
+    assert.ok(fresh.layers > 0, 'the kept label is usable');
 
     // And a fresh reload no longer warns.
     await openApp(cdp, port);
@@ -166,7 +172,7 @@ test('a v3 label with a non-array element list is quarantined, not blanked', asy
     assert.equal(state.raw, V3_INVALID, 'the raw v3 value is kept exactly');
     assert.equal(state.visible, true, 'the quarantine banner is shown');
     assert.match(state.text, /could not be read/);
-    assert.match(state.text, /until you reset the label/);
+    assert.match(state.text, /until you reset it/);
 
     const afterEdit = await cdp.evaluate(`(async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

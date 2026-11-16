@@ -171,7 +171,8 @@ The Print panel has three printer actions: **Connect printer** reconnects to the
 saved printer (or asks once when none is saved), **Choose printer** always opens
 the native scan list and replaces the saved choice, and **Forget printer**
 clears the saved BLE selection after a confirmation, so the next connection asks
-again.
+again. While idle, the panel names the saved printer and asks to connect again;
+the app never claims the old link is still live.
 
 `adb install -r android/build/drypoint.apk` works for updates signed
 with the same key.
@@ -205,10 +206,17 @@ time.
 ## How the web app is hosted
 
 `MainActivity` intercepts requests for `https://drypoint.local` and serves them from
-`assets/www`. A stable https origin is what makes ES modules, `localStorage` and
-the normal code paths work; no HTTP server, port or cleartext traffic is
-involved. The service worker is skipped in the shell because the assets are
-already on disk (and a stale worker cache would survive an APK update).
+`assets/www`. A stable https origin is what makes ES modules, `localStorage`,
+IndexedDB and the normal code paths work; no HTTP server, port or cleartext
+traffic is involved. The service worker is skipped in the shell because the
+assets are already on disk (and a stale worker cache would survive an APK
+update).
+
+The WebView stores IndexedDB in the app's private data directory. It survives an
+APK update, but an uninstall or Clear storage removes the whole label library.
+The website and the APK are different origins, so their stores are separate.
+On-device IndexedDB persistence in the real WebView is not covered by the desktop
+Chromium tests and stays unverified hardware.
 
 `MainActivity.isAppUrl` is the one definition of "the app": an `https` URL on the
 one host. `isEmbeddedScheme` is the one definition of a locally resolved
@@ -228,11 +236,11 @@ this order:
 
 The manifest declares no `INTERNET` permission, no `provider`, `service` or
 `receiver`, and `android:exported="true"` only on the launcher activity.
-`android:allowBackup="false"` disables cloud backup for the label documents,
-the layout state and the paired printer's Bluetooth address; device-to-device
-migration is controlled by the manufacturer and cannot be disabled by the app on
-every device targeting Android 12+ (API 31). Some device makers still copy app
-files during a device transfer.
+`android:allowBackup="false"` disables cloud backup for the label library and
+its view state, the layout state and the paired printer's Bluetooth address;
+device-to-device migration is controlled by the manufacturer and cannot be
+disabled by the app on every device targeting Android 12+ (API 31). Some device
+makers still copy app files during a device transfer.
 
 **On-device check for the scheme policy.** The native WebView path cannot run in
 CI, so verify it once on a phone:
@@ -277,11 +285,11 @@ it creates itself.
   external Downloads directory on older versions. The filename carries a
   timestamp because the bridge refuses a display name Downloads already holds.
 - **Document → Import label** opens the system file picker, checks the file size
-  before reading it, and applies the validated document to the editor as one
-  undoable step. The picker is built from the page input's `accept` list, so
-  **Import label** offers JSON/`.json` and an image input offers images; the
-  shell does not hard-code `image/*` (`MainActivity.onShowFileChooser` →
-  `acceptTypes`).
+  before reading it, and adds the validated document as a new label and opens
+  it; the label already open stays in the library. The picker is built from the
+  page input's `accept` list, so **Import label** offers JSON/`.json` and an
+  image input offers images; the shell does not hard-code `image/*`
+  (`MainActivity.onShowFileChooser` → `acceptTypes`).
 - Diagnostics export uses the same bridge. The bridge accepts only a single filename segment (no empty
   name, separators, NUL, `.` or `..`) and canonicalises the legacy target under the Downloads
   directory before writing.
@@ -350,8 +358,8 @@ images):
 1. **Image import**: add an image element; the picker lists pictures and the
    chosen image appears on the label.
 2. **Label import**: export a label, then Document → Import label; the
-   exported `.json` file is selectable (not greyed out) and the label loads as
-   one undoable step.
+   exported `.json` file is selectable (not greyed out), the label is added as a
+   new label, and the label that was open stays in the list.
 3. **Cancel**: open either picker and press Back; the app stays responsive and
    the page does not wait for a callback.
 4. **Multiple**: on a picker that offers multi-select, a multiple selection

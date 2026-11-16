@@ -140,7 +140,7 @@ function fakeDevice({
   return { device, calls };
 }
 
-function mount(device, { confirm = true } = {}) {
+function mount(device, { confirm = true, lastPrinter = null } = {}) {
   const container = el('div');
   const toasts = [];
   const dialogs = [];
@@ -153,6 +153,7 @@ function mount(device, { confirm = true } = {}) {
         this.document = { ...this.document, ...patch };
       },
     },
+    getLastPrinter: () => lastPrinter,
     onOpenLog: () => {},
     onExport: () => {},
     notify: (message, options) => toasts.push({ message, tone: options?.tone }),
@@ -1079,4 +1080,65 @@ test('the self-test uses the experimental confirmation on D11_H', async () => {
   assert.match(dialogs[0].title, /experimental/i);
   assert.match(dialogs[0].message, /D11_H/);
   assert.match(dialogs[0].message, /This model is experimental/);
+});
+
+test('the saved printer hint appears only while idle with a stored identity', () => {
+  const idle = fakeDevice();
+  const idlePanel = mount(idle.device, { lastPrinter: { kind: 'serial', id: '', name: 'D110 desk' } });
+  const hint = idlePanel.container.querySelector('.printer-hint');
+  assert.ok(hint, 'the printer group carries one hint line');
+  assert.equal(hint.hidden, false);
+  assert.equal(hint.textContent, 'Last printer: D110 desk. Connect to use it again.');
+
+  const idOnly = mount(fakeDevice().device, { lastPrinter: { kind: 'serial', id: '', name: '' } });
+  const idHint = idOnly.container.querySelector('.printer-hint');
+  assert.equal(idHint.hidden, false);
+  assert.equal(idHint.textContent, 'Last printer saved. Connect to use it again.');
+
+  const absent = mount(fakeDevice().device);
+  assert.equal(absent.container.querySelector('.printer-hint').hidden, true, 'no identity, no hint');
+
+  const connected = mount(fakeDevice({ status: 'connected' }).device, {
+    lastPrinter: { kind: 'serial', id: '', name: 'D110 desk' },
+  });
+  assert.equal(
+    connected.container.querySelector('.printer-hint').hidden,
+    true,
+    'a live connection is never described as the saved printer'
+  );
+
+  const connecting = mount(fakeDevice({ status: 'connecting' }).device, {
+    lastPrinter: { kind: 'ble', id: 'dev-1', name: 'D110 desk' },
+  });
+  assert.equal(connecting.container.querySelector('.printer-hint').hidden, true, 'an attempt is not idle');
+
+  const failed = mount(fakeDevice({ status: 'error' }).device, {
+    lastPrinter: { kind: 'ble', id: 'dev-1', name: 'D110 desk' },
+  });
+  assert.equal(failed.container.querySelector('.printer-hint').hidden, false, 'an error still offers the saved printer');
+});
+
+test('forgetting the printer removes the idle hint without waiting for a status event', async () => {
+  const { device } = fakeDevice();
+  let saved = { kind: 'serial', id: '', name: 'D110 desk' };
+  const container = el('div');
+  const panel = createPrintPanel({
+    container,
+    device,
+    controller: { document: { copies: 1 }, patchDocument() {} },
+    getLastPrinter: () => saved,
+    onOpenLog: () => {},
+    onExport: () => {},
+    notify: () => {},
+    confirm: async () => true,
+  });
+  panel.render();
+  assert.equal(container.querySelector('.printer-hint').hidden, false);
+  device.forgetPrinter = async () => {
+    saved = null;
+    return [{ transport: 'SerialTransport', forgotten: true }];
+  };
+  buttonByText(container, 'Forget printer').dispatch('click');
+  await tick();
+  assert.equal(container.querySelector('.printer-hint').hidden, true, 'the cleared identity is reflected immediately');
 });

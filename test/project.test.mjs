@@ -327,7 +327,7 @@ test('the README documents the printer actions that exist', () => {
   }
   assert.match(manager, /async function choosePrinter\(/);
   assert.match(manager, /connect\(\{ preference, choose: true \}\)/, 'Choose printer always requests a picker');
-  assert.match(manager, /choose \? await Transport\.request\(\)/, 'the choose path never uses a granted device');
+  assert.match(manager, /choose\s*\?\s*await Transport\.request\(\)/, 'the choose path never uses a granted device');
   assert.match(manager, /async function forgetPrinter\(/);
   assert.match(panel, /Forget the saved printer\?/, 'Forget printer asks for confirmation');
   assert.match(panel, /browser’s site settings/, 'the panel names the one place a browser permission lives');

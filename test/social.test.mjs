@@ -72,22 +72,22 @@ test('the card is staged beside the app and stays out of the offline surface', a
   assert.deepEqual(await readFile(join(out, SOCIAL_CARD.png)), await readFile(join(projectRoot, SOCIAL_CARD.png)));
 });
 
-test('the staged site is 78 files and includes the card', async (t) => {
+test('the staged site is 85 files and includes the card', async (t) => {
   const out = await temporarySite(t);
   await buildPages({ out });
   const staged = await walk(out);
-  assert.equal(staged.length, 78, 'the deployment surface is pinned');
+  assert.equal(staged.length, 85, 'the deployment surface is pinned');
   assert.ok(staged.includes(SOCIAL_CARD.png), 'the card is one of the staged files');
 });
 
-test('the built _site tree, when present, is the same 78 files', async (t) => {
+test('the built _site tree, when present, is the same 85 files', async (t) => {
   const site = join(projectRoot, SITE_DIR);
   if (!existsSync(join(site, 'index.html'))) {
     t.skip(`run npm run pages:build to stage ${SITE_DIR}`);
     return;
   }
   const staged = await walk(site);
-  assert.equal(staged.length, 78, `${SITE_DIR} is the deployment surface`);
+  assert.equal(staged.length, 85, `${SITE_DIR} is the deployment surface`);
   assert.ok(staged.includes(SOCIAL_CARD.png), `${SITE_DIR} publishes the card`);
   assert.deepEqual(await readFile(join(site, SOCIAL_CARD.png)), await readFile(join(projectRoot, SOCIAL_CARD.png)));
 });

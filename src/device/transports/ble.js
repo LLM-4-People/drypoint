@@ -12,7 +12,8 @@ import { buildCommand } from '../../protocol/commands.js';
 const log = createLogger('transport.ble');
 
 export class BleTransport {
-  kind = 'ble';
+  static kind = 'ble';
+  kind = BleTransport.kind;
   #device = null;
   #characteristic = null;
   #onData = () => {};
@@ -23,9 +24,17 @@ export class BleTransport {
     return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
   }
 
-  static async granted() {
+  /**
+   * A saved BLE identity is a filter, not a suggestion: when it is present but
+   * no longer granted, return null so an automatic connect stays idle instead
+   * of silently attaching to a different printer.
+   */
+  static async granted(preferred = null) {
     if (!BleTransport.available() || !navigator.bluetooth.getDevices) return null;
     const devices = await navigator.bluetooth.getDevices();
+    if (preferred?.kind === 'ble' && typeof preferred.id === 'string' && preferred.id) {
+      return devices.find((device) => device.id === preferred.id) ?? null;
+    }
     return devices.find((device) => CONFIG.transport.bleNamePrefixes.some((prefix) => device.name?.startsWith(prefix))) ?? null;
   }
 
@@ -83,6 +92,15 @@ export class BleTransport {
 
   describe() {
     return `Bluetooth LE (${this.#device?.name ?? 'D110'})`;
+  }
+
+  /** The identity the manager reports after a successful open. */
+  identity() {
+    return {
+      kind: BleTransport.kind,
+      id: typeof this.#device?.id === 'string' ? this.#device.id : '',
+      name: typeof this.#device?.name === 'string' ? this.#device.name : '',
+    };
   }
 
   async close() {
