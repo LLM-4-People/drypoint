@@ -32,7 +32,7 @@ const IDENTITY = expectedIdentity();
 
 const BADGING = [
   `package: name='${IDENTITY.package}' versionCode='${IDENTITY.versionCode}' versionName='${IDENTITY.versionName}'`,
-  "sdkVersion:'26' targetSdkVersion:'34'",
+  "minSdkVersion:'26' targetSdkVersion:'34'",
   "uses-permission: name='android.permission.BLUETOOTH_CONNECT'",
   `launchable-activity: name='${IDENTITY.package}.MainActivity' label='' icon=''`,
 ].join('\n');
@@ -138,9 +138,9 @@ test('the badging must carry the platform levels the template owns', () => {
   assert.deepEqual(platform, { minSdkVersion: 26, targetSdkVersion: 34 });
   assert.deepEqual(platformFindings(BADGING, platform), []);
   const cases = [
-    ['minSdk', BADGING.replace("sdkVersion:'26'", "sdkVersion:'25'"), /reports minSdkVersion 25, expected 26/],
+    ['minSdk', BADGING.replace("minSdkVersion:'26'", "minSdkVersion:'25'"), /reports minSdkVersion 25, expected 26/],
     ['targetSdk', BADGING.replace("targetSdkVersion:'34'", "targetSdkVersion:'33'"), /reports targetSdkVersion 33, expected 34/],
-    ['missing min', BADGING.replace("sdkVersion:'26' ", ''), /does not report sdkVersion/],
+    ['missing min', BADGING.replace("minSdkVersion:'26' ", ''), /does not report minSdkVersion/],
     ['missing target', BADGING.replace(" targetSdkVersion:'34'", ''), /does not report targetSdkVersion/],
   ];
   for (const [name, text, pattern] of cases) {

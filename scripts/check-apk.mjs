@@ -135,8 +135,8 @@ export function platformFindings(badging, expected) {
     throw new Error('platformFindings needs integer minSdkVersion and targetSdkVersion');
   }
   const findings = [];
-  const minMatch = text.match(/(?:^|\s)sdkVersion:'(\d+)'/);
-  if (!minMatch) findings.push('the APK does not report sdkVersion');
+  const minMatch = text.match(/(?:^|\s)minSdkVersion:'(\d+)'/);
+  if (!minMatch) findings.push('the APK does not report minSdkVersion');
   else if (Number(minMatch[1]) !== min) findings.push(`the APK reports minSdkVersion ${minMatch[1]}, expected ${min}`);
   const targetMatch = text.match(/(?:^|\s)targetSdkVersion:'(\d+)'/);
   if (!targetMatch) findings.push('the APK does not report targetSdkVersion');
