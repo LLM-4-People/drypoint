@@ -12,6 +12,7 @@
  *   node scripts/smoke-pages.mjs --base https://host/drypoint/ [--cache-bust <id>]
  */
 
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,13 +50,41 @@ export const SITE_ONLY_FILES = Object.freeze(['sw.js', 'assets/precache.js', '40
 export const MANIFEST_PATH = '/manifest.webmanifest';
 export const MANIFEST_TYPE = 'application/manifest+json';
 
+/**
+ * Parse the generated manifest from its source text. One owner: the same
+ * fields `precache.mjs` writes, read without executing the checkout's file in
+ * the page's realm.
+ */
+export function parsePrecache(source, filename = PRECACHE_FILE) {
+  const sandbox = { self: {} };
+  vm.runInNewContext(source, sandbox, { filename });
+  const manifest = sandbox.self?.__PRECACHE;
+  if (!manifest || !Array.isArray(manifest.files) || manifest.files.length === 0) {
+    throw new Error(`${filename} has no file list`);
+  }
+  if (!manifest.digests || typeof manifest.digests !== 'object' || typeof manifest.version !== 'string') {
+    throw new Error(`${filename} has no digests and version`);
+  }
+  return manifest;
+}
+
+/** Read the generated manifest from a checkout. */
+export async function readPrecache(pathOrRoot = ROOT) {
+  const path = pathOrRoot.endsWith('.js') ? pathOrRoot : join(pathOrRoot, PRECACHE_FILE);
+  return parsePrecache(await readFile(path, 'utf8'), path);
+}
+
+/** The build stamp the worker installs with. */
+export function workerBuild(source) {
+  const match = /const BUILD = '([0-9a-f]+)';/.exec(String(source));
+  if (!match) throw new Error('sw.js has no BUILD stamp');
+  return match[1];
+}
+
 /** Every URL a deployment must answer, sorted, duplicates removed. */
 export async function smokePaths({ root = ROOT } = {}) {
-  const source = await readFile(join(root, PRECACHE_FILE), 'utf8');
-  const sandbox = { self: {} };
-  vm.runInNewContext(source, sandbox, { filename: PRECACHE_FILE });
-  const files = sandbox.self?.__PRECACHE?.files;
-  if (!Array.isArray(files) || files.length === 0) throw new Error(`${PRECACHE_FILE} has no file list`);
+  const manifest = await readPrecache(join(root, PRECACHE_FILE));
+  const files = manifest.files;
   const paths = new Set([ROOT_PATH]);
   for (const file of files) paths.add(file.startsWith('/') ? file : `/${file}`);
   for (const file of SITE_ONLY_FILES) paths.add(`/${file}`);
@@ -88,6 +117,56 @@ export function manifestTypeProblem(contentType) {
   return essence === MANIFEST_TYPE ? null : `the manifest is served as "${essence}", not ${MANIFEST_TYPE}`;
 }
 
+/** One GET against the deployment, with a redirect refused at the boundary. */
+async function deployedResponse(base, path, { query = '', fetchImpl = fetch } = {}) {
+  const url = `${base.replace(/\/+$/, '')}${path}${query}`;
+  const response = await fetchImpl(url, { method: 'GET', cache: 'no-store', redirect: 'manual' });
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers?.get?.('location') ?? '';
+    throw new Error(`${url} redirected${location ? ` to ${location}` : ''}; a deployment must serve the file at its own path`);
+  }
+  if (response.status !== 200) throw new Error(`${url} answered ${response.status}`);
+  return response;
+}
+
+async function deployedText(base, path, options) {
+  return (await deployedResponse(base, path, options)).text();
+}
+
+async function deployedBytes(base, path, options) {
+  return Buffer.from(await (await deployedResponse(base, path, options)).arrayBuffer());
+}
+
+/**
+ * Prove the deployment is this build, not only a set of URLs that answer:
+ * the deployed manifest and worker stamp must agree (and, when known, the
+ * checkout's version), and every precached byte must match its manifest
+ * digest. A same-path redirect or a torn/rewritten file fails here even when
+ * the status and content type look right.
+ */
+export async function verifyDeployment(base, { expectedVersion = null, query = '', fetchImpl = fetch } = {}) {
+  const manifest = parsePrecache(
+    await deployedText(base, `/${PRECACHE_FILE}`, { query, fetchImpl }),
+    `${base.replace(/\/+$/, '')}/${PRECACHE_FILE}`
+  );
+  const build = workerBuild(await deployedText(base, '/sw.js', { query, fetchImpl }));
+  if (manifest.version !== build) {
+    throw new Error(`the deployed worker BUILD ${build} does not match the manifest version ${manifest.version}`);
+  }
+  if (expectedVersion && manifest.version !== expectedVersion) {
+    throw new Error(`the deployed manifest version ${manifest.version} is not this build's ${expectedVersion}`);
+  }
+  for (const file of manifest.files) {
+    const path = file.startsWith('/') ? file : `/${file}`;
+    const body = await deployedBytes(base, path, { query, fetchImpl });
+    const digest = createHash('sha256').update(body).digest('hex');
+    if (digest !== manifest.digests[file]) {
+      throw new Error(`${path}: deployed content ${digest} does not match the manifest digest ${manifest.digests[file]}`);
+    }
+  }
+  return { version: manifest.version, files: manifest.files.length };
+}
+
 /**
  * The one deployment check: fetch every required URL and refuse a response
  * whose content type contradicts the file, through the same decision the
@@ -98,7 +177,10 @@ export function manifestTypeProblem(contentType) {
  * @param {object} [options]
  * @returns {Promise<Array<{path: string, status: number}>>} the probed URLs
  */
-export async function checkDeployment(base, { paths, query = '', attempts, delayMs, fetchImpl } = {}) {
+export async function checkDeployment(
+  base,
+  { paths, query = '', attempts, delayMs, fetchImpl, expectedVersion = null, verify = true } = {}
+) {
   const urls = paths ?? (await smokePaths());
   const results = [];
   for (const path of urls) {
@@ -116,6 +198,7 @@ export async function checkDeployment(base, { paths, query = '', attempts, delay
     }
     results.push({ path, status: result.status });
   }
+  if (verify) await verifyDeployment(base, { expectedVersion, query, fetchImpl });
   return results;
 }
 
@@ -143,7 +226,15 @@ export async function probe(
   let last = 'no attempt was made';
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const response = await fetchImpl(url, { method, cache: 'no-store' });
+      const response = await fetchImpl(url, { method, cache: 'no-store', redirect: 'manual' });
+      if (response.status >= 300 && response.status < 400) {
+        // A redirect is deterministic, not a CDN lag: the file must exist at
+        // its own path. Retrying would only hide the rewrite.
+        const location = response.headers?.get?.('location') ?? '';
+        const error = new Error(`${url} redirected${location ? ` to ${location}` : ''}; a deployment must serve the file at its own path`);
+        error.name = 'DeploymentRedirectError';
+        throw error;
+      }
       const contentType = response.headers?.get?.('content-type') ?? null;
       const contentLength = Number(response.headers?.get?.('content-length'));
       if (response.status === 200) {
@@ -151,6 +242,7 @@ export async function probe(
       }
       last = `answered ${response.status}`;
     } catch (error) {
+      if (error.name === 'DeploymentRedirectError') throw error;
       last = error.message;
     }
     if (attempt < attempts) await sleep(delayMs);
@@ -180,11 +272,12 @@ async function main(argv) {
     return 2;
   }
   try {
+    const local = await readPrecache(ROOT);
     const paths = await smokePaths();
     // One cache-busting query for every URL: the CDN can answer the previous
     // build's copy of a file that changed in this deployment.
     const query = options.cacheBust ? `?smoke=${encodeURIComponent(options.cacheBust)}` : '';
-    const results = await checkDeployment(options.base, { paths, query });
+    const results = await checkDeployment(options.base, { paths, query, expectedVersion: local.version });
     for (const result of results) {
       console.log(`200 ${options.base.replace(/\/+$/, '')}${result.path}${query ? ` ${query}` : ''}`);
     }
