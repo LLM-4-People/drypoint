@@ -83,6 +83,8 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     printing: false,
     /** An explicit diagnostic read owns the link; Print waits for it. */
     readingInfo: false,
+    /** A maintenance command owns the link; a second command and Print wait. */
+    maintaining: false,
   };
   let transport = null;
   let session = null;
@@ -198,6 +200,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
       progress: null,
       printing: false,
       readingInfo: false,
+      maintaining: false,
       capabilities: clearVolatileCapabilities(state.capabilities),
     });
     // A link that never reached "connected" (cancelled or failed connect) has
@@ -388,7 +391,11 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
 
   async function openTransport(preference, { auto = false, choose = false } = {}, attempt) {
     const errors = [];
+    const cancelledAttempt = () => new PrinterError('Connection attempt was cancelled', { cancelled: true });
     for (const Transport of candidates(preference)) {
+      // A disconnect (or a newer connect) owns the generation now: never build
+      // or prompt another candidate for a request the operator stopped.
+      if (attempt !== generation) throw cancelledAttempt();
       if (!Transport.available()) continue;
       const instance = new Transport();
       try {
@@ -396,17 +403,24 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
         // gesture, so it only ever attaches to an already-granted device.
         // "Choose printer" is the explicit opposite: it always asks the user.
         const target = choose ? await Transport.request() : auto ? await Transport.granted() : (await Transport.granted()) ?? (await Transport.request());
+        if (attempt !== generation) throw cancelledAttempt();
         if (!target) {
           errors.push(new PrinterError(choose ? 'No printer selected' : 'No granted printer is available', { cancelled: true }));
+          // A cancelled picker is an answer: do not ask the next transport too.
+          if (choose || !auto) break;
           continue;
         }
         await openInstance(instance, target, attempt);
+        if (attempt !== generation) throw cancelledAttempt();
         attach(instance, instance.kind);
         update({ transportKind: instance.kind, transportLabel: instance.describe() });
         return instance;
       } catch (error) {
         errors.push(error);
         await disposeTransport(instance);
+        // A user cancel (the picker's NotFoundError) or a disconnect during
+        // open() must stop the loop instead of opening the next candidate.
+        if (error?.cancelled || error?.name === 'NotFoundError') break;
       }
     }
     const last = errors.at(-1);
@@ -507,6 +521,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
       progress: null,
       printing: false,
       readingInfo: false,
+      maintaining: false,
       capabilities: clearVolatileCapabilities(state.capabilities),
     });
   }
@@ -559,6 +574,21 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
   function assertIdle() {
     if (state.printing) throw new PrinterError('A print job is running; wait for it to finish');
     if (state.readingInfo) throw new PrinterError('A device info read is running; wait for it to finish');
+    if (state.maintaining) throw new PrinterError('A printer command is running; wait for it to finish');
+  }
+
+  /**
+   * One in-flight maintenance command. The lock is published synchronously,
+   * before the first frame, and released in `finally`, so a second command, a
+   * print or a discovery sees the busy link instead of interleaving frames.
+   */
+  async function runMaintenance(task) {
+    update({ maintaining: true });
+    try {
+      return await task();
+    } finally {
+      update({ maintaining: false });
+    }
   }
 
   /**
@@ -573,7 +603,7 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     return gate;
   }
 
-  async function print(raster, { copies, onProgress, onStart, signal, lengthMm } = {}) {
+  async function print(raster, { copies, onProgress, onStart, signal, lengthMm, rememberRoll = true } = {}) {
     assertConnected();
     assertIdle();
     // A model or geometry refusal is known before a job exists: do not take the
@@ -650,7 +680,9 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
           }
         },
       });
-      rememberCurrentRoll(lengthMm);
+      // Only the live label describes the roll's real length. A test page is a
+      // fixed diagnostic document and must not resize the saved profile.
+      if (rememberRoll) rememberCurrentRoll(lengthMm);
       events.emit('printed', resolved);
       return resolved;
     } finally {
@@ -691,11 +723,13 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     assertConnected();
     assertIdle();
     assertSupported({ requiresPaper: true, action: 'feed' });
-    const data = await client.request('calibrate', { value: 0x01 });
-    const accepted = data?.[0] === 0x01;
-    log.info('calibrate', { accepted });
-    events.emit('calibrated', accepted);
-    return accepted;
+    return runMaintenance(async () => {
+      const data = await client.request('calibrate', { value: 0x01 });
+      const accepted = data?.[0] === 0x01;
+      log.info('calibrate', { accepted });
+      events.emit('calibrated', accepted);
+      return accepted;
+    });
   }
 
   /**
@@ -713,22 +747,28 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     assertIdle();
     // Reading the switches is a read; only the write is a mutating command.
     if (value !== undefined) assertSupported();
-    const data = await client.tryRequest('soundSettings', { action: value === undefined ? 0x02 : 0x01, item, value: value ?? 0x00 });
-    if (data === null) return null;
-    if (data[2] === 0x01) return true;
-    if (data[2] === 0x00) return false;
-    return null;
+    const exchange = async () => {
+      const data = await client.tryRequest('soundSettings', { action: value === undefined ? 0x02 : 0x01, item, value: value ?? 0x00 });
+      if (data === null) return null;
+      if (data[2] === 0x01) return true;
+      if (data[2] === 0x00) return false;
+      return null;
+    };
+    // The two sound reads run in parallel; a write owns the link exclusively.
+    return value === undefined ? exchange() : runMaintenance(exchange);
   }
 
   async function setAutoShutdown(value) {
     assertConnected();
     assertIdle();
     assertSupported();
-    await client.request('setAutoShutdown', { value });
-    // The capability model is the single read source for the UI, so a
-    // successful write updates it instead of leaving a stale value behind.
-    update({ capabilities: { ...state.capabilities, autoShutdown: value } });
-    events.emit('settings-changed', { autoShutdown: value });
+    return runMaintenance(async () => {
+      await client.request('setAutoShutdown', { value });
+      // The capability model is the single read source for the UI, so a
+      // successful write updates it instead of leaving a stale value behind.
+      update({ capabilities: { ...state.capabilities, autoShutdown: value } });
+      events.emit('settings-changed', { autoShutdown: value });
+    });
   }
 
   /** Built-in printer self-test page (0x5A). Prints paper. */
@@ -736,8 +776,10 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     assertConnected();
     assertIdle();
     assertSupported({ requiresPaper: true });
-    await client.request('testPage');
-    log.info('self-test page requested');
+    return runMaintenance(async () => {
+      await client.request('testPage');
+      log.info('self-test page requested');
+    });
   }
 
   /** Reset the printer's stored settings (0x28). Destructive. */
@@ -745,11 +787,13 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     assertConnected();
     assertIdle();
     assertSupported();
-    await client.request('reset');
-    log.warn('printer settings reset');
-    // discover() mirrors the printer's stored density and tape type itself, so
-    // the panel never renders the pre-reset reading.
-    return discover();
+    return runMaintenance(async () => {
+      await client.request('reset');
+      log.warn('printer settings reset');
+      // discover() mirrors the printer's stored density and tape type itself, so
+      // the panel never renders the pre-reset reading.
+      return discover();
+    });
   }
 
   /** Run a read-only diagnostic command and return its decoded reply. */
@@ -763,8 +807,10 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     assertConnected();
     assertIdle();
     assertSupported();
-    await client.request('setRtc', { date: new Date() });
-    log.info('clock synced');
+    return runMaintenance(async () => {
+      await client.request('setRtc', { date: new Date() });
+      log.info('clock synced');
+    });
   }
 
   /**
@@ -800,12 +846,14 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
     if (state.status !== 'connected') return;
     assertIdle();
     assertSupported();
-    if (key === 'print.density') {
-      const density = Math.round(clampToRange(value, state.capabilities.densityRange, CONFIG.print.density.default));
-      await client.request('setDensity', { value: density });
-    } else if (key === 'print.labelType') {
-      await client.request('setLabelType', { value: Number(value) });
-    }
+    return runMaintenance(async () => {
+      if (key === 'print.density') {
+        const density = Math.round(clampToRange(value, state.capabilities.densityRange, CONFIG.print.density.default));
+        await client.request('setDensity', { value: density });
+      } else if (key === 'print.labelType') {
+        await client.request('setLabelType', { value: Number(value) });
+      }
+    });
   }
 
   function rememberCurrentRoll(lengthMm) {

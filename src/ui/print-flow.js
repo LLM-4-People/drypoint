@@ -32,9 +32,18 @@ const log = createLogger('ui.print-flow');
  * a sensor refusal leaves them available so the press reports that reason.
  *
  * @param {{printing?:boolean, finishing?:boolean, empty?:boolean, offline?:boolean,
- *          reading?:boolean, oversized?:boolean, gate?:{allowed:boolean,reason:string|null,kind:string|null}|null}} state
+ *          reading?:boolean, maintaining?:boolean, oversized?:boolean, gate?:{allowed:boolean,reason:string|null,kind:string|null}|null}} state
  */
-export function printButtonState({ printing = false, finishing = false, empty = false, offline = false, reading = false, oversized = false, gate = null } = {}) {
+export function printButtonState({
+  printing = false,
+  finishing = false,
+  empty = false,
+  offline = false,
+  reading = false,
+  maintaining = false,
+  oversized = false,
+  gate = null,
+} = {}) {
   if (finishing) {
     // The outcome is settled; only the device refresh is left. Nothing on the
     // wire can be cancelled, so the control must not offer Cancel.
@@ -75,14 +84,16 @@ export function printButtonState({ printing = false, finishing = false, empty = 
       ? 'Show at least one element before printing'
       : reading
         ? 'Wait for the device info read to finish'
-        : oversized
-          ? 'The label is larger than the printer; it will be shortened to fit'
-          : '';
+        : maintaining
+          ? 'Wait for the printer command to finish'
+          : oversized
+            ? 'The label is larger than the printer; it will be shortened to fit'
+            : '';
   return {
-    disabled: Boolean(blocked) || empty || reading,
+    disabled: Boolean(blocked) || empty || reading || maintaining,
     title,
-    testDisabled: Boolean(blocked) || reading,
-    testTitle: blocked || (reading ? 'Wait for the device info read to finish' : ''),
+    testDisabled: Boolean(blocked) || reading || maintaining,
+    testTitle: blocked || (reading ? 'Wait for the device info read to finish' : maintaining ? 'Wait for the printer command to finish' : ''),
     supportBlocked: blocked,
   };
 }
@@ -278,6 +289,10 @@ export function createPrintFlow({
       const result = await device.print(raster, {
         copies: target.copies,
         lengthMm: target.lengthMm,
+        // The action-bar test label is a fixed 40 mm diagnostic page. Saving
+        // its length would resize the operator's live label on the next
+        // reconnect, so only the live document records a roll profile.
+        rememberRoll: current,
         onProgress: (done, total) => setProgress(0.1 + (done / total) * 0.8),
         // Printing/Cancel belong to the moment the job really starts. The
         // manager calls this immediately before PrintStart, so a gate refusal

@@ -875,8 +875,10 @@ function updatePrintButton() {
     finishing: printFlow.finishing,
     empty: !controller.document.elements.some((element) => element.visible !== false),
     offline: !device.connected,
-    // A device-info read owns the link: starting a job would interleave frames.
+    // A device-info read or a maintenance command owns the link: starting a
+    // job would interleave frames.
     reading: Boolean(device.state.readingInfo),
+    maintaining: Boolean(device.state.maintaining),
     // The same print-boundary predicate the flow uses: an undo can restore a
     // label the live printer cannot hold. The flow revalidates it before the
     // raster; the button says so instead of pretending it is print-ready.
