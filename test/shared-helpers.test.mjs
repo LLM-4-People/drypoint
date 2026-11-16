@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 
 import { formatMac, sleep, toHex } from '../src/core/format.js';
 import { u16be } from '../src/protocol/frames.js';
+import {
+  FIXTURE_BLUETOOTH_ADDRESS,
+  FIXTURE_BLUETOOTH_BYTES,
+} from './fixtures/captured-unit.mjs';
 import { listProjectFiles, readProjectFile } from './helpers/project-files.mjs';
 
 const sources = listProjectFiles('src').filter((file) => file.endsWith('.js'));
@@ -21,9 +25,9 @@ test('u16be emits the two big-endian payload bytes', () => {
 });
 
 test('formatMac is the colon form of the shared hex formatter', () => {
-  const bytes = Uint8Array.from([0x01, 0x66, 0xf0, 0x27, 0x25, 0x02]);
-  assert.equal(toHex(bytes), '01 66 f0 27 25 02');
-  assert.equal(formatMac(bytes), '01:66:f0:27:25:02');
+  const bytes = Uint8Array.from(FIXTURE_BLUETOOTH_BYTES);
+  assert.equal(toHex(bytes), FIXTURE_BLUETOOTH_ADDRESS.replaceAll(':', ' '));
+  assert.equal(formatMac(bytes), FIXTURE_BLUETOOTH_ADDRESS);
   assert.equal(formatMac([0x01, 0x66]), '01:66');
   assert.equal(formatMac([]), '');
 });

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * Documentation gate: every relative link and every heading anchor in the
- * published Markdown resolves, no image points at a missing file, and no link
- * names a branch-specific absolute blob URL that would break when the default
- * branch or the repository name changes.
+ * published Markdown resolves, no image points at a missing file, no link names
+ * a branch-specific absolute blob URL that would break when the default branch
+ * or the repository name changes, and every issue template uses an absolute
+ * link whose target and anchor exist in this tree.
  *
  * Zero dependencies: the link and heading rules are implemented here, against
  * the published tree the shared walker returns.
@@ -21,6 +22,17 @@ import { ROOT, listFiles } from './lib/tree.mjs';
 
 /** An absolute link into a branch's blob view; a rename or a branch rename breaks it. */
 const BLOB_LINK = /^https?:\/\/(?:www\.)?github\.com\/[^/\s]+\/[^/\s]+\/blob\/(?:main|master)\//i;
+
+/** Issue templates: GitHub renders their Markdown on the new-issue page. */
+const ISSUE_TEMPLATE_DIR = '.github/ISSUE_TEMPLATE/';
+const ISSUE_TEMPLATE_FILE = /\.ya?ml$/i;
+
+/**
+ * A GitHub blob URL: owner, repository, path and optional anchor. The ref is
+ * not captured on purpose: the path is checked against this tree, so a stale
+ * link fails whichever branch or tag it names.
+ */
+const BLOB_TARGET = /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/blob\/[^/]+\/([^?#]+)(?:\?[^#]*)?(?:#(.*))?$/i;
 
 /** An inline link or image: `[text](target)` and `![alt](target)`. */
 const LINK = /(!?)\[([^\]]*)\]\(\s*([^)\s]+?)(?:\s+"[^"]*")?\s*\)/g;
@@ -121,6 +133,89 @@ export function markdownLinks(markdown) {
   return links;
 }
 
+/** Whether a path is an issue template whose Markdown GitHub renders on the issue page. */
+export function isIssueTemplate(file) {
+  return file.startsWith(ISSUE_TEMPLATE_DIR) && ISSUE_TEMPLATE_FILE.test(file);
+}
+
+/**
+ * The GitHub repository this tree publishes to, lower-cased `owner/repo`, or
+ * null when it has no GitHub repository URL. Read from `package.json` so the
+ * owner is not copied into this gate.
+ *
+ * @param {string} root
+ * @returns {Promise<string|null>}
+ */
+async function githubRepository(root) {
+  let text;
+  try {
+    text = await readFile(join(root, 'package.json'), 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  const url = JSON.parse(text).repository?.url ?? '';
+  const match = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?(?:[#?].*)?$/.exec(url);
+  return match ? `${match[1]}/${match[2]}`.toLowerCase() : null;
+}
+
+/**
+ * Check one link found in an issue template.
+ *
+ * GitHub renders the template's Markdown on the new-issue page, where a
+ * relative target resolves against `/owner/repo/issues/` and 404s. The link
+ * must be absolute, and a link into this repository's blob view is resolved
+ * against the real tree so a renamed file or heading fails the gate.
+ *
+ * @param {{
+ *   root: string,
+ *   file: string,
+ *   link: {line: number, target: string},
+ *   repository: string|null,
+ *   read: (file: string) => Promise<string>,
+ * }} options
+ * @returns {Promise<{file: string, line: number, message: string}|null>}
+ */
+async function issueTemplateFinding({ root, file, link, repository, read }) {
+  if (!isExternal(link.target)) {
+    return {
+      file,
+      line: link.line,
+      message: `relative link in an issue template does not resolve on the issue page: ${link.target}`,
+    };
+  }
+  const blob = BLOB_TARGET.exec(link.target);
+  if (!blob || !repository) return null;
+  const [, owner, repo, rawPath, anchor = null] = blob;
+  if (`${owner}/${repo}`.toLowerCase() !== repository) return null;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    decoded = rawPath;
+  }
+  const target = relative(root, resolve(root, decoded)).split('\\').join('/');
+  if (!target || target.startsWith('../')) {
+    return { file, line: link.line, message: `issue-template link escapes the repository: ${link.target}` };
+  }
+  let info;
+  try {
+    info = await stat(join(root, target));
+  } catch {
+    return { file, line: link.line, message: `issue-template link target does not exist: ${link.target}` };
+  }
+  if (!info.isFile()) {
+    return { file, line: link.line, message: `issue-template link target is not a file: ${link.target}` };
+  }
+  if (anchor && target.toLowerCase().endsWith('.md')) {
+    const targetText = await read(target);
+    if (!headingSlugs(targetText).has(anchor)) {
+      return { file, line: link.line, message: `missing anchor #${anchor} in ${target}` };
+    }
+  }
+  return null;
+}
+
 /** Whether a link target points outside the repository. */
 export function isExternal(target) {
   return /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('//');
@@ -152,22 +247,29 @@ export function resolveTarget(fromFile, target, root = ROOT) {
  * Check one repository tree.
  *
  * @param {{root?: string, files?: string[]}} [options]
- * @returns {Promise<{findings: {file: string, line: number, message: string}[], files: number, links: number}>}
+ * @returns {Promise<{findings: {file: string, line: number, message: string}[], files: number, templates: number, links: number}>}
  */
 export async function checkDocs({ root = ROOT, files } = {}) {
   const all = files ?? (await listFiles({ root }));
   const markdown = all.filter((file) => file.toLowerCase().endsWith('.md'));
+  const templates = all.filter(isIssueTemplate);
   const cache = new Map();
   const read = async (file) => {
     if (!cache.has(file)) cache.set(file, await readFile(join(root, file), 'utf8'));
     return cache.get(file);
   };
+  const repository = await githubRepository(root);
   const findings = [];
   let links = 0;
-  for (const file of markdown) {
+  for (const file of [...markdown, ...templates]) {
     const text = await read(file);
     for (const link of markdownLinks(text)) {
       links++;
+      if (isIssueTemplate(file)) {
+        const finding = await issueTemplateFinding({ root, file, link, repository, read });
+        if (finding) findings.push(finding);
+        continue;
+      }
       if (BLOB_LINK.test(link.target)) {
         findings.push({ file, line: link.line, message: `absolute blob link breaks on a rename: ${link.target}` });
         continue;
@@ -212,7 +314,7 @@ export async function checkDocs({ root = ROOT, files } = {}) {
       }
     }
   }
-  return { findings, files: markdown.length, links };
+  return { findings, files: markdown.length, templates: templates.length, links };
 }
 
 async function main(argv) {
@@ -223,11 +325,13 @@ async function main(argv) {
     console.error('usage: node scripts/check-docs.mjs [--list]');
     return 2;
   }
-  const { findings, files, links } = await checkDocs();
-  if (flags.includes('--list')) console.log(`docs: ${files} Markdown files, ${links} links`);
+  const { findings, files, templates, links } = await checkDocs();
+  if (flags.includes('--list')) {
+    console.log(`docs: ${files} Markdown files and ${templates} issue templates, ${links} links`);
+  }
   if (!findings.length) return 0;
   for (const finding of findings) console.error(`${finding.file}:${finding.line}: ${finding.message}`);
-  console.error(`docs: ${findings.length} finding(s) in ${files} Markdown files`);
+  console.error(`docs: ${findings.length} finding(s) in ${files} Markdown files and ${templates} issue templates`);
   return 1;
 }
 

@@ -17,6 +17,13 @@ export const FIXTURE_SERIAL = 'TEST000001';
 /** Synthetic RFID tag serial. Sixteen ASCII characters, like the real reply. */
 export const FIXTURE_ROLL_SERIAL = 'TESTROLL00000001';
 
+/**
+ * Synthetic Bluetooth address for the reference unit's diagnostic reply.
+ * Locally administered, so it cannot name a real vendor device.
+ */
+export const FIXTURE_BLUETOOTH_ADDRESS = '02:00:00:00:00:01';
+export const FIXTURE_BLUETOOTH_BYTES = Object.freeze([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+
 /** Retail roll EAN: a product code, not an identity. */
 export const ROLL_BARCODE = '6977031214406';
 

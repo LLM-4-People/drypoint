@@ -18,7 +18,15 @@ import {
 } from '../src/protocol/replies.js';
 import { INFO_KEYS } from '../src/protocol/commands.js';
 import { fromHex } from '../src/core/format.js';
-import { FIXTURE_ROLL_SERIAL, FIXTURE_SERIAL, ROLL_BARCODE, rollTagBytes, serialBytes } from './fixtures/captured-unit.mjs';
+import {
+  FIXTURE_BLUETOOTH_ADDRESS,
+  FIXTURE_BLUETOOTH_BYTES,
+  FIXTURE_ROLL_SERIAL,
+  FIXTURE_SERIAL,
+  ROLL_BARCODE,
+  rollTagBytes,
+  serialBytes,
+} from './fixtures/captured-unit.mjs';
 
 test('version fields use major + fraction/100', () => {
   assert.equal(decodeVersion(fromHex('04 17')), 4.23);
@@ -64,7 +72,7 @@ test('GetInfo keys decode real payloads', () => {
   assert.deepEqual(decodeInfo(INFO_KEYS.battery, fromHex('04')), { batteryLevel: 4, batteryPercent: 100 });
   assert.deepEqual(decodeInfo(INFO_KEYS.serial, Uint8Array.from(serialBytes())), { serial: FIXTURE_SERIAL });
   assert.deepEqual(decodeInfo(INFO_KEYS.hardwareVersion, fromHex('04 01')), { hardwareVersion: 4.01 });
-  assert.deepEqual(decodeInfo(INFO_KEYS.bluetoothAddress, fromHex('01 66 f0 27 25 02')), { bluetoothAddress: '01:66:f0:27:25:02' });
+  assert.deepEqual(decodeInfo(INFO_KEYS.bluetoothAddress, Uint8Array.from(FIXTURE_BLUETOOTH_BYTES)), { bluetoothAddress: FIXTURE_BLUETOOTH_ADDRESS });
   assert.deepEqual(decodeInfo(INFO_KEYS.modelId, fromHex('09 10')), {
     deviceType: 0x0910,
     model: 'D110_M',

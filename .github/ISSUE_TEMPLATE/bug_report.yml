@@ -12,7 +12,7 @@ body:
         hardware and must not appear in a public issue.
 
         A printer that is not on the support matrix is not a bug: see
-        [docs/PRINTERS.md](docs/PRINTERS.md) first.
+        [docs/PRINTERS.md](https://github.com/LLM-4-People/drypoint/blob/main/docs/PRINTERS.md) first.
   - type: input
     id: summary
     attributes:

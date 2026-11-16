@@ -8,7 +8,7 @@ body:
       value: |
         A question is welcome here. Please do not paste a printer serial, a
         Bluetooth address or a home directory path — see
-        [SUPPORT.md](SUPPORT.md) for what to redact.
+        [SUPPORT.md](https://github.com/LLM-4-People/drypoint/blob/main/SUPPORT.md) for what to redact.
   - type: textarea
     id: question
     attributes:

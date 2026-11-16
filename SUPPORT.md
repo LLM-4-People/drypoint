@@ -30,16 +30,21 @@ Before you paste anything, remove:
 - your home directory path and your machine's host name,
 - any password, token or signing material.
 
-The repository's privacy gate keeps those out of the codebase; an issue is a
-public place too. A maintainer may edit or redact a report that contains them.
+The repository's privacy gate fails the build when the published tree contains
+the private host name, an absolute home directory, an absolute browser-cache
+path, the reference unit's serial or an e-mail address outside the fixture
+domain. It does not recognise a MAC address, a roll-tag serial or an arbitrary
+password or token, so those are yours to remove; an issue is a public place too.
+A maintainer may edit or redact a report that contains them.
 
 ## Supported models
 
 Only the D110_M is tested; the D11_H is experimental; every other known model is
-named and every write is refused before a frame is sent. A request to support
-another model is welcome, but it needs evidence — see
-[the support policy](docs/PRINTERS.md#how-to-propose-a-new-model). "It looks the
-same" is not evidence, because a wrong print sequence can jam a head.
+named and every write is refused before a frame is sent. A supported model with
+a sensor refusal is different: the print job reads one heartbeat and prints
+nothing. A request to support another model is welcome, but it needs evidence —
+see [the support policy](docs/PRINTERS.md#how-to-propose-a-new-model). "It looks
+the same" is not evidence, because a wrong print sequence can jam a head.
 
 ## What to expect
 

@@ -22,10 +22,11 @@ async function tempTree(t, files) {
   return { root, files: Object.keys(files) };
 }
 
-test('every relative link in the published Markdown resolves', async () => {
-  const { findings, files, links } = await checkDocs();
+test('the published Markdown and issue templates have no broken or unrenderable link', async () => {
+  const { findings, files, templates, links } = await checkDocs();
   assert.deepEqual(findings, [], 'no broken link, anchor or image');
   assert.ok(files >= 13, `the gate read the documentation (${files} files)`);
+  assert.ok(templates >= 3, `the gate read the issue templates (${templates} templates)`);
   assert.ok(links >= 40, `the gate checked the links (${links})`);
 });
 
@@ -82,6 +83,51 @@ test('an absolute blob/main link is rejected even when it resolves today', async
   const { findings } = await checkDocs({ root, files });
   assert.deepEqual(findings.map((finding) => finding.message), [
     'absolute blob link breaks on a rename: https://github.com/LLM-4-People/drypoint/blob/main/docs/PROTOCOL.md',
+  ]);
+});
+
+test('a relative link in an issue template is reported', async (t) => {
+  const { root, files } = await tempTree(t, {
+    '.github/ISSUE_TEMPLATE/bug_report.yml': [
+      'name: Bug report',
+      'body:',
+      '  - type: markdown',
+      '    attributes:',
+      '      value: |',
+      '        See [printers](docs/PRINTERS.md#how-to-propose-a-new-model).',
+      '',
+    ].join('\n'),
+    'docs/PRINTERS.md': ['# Printers', '', '## How to propose a new model', ''].join('\n'),
+  });
+  const { findings, templates } = await checkDocs({ root, files });
+  assert.equal(templates, 1);
+  assert.deepEqual(findings.map((finding) => finding.message), [
+    'relative link in an issue template does not resolve on the issue page: docs/PRINTERS.md#how-to-propose-a-new-model',
+  ]);
+});
+
+test('an issue-template blob link is checked against the real tree', async (t) => {
+  const blob = 'https://github.com/LLM-4-People/drypoint/blob/main';
+  const { root, files } = await tempTree(t, {
+    'package.json': JSON.stringify({ repository: { url: 'https://github.com/LLM-4-People/drypoint.git' } }),
+    '.github/ISSUE_TEMPLATE/feature_request.yml': [
+      'body:',
+      '  - type: markdown',
+      '    attributes:',
+      '      value: |',
+      `        [printers](${blob}/docs/PRINTERS.md#how-to-propose-a-new-model)`,
+      `        [gone](${blob}/docs/GONE.md)`,
+      `        [anchor](${blob}/docs/PRINTERS.md#missing)`,
+      `        [escapes](${blob}/../other/README.md)`,
+      '',
+    ].join('\n'),
+    'docs/PRINTERS.md': ['# Printers', '', '## How to propose a new model', ''].join('\n'),
+  });
+  const { findings } = await checkDocs({ root, files });
+  assert.deepEqual(findings.map((finding) => finding.message), [
+    'issue-template link target does not exist: https://github.com/LLM-4-People/drypoint/blob/main/docs/GONE.md',
+    'missing anchor #missing in docs/PRINTERS.md',
+    'issue-template link escapes the repository: https://github.com/LLM-4-People/drypoint/blob/main/../other/README.md',
   ]);
 });
 

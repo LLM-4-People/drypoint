@@ -38,6 +38,8 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement through the repository's private advisory channel: <https://github.com/LLM-4-People/drypoint/security/advisories/new>. All complaints will be reviewed and investigated promptly and fairly.
 
+GitHub security advisories are the project's only private channel, so a conduct report arrives beside security reports. Say in the report that it is a code-of-conduct report so it is not triaged as a vulnerability.
+
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
 ## Enforcement Guidelines

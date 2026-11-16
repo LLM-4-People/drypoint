@@ -20,8 +20,8 @@ hardware you already own; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 | Every other known NIIMBOT model | Not supported | The model is recognised and named; every command that writes to the printer is refused before a frame, while read-only diagnostics remain available. |
 | Any model the printer reports outside the table | Unknown | Every write stays disabled: the app never guesses a model. |
 
-The full table — ids, head widths, pitches, tape widths and what each model
-would need — is in [docs/PRINTERS.md](docs/PRINTERS.md).
+The table of every recognised id, the one measured head and what each model
+would need before it could print is in [docs/PRINTERS.md](docs/PRINTERS.md).
 
 ## Quick start
 
@@ -36,8 +36,9 @@ still edits and prints.
 [latest release](https://github.com/LLM-4-People/drypoint/releases/latest),
 allow "install unknown apps" for the file manager, and sideload it. The APK is
 self-signed, needs Android 8 or newer, and asks for the Nearby-devices
-permission when it scans. It needs no network and no server. Build and install
-details: [docs/ANDROID.md](docs/ANDROID.md).
+permission on Android 12+ (location on Android 8–11) when it scans. It needs no
+network and no server. Build and install details:
+[docs/ANDROID.md](docs/ANDROID.md).
 
 Safari and Firefox do not implement Web Serial or Web Bluetooth, so they can
 view the app but cannot reach a printer.
@@ -78,12 +79,14 @@ view the app but cannot reach a printer.
   remaining labels, lid and paper sensors. Values the printer did not report are
   labelled as assumed.
 - Job settings: density, tape type, **Print quality** (Normal/Quality), copies.
-- Maintenance: feed/align one label, printer self-test page, sync clock (hidden
-  only when the printer reports no RTC), auto power-off, Bluetooth/power sounds
-  (hidden only when the printer reports no volume support), reset printer
-  settings.
-- Diagnostics: paper-info and print-history replies (shown as raw bytes while
-  their layout is unverified), log level, log viewer and JSON export.
+- Maintenance: feed/align one label, printer self-test page, sync clock (a
+  "not supported" row when the printer reports no RTC).
+- Device settings: auto power-off, Bluetooth and power sounds (a "not supported"
+  hint when the printer reports no volume support).
+- Device commands: read paper info and print history (shown as raw bytes while
+  their layout is unverified), read capabilities, read device info, reset
+  printer settings.
+- Diagnostics: log level, log viewer and JSON export.
 - Print also needs a live connection and at least one visible element. Every
   command that writes to the printer — print, test print, self-test, feed,
   reset, clock, density, tape type, auto power-off and sound — is gated on a
@@ -128,9 +131,10 @@ The design is stored locally; reopening the page keeps the label.
 - **Local storage only.** The label, settings, roll profiles and zoom live in
   the browser's `localStorage`. Diagnostics are generated on demand and
   downloaded as a file you own; they are never uploaded.
-- **No secrets.** A repository privacy gate fails the build if a private host,
-  a home directory, the reference unit's serial or a non-fixture e-mail address
-  appears anywhere in the published tree.
+- **No secrets.** A repository privacy gate fails the build if the published tree
+  contains a private host name, an absolute home directory, an absolute
+  browser-cache path, the reference unit's serial or an e-mail address outside
+  the fixture domain.
 - **The printer sees a bitmap.** The app sends the job as 1-bit rows after a
   short control handshake; it does not upload the label or read back its
   content.
@@ -157,8 +161,13 @@ After that:
 
 - **Precached URLs** are cache-first, so the first paint works with zero
   connectivity.
-- **Navigations** are network-first and fall back to the cached `index.html`
-  when the network fails or answers a non-OK status.
+- **Navigations** are network-first: the worker makes one same-origin request,
+  waits at most `CONFIG.offline.navigationTimeoutMs` (3000 ms, stamped into the
+  manifest), and falls back to the cached `index.html` when the network fails or
+  answers a non-OK status. On a host that answers a missing path with a non-OK
+  status (GitHub Pages and the dev server do), a controlled page therefore
+  answers an in-scope deep link with the shell and a 200; the host's own 404
+  page is seen only before the worker controls the page.
 - **Other requests** are network-only and are never answered with the app shell.
 - The cache name is the manifest's content hash; older `drypoint-*` caches are
   deleted on activate.
@@ -231,23 +240,25 @@ exactly one `CancelPrint` instead of `PrintEnd`.
 ### Verified on the reference unit
 
 Captured from a retail D110_M used for development and pinned by the test
-suite. The unit's serial number is an identifier, so it is not published here;
-the fixtures use clearly synthetic values.
+suite. The unit's serial number and Bluetooth address are identifiers, so they
+are not published here; the fixtures use clearly synthetic values.
 
 | Fact | Value |
 | --- | --- |
 | Model | `0x0910` → D110_M (confirmed) |
-| Head | 96 dots at the reported 200 dpi class → 7.87 dots/mm, 12.19 mm wide |
-| Protocol build | 301 → D110M V4 print task |
+| Head | 96 dots at the capability TLV's reported 200 dpi → 7.87 dots/mm, 12.19 mm wide |
+| Heartbeat resolution class | `0xDE` payload byte 6 is `2` → 203 dpi; the TLV's 200 dpi is the pitch the app uses |
+| Protocol build | 301, reported by status data; it does not name the print task |
 | Max print height | 1600 px → 203 mm at 200 dpi (capped to the 200 mm app maximum) |
 | Density / speed range | 1–5 / 1–5 |
 | Roll tag | `6977031214406`, 192-label capacity; used/remaining are read from the tag |
 
-The pitch is the reported resolution class divided by 25.4 — 203 dpi is
-7.99 dots/mm and 300 dpi is 11.81 dots/mm — and the tape width is derived from
-the head. Before a printer is discovered, or when its head width is unknown, the
-app uses the configured fallback (203 dpi, 96 dots, 8 dots/mm), labels it as
-assumed and keeps printing disabled.
+The pitch is the reported resolution divided by 25.4 — 203 dpi is 7.99 dots/mm
+and 300 dpi is 11.81 dots/mm — and the tape width is derived from the head. The
+app prefers the capability TLV's dpi and falls back to the heartbeat's class
+byte only when the TLV has no usable value. Before a printer is discovered, or
+when its head width is unknown, the app uses the configured fallback (203 dpi,
+96 dots, 8 dots/mm), labels it as assumed and keeps printing disabled.
 
 ## Development
 
@@ -281,8 +292,8 @@ npm run build                    # regenerate assets/precache.js and stamp sw.js
 npm run check:precache           # fail if the generated offline file is stale
 npm run build:brand -- --check   # fail if a generated brand file drifted
 npm run build:android            # sideloadable APK in android/build/
-npm run docs:check               # Markdown links, anchors and images resolve
-npm run privacy:check            # no private host, path, serial or address
+npm run docs:check               # Markdown and issue-template links resolve
+npm run privacy:check            # no private host, home path, serial or foreign e-mail
 npm run workflows:check          # pinned actions, permissions, timeouts
 npm run pages:build              # stage the deployment in _site/
 npm run verify                   # brand + precache + privacy + unit tests + docs + workflows
@@ -292,8 +303,10 @@ npm run verify:all               # verify, then the measured browser suites
 `npm start` serves the app with Node's standard library only; there is nothing
 to install. It binds to `127.0.0.1` and serves only the app surface — the files
 in `assets/precache.js` plus `sw.js` — so the keystore, docs, scripts, tests and
-`.run` are not reachable. Use `npm start -- --port 8081` to change the port, and
-opt in to a LAN bind for a phone with `npm start -- --host 0.0.0.0`.
+`.run` are not reachable. Use `npm start -- --port 8081` to change the port.
+`npm start -- --host 0.0.0.0` serves the same surface on the LAN, which is
+useful for viewing on a phone only: a `192.168.x.x` origin is not a secure
+context, so Web Serial, Web Bluetooth and the service worker do not work there.
 
 The dev server regenerates the offline manifest and worker stamp once, before
 it starts listening. It is not a file watcher: after editing a precached file,
@@ -301,26 +314,36 @@ run `npm run build` (or restart the server) and reload the page. If the browser
 keeps an older worker, reload once while online so the new one installs, or
 clear the site data.
 
-The product name, application id and storage/cache/CLI prefixes are authored
-once in `brand.json`; the version is authored only in `package.json` and
-rendered into `src/core/version.js`. After editing either file run
-`node scripts/build-brand.mjs --write`.
-Generated files are checked into the repository and verified byte-for-byte by
-`--check` in CI, so never edit one by hand.
+The product name, application id and storage/cache/CLI prefixes are declared in
+`brand.json`; the version is declared only in `package.json`. Run
+`node scripts/build-brand.mjs --write` after editing either file: it renders
+`manifest.webmanifest`, `android/app/src/main/res/values/strings.xml`,
+`src/core/brand.js`, `src/core/version.js` and the icon's accessible name.
+`test/brand.test.mjs` proves the generated module mirrors `brand.json`, that the
+manifest and `package.json` metadata agree with it, and that the hand-authored
+`index.html` title, wordmark and README H1 name the same product. The Android
+shell repeats the slug in its Java package path and `https://drypoint.local`
+origin, so a rename edits those two literals by hand. Generated files are
+checked into the repository and verified byte-for-byte by `--check` in CI, so
+never edit one by hand.
 
 ### Android app
 
 `npm run build:android` packages the same web app in a small native shell and
-signs a sideloadable APK (`android/build/drypoint.apk`). The shell adds the one
-API WebView lacks — a BLE GATT bridge — and serves the bundled assets from a
-stable `https://drypoint.local` origin, so the editor, storage and print
-pipeline are identical. It needs no internet and no server.
+signs a sideloadable APK (`android/build/drypoint.apk`). The shell provides the
+one connectivity API WebView lacks — a BLE GATT bridge — plus two small host
+helpers (`saveFile` for the diagnostics export and `setSystemBars` for the
+native theme bars), and serves the bundled assets from a stable
+`https://drypoint.local` origin, so the editor, storage and print pipeline are
+identical. It needs no internet and no server.
 
-Running it needs Android 8+ and the Nearby-devices permission; the APK is
-self-signed, so install it by sideloading. See
-[docs/ANDROID.md](docs/ANDROID.md) for build, install, signing and limits.
+Running it needs Android 8+; scanning asks for Nearby devices on Android 12+
+and for location on Android 8–11. The APK is self-signed, so install it by
+sideloading. See [docs/ANDROID.md](docs/ANDROID.md) for build, install, signing
+and limits.
 
-For phone testing without HTTPS:
+For printing or offline work on a phone without HTTPS, forward the port
+instead; the phone's own `localhost` is a secure context:
 
 ```bash
 adb reverse tcp:8080 tcp:8080    # phone's localhost:8080 → this machine
@@ -353,8 +376,8 @@ memory.
 - **Length is a setting, not a measurement.** It is remembered per roll, but if
   prints drift across the gap, set the length to match the tape.
 - **Code 128 B only** (printable ASCII 32–126). QR handles arbitrary text.
-- **Web Serial is desktop Chrome/Edge; Web Bluetooth is Chrome on Android.**
-  Safari and Firefox cannot connect a printer.
+- **Web Serial is desktop Chrome/Edge; Web Bluetooth is Chrome and Edge on
+  desktop and Chrome on Android.** Safari and Firefox cannot connect a printer.
 - **BLE writes are paced at ~12 ms**, so a 40 mm label takes a few seconds.
 - **Paper info (`0x69`), print history (`0x62`) and the print area (`0x0F`)
   layouts are unverified.** They are exposed as raw bytes rather than guessed

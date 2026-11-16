@@ -1,8 +1,14 @@
 # Architecture
 
 A static PWA: no runtime server, no bundler or compile step, no dependencies.
-The generated precache manifest and the worker's build stamp are the only build
-artifacts. The browser loads ES modules from `src/` and talks to the printer
+Its outputs are generated from owned sources: `scripts/build-brand.mjs`
+renders `manifest.webmanifest`, the Android strings, `src/core/brand.js`,
+`src/core/version.js` and the icon's accessible name;
+`scripts/precache.mjs` renders `assets/precache.js` and the `BUILD` and
+cache-prefix stamps in `sw.js`; `scripts/build-pages.mjs` stages `_site/`, and
+`scripts/build-android.mjs` writes the APKs. The generated source-tree files are
+checked in and `--check` fails on a stale one; `_site` and the APKs are build
+output. The browser loads ES modules from `src/` and talks to the printer
 through Web Serial or Web Bluetooth. `sw.js` plus the generated
 `assets/precache.js` make the whole app work offline.
 
@@ -90,7 +96,7 @@ scripts/
   build-brand.mjs          brand.json + package.json → manifest, strings.xml, BRAND/version modules, icon
   build-android.mjs        APK pipeline: precache → aapt2 → javac → d8 → sign
   build-pages.mjs          Pages staging: runtime list + worker + 404 + .nojekyll + notices
-  check-docs.mjs           Markdown relative links, heading anchors and images
+  check-docs.mjs           Markdown and issue-template links, heading anchors and images
   check-privacy.mjs        the one deny list for the published tree
   check-workflows.mjs      pinned actions, permissions, timeouts, one aggregate gate
   release-notes.mjs        tag ↔ package.json version, CHANGELOG section → notes
@@ -344,7 +350,7 @@ Consumers:
   `0x0210` (D11_H) is experimental, every other known id is named and marked
   unsupported, and an id outside the table is `Unknown`. The task is a model
   fact (`D110M V4`), never a name derived from the protocol build.
-- `geometry.js` takes the reported head width and the dpi class. The pitch is
+- `geometry.js` takes the reported head width and resolution. The pitch is
   `dpi / 25.4` — 203 → 7.99, 300 → 11.81 dots/mm — and `widthMm` is derived
   from the head; the configured 8 dots/mm is only the fallback when no usable
   dpi was reported. `geometry().reported` is derived from
@@ -411,6 +417,7 @@ It emits `assets/precache.js`:
 ```js
 self.__PRECACHE = {
   version: '<sha256 prefix>',
+  navigationTimeoutMs: 3000,
   required: ['index.html', '…'],
   files: ['…'],
   digests: { 'index.html': '<sha-256 of the file bytes>', '…': '…' },
@@ -419,7 +426,9 @@ self.__PRECACHE = {
 
 `required` is generated from `REQUIRED_FILES`; `sw.js` validates against
 `MANIFEST.required` and keeps no copy of the list. `digests` has exactly the
-same keys as `files`.
+same keys as `files`. `navigationTimeoutMs` is stamped from
+`CONFIG.offline.navigationTimeoutMs` because the worker cannot import the
+config; it refuses an install whose manifest has no positive value.
 
 The list is sorted and the version is a deterministic content hash over every
 runtime file. The same hash is written into `sw.js` as its `BUILD` stamp, and
@@ -459,8 +468,12 @@ served from a stale HTTP cache.
 - names the cache from the build hash and deletes older `drypoint-*`
   caches on activate,
 - serves precached URLs cache-first (a cold start with no connectivity paints),
-- serves navigations network-first, falling back to the cached `index.html`
-  when the network fails *or* answers a non-OK status,
+- serves navigations network-first: one same-origin request bounded by
+  `navigationTimeoutMs`, then the cached `index.html` when the network fails
+  *or* answers a non-OK status. When the host answers a missing path with a
+  non-OK status, a controlled page therefore answers an in-scope deep link with
+  the shell and a 200; the host's 404 document is seen only before the worker
+  controls the page,
 - never answers a non-navigation request with `index.html` and never
   content-type-checks a navigation.
 
@@ -491,10 +504,13 @@ page logs and shows (see Offline strategy). No other module calls `console`.
 
 `scripts/serve.mjs` serves exactly the app surface with no dependencies: the
 files listed by `assets/precache.js` plus `sw.js`. It binds to `127.0.0.1` by
-default; `--host 0.0.0.0` is an explicit LAN opt-in. Repository files outside the
-app surface (keystore, docs, scripts, tests, `.run`) answer 404, so a LAN bind
-cannot expose the signing key. The pid file is `.run/server-<port>.pid` and
-contains JSON:
+default; `--host 0.0.0.0` is an explicit LAN opt-in, useful for viewing only —
+a LAN origin is plain HTTP and not a secure context, so Web Serial, Web
+Bluetooth and the service worker do not work there. Printing or offline work on
+a phone needs `adb reverse` (the phone's `localhost` is a secure context) or a
+TLS terminator. Repository files outside the app surface (keystore, docs,
+scripts, tests, `.run`) answer 404, so a LAN bind cannot expose the signing key.
+The pid file is `.run/server-<port>.pid` and contains JSON:
 
 ```json
 { "pid": 1234, "port": 8080, "startedAt": "2026-11-14T19:59:07.605Z" }
@@ -525,9 +541,9 @@ itself: `v<version>` on a commit in `main`.
    ```
 
 4. `.github/workflows/release.yml` runs on the tag only:
-   - `npm run verify` is the same gate a pull request passes — brand, precache,
-     privacy, tests, docs and workflow policy — so a tag cannot publish a red
-     commit;
+   - `npm run verify:all` is the same gate a pull request passes — brand,
+     precache, privacy, unit tests, docs, workflow policy and the measured
+     browser suites — so a tag cannot publish a red commit;
    - `node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME"` fails unless the
      tag is exactly `v<package.json version>` and the changelog has that section;
    - `ANDROID_KEYSTORE_BASE64` is decoded into `$RUNNER_TEMP`, the password and

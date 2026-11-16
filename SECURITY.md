@@ -11,10 +11,11 @@ API.
 
 - **Web Serial** — a user-granted serial port, used for Bluetooth Classic SPP on
   desktop Chrome/Edge. The browser owns the permission.
-- **Web Bluetooth** — a user-granted GATT device, used on Android Chrome.
+- **Web Bluetooth** — a user-granted GATT device, used in Chrome and Edge on
+  desktop and in Chrome on Android.
 - **The Android bridge** — inside the APK, a `JavascriptInterface` that exposes
-  BLE scan/connect/write and one file save for diagnostics. It is reachable only
-  from the bundled page at the app's own origin.
+  BLE scan/connect/write, one diagnostics file save and the system-bar colour.
+  It is reachable only from the bundled page at the app's own origin.
 - **`localStorage`** — the label, settings, roll profiles and zoom.
 
 **What it cannot do**
@@ -88,7 +89,9 @@ hardware. It is not an official SDK and makes no claim to be complete.
   writes to a model outside the tested or experimental table is refused before a
   frame is sent; read-only diagnostics remain available. The D11_H is
   experimental and asks for confirmation before printing or running the
-  self-test.
+  self-test. A sensor refusal is not a zero-frame refusal: a supported model
+  with real geometry is allowed to read one heartbeat, which decides the job,
+  and prints nothing when the lid, paper or battery blocks it.
 - Reply layouts that were not verified — paper info (`0x69`), print history
   (`0x62`) and the print area (`0x0F`) — are exposed as raw bytes, never as
   guessed fields.

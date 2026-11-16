@@ -37,8 +37,8 @@ npm test                  # the full suite
 npm run test:browser      # the three measured layout suites
 npm run check:precache    # fail when the generated offline files are stale
 npm run build:brand -- --check   # fail when a generated brand file drifted
-npm run docs:check        # Markdown links, anchors and images
-npm run privacy:check     # private hosts, paths, serials, addresses
+npm run docs:check        # Markdown and issue-template links and anchors
+npm run privacy:check     # private hosts, paths, serials, foreign e-mails
 npm run workflows:check   # action pins, permissions, timeouts
 npm run pages:build       # stage the static site in _site/
 npm run verify            # everything CI requires, in one command
