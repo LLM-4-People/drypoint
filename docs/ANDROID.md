@@ -338,7 +338,8 @@ behaviour is a source contract verified by `javac` in
 ### On-device import check
 
 The system picker is the one path a static test cannot prove. On a phone, with
-the release APK installed:
+the release APK installed (1.0.3 or newer; the 1.0.2 picker is filtered to
+images):
 
 1. **Image import** — add an image element; the picker lists pictures and the
    chosen image appears on the label.
