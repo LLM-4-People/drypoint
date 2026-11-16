@@ -101,6 +101,42 @@ test('the native bridge exposes exactly the methods the web transport calls', ()
   assert.match(java, /setSystemBars\(String colorHex\)[\s\S]*matches\("#\[0-9a-fA-F\]\{6\}"\)/, 'only a CSS hex colour is forwarded');
 });
 
+test('only the brand repository link is opened outside the Android shell', () => {
+  const activity = read('android/app/src/main/java/dev/llm4people/drypoint/MainActivity.java');
+  const strings = read('android/app/src/main/res/values/strings.xml');
+  const brandJson = JSON.parse(read('brand.json'));
+
+  assert.ok(
+    strings.includes(`<string name="repository_url" translatable="false">${brandJson.repository}</string>`),
+    'the generated strings carry the one repository URL'
+  );
+
+  const start = activity.indexOf('public boolean shouldOverrideUrlLoading(');
+  const end = activity.indexOf('webView.setWebChromeClient(', start);
+  assert.ok(start >= 0 && end > start, 'the navigation override is followed by the chrome client');
+  const body = activity.slice(start, end);
+
+  assert.match(
+    body,
+    /url\.toString\(\)\.equals\(getString\(R\.string\.repository_url\)\)/,
+    'exact URL equality, not a host or prefix match'
+  );
+  assert.match(body, /new Intent\(Intent\.ACTION_VIEW, url\)/, 'the link opens in the system browser');
+  assert.match(body, /startActivity\(/, 'the intent is dispatched');
+  assert.match(body, /catch \(Exception error\)/, 'a missing browser is caught');
+  assert.match(body, /Log\.w\("DrypointShell"/, 'the failure is logged');
+  assert.ok(body.indexOf('repository_url') < body.indexOf('!isAppUrl'), 'the one allowed link is checked before the refusal');
+  assert.equal((body.match(/return true/g) ?? []).length, 1, 'the override returns true only for the repository link');
+  assert.match(body, /return !isAppUrl\(url\)/, 'every other external URL is still refused');
+
+  const manifest = read('android/AndroidManifest.template.xml');
+  assert.doesNotMatch(
+    manifest,
+    /android\.permission\.INTERNET/,
+    'the browser opens outside an app that still has no network permission'
+  );
+});
+
 test('the shell derives the request host from the one origin constant', () => {
   const activity = read('android/app/src/main/java/dev/llm4people/drypoint/MainActivity.java');
   assert.match(activity, /private static final String HOST = hostOf\(ORIGIN\)/);
@@ -116,6 +152,13 @@ test('the Android manifest requests the BLE permissions the bridge checks', () =
   }
   assert.match(manifest, /usesPermissionFlags="neverForLocation"/);
   assert.match(manifest, /android:minSdkVersion="26"/);
+});
+
+test('the Android build generates and compiles the R class the shell reads', () => {
+  const script = read('scripts/build-android.mjs');
+  assert.match(script, /'--java', join\(staging, 'gen'\)/, 'aapt2 writes the generated R class into the scratch tree');
+  assert.match(script, /walk\(join\(staging, 'gen'\), '\.java'\)/, 'the generated source is collected');
+  assert.match(script, /\.\.\.generated, \.\.\.sources/, 'javac compiles R with the Java shell');
 });
 
 test('the Android build bundles the generated precache list, not a copied file list', () => {
@@ -330,7 +373,8 @@ test('a request or a navigation outside the app origin is refused, never release
   assert.match(methodBody(activity, 'private static String reasonOf(int status)'), /case 403:\s*\n\s*return "Forbidden"/);
 
   const override = methodBody(activity, 'public boolean shouldOverrideUrlLoading(');
-  assert.match(override, /return !isAppUrl\(request\.getUrl\(\)\)/, 'a foreign navigation stays in the app instead of leaving it');
+  assert.match(override, /return !isAppUrl\(url\)/, 'a foreign navigation stays in the app instead of leaving it');
+  assert.match(override, /getString\(R\.string\.repository_url\)/, 'the one allowed external navigation is the repository link');
   assert.doesNotMatch(override, /isEmbeddedScheme/, 'a data: navigation is conservatively refused too');
 });
 

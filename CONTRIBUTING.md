@@ -34,9 +34,9 @@ Chromium is discovered from `D110_CHROME`, then `CHROME_PATH`, then
 browser cache.
 
 [//]: # (generated:suites)
-The browser leg runs **26 tests in 13 files**:
+The browser leg runs **27 tests in 13 files**:
 
-- `accessibility.test.mjs` (2 tests)
+- `accessibility.test.mjs` (3 tests)
 - `actionbar-clearance.test.mjs` (1 test)
 - `content-security.test.mjs` (2 tests)
 - `corrupt-storage.test.mjs` (3 tests)
@@ -113,7 +113,7 @@ These are generated and checked byte-for-byte in CI:
 | the `BUILD` and cache-prefix stamps in `sw.js` | the precache hash and `brand.json` | `npm run build` |
 | the `generated:scripts` block in `README.md` | `package.json` | `npm run docs:generate` |
 | the `generated:suites` block in `CONTRIBUTING.md` | `scripts/test-suites.mjs` | `npm run docs:generate` |
-| `_site/` | `collectFiles()`, `sw.js`, the generated `404.html`, `.nojekyll` and the notices | `npm run pages:build` |
+| `_site/` | `collectFiles()`, `sw.js`, the generated `404.html`, `.nojekyll`, `CNAME` and the notices | `npm run pages:build` |
 
 Edit the owner and regenerate. If a generated file changed and you did not touch
 its owner, you found a bug: please say so in the pull request.

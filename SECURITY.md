@@ -47,7 +47,7 @@ bytes cannot poison the cache.
 | Anything older than 1.0 | No: there is no compatibility branch |
 
 Releases are the signed APK and the static site at
-<https://llm-4-people.github.io/drypoint/>. The APK's signing certificate is
+<https://drypoint.llm4people.dev/>. The APK's signing certificate is
 `CN=Drypoint, O=LLM-4-People, C=CA`, self-signed. Android only installs an
 update over an existing app when it is signed by the same key.
 

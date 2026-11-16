@@ -18,7 +18,7 @@ try {
 }
 
 // Build stamp written by scripts/precache.mjs. Do not edit by hand.
-const BUILD = 'f61021cddf7ba7ee';
+const BUILD = 'ef2ef264db8673d1';
 
 const MANIFEST = self.__PRECACHE;
 const CACHE_PREFIX = 'drypoint-';

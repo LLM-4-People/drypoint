@@ -5,7 +5,7 @@
  * document URL stays at the deep path. Every relative URL in the shell
  * (`assets/app.css`, `src/main.js`, the vendored script) then resolves under
  * that path and 404s, so a controlled page at
- * `/drypoint/library/deep/path#/label/x` renders unstyled HTML with no layers.
+ * `/library/deep/path#/label/x` renders unstyled HTML with no layers.
  *
  * Injecting one base element fixes every relative URL at once, without giving
  * the staged Pages build a different document or changing its precache digest.
@@ -23,7 +23,7 @@
  * base outside the head has no effect, so it would only hide the problem.
  *
  * @param {string} html the document text
- * @param {string} scope the registration scope, e.g. `https://host/drypoint/`
+ * @param {string} scope the registration scope, e.g. `https://host/`
  * @returns {string} the rewritten document, or the input when nothing applies
  */
 export function injectBase(html, scope) {

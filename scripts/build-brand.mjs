@@ -164,8 +164,8 @@ export function renderWebManifest(brand, { background, theme }) {
       short_name: brand.name,
       // No `id`. A relative id resolves against the document's origin, not the
       // deployment subpath, so `"./"` would claim https://host/ for a site
-      // served from /drypoint/. Omitting it makes the identity the resolved
-      // start_url (https://host/drypoint/), which is the app and nothing else.
+      // served from a subpath. Omitting it makes the identity the resolved
+      // start_url (https://host/), which is the app and nothing else.
       description: brand.shortDescription,
       start_url: './',
       scope: './',
@@ -180,12 +180,13 @@ export function renderWebManifest(brand, { background, theme }) {
   )}\n`;
 }
 
-/** Android's launched-app label. */
+/** Android's launched-app label and the one external link the shell opens. */
 export function renderStringsXml(brand) {
   return `<?xml version="1.0" encoding="utf-8"?>
 <!-- ${HEADER} -->
 <resources>
   <string name="app_name">${brand.name}</string>
+  <string name="repository_url" translatable="false">${brand.repository}</string>
 </resources>
 `;
 }

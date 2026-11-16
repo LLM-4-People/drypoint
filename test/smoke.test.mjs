@@ -71,6 +71,7 @@ test('the deployment set includes the worker, the manifest and the 404 page', as
   for (const file of SITE_ONLY_FILES) {
     assert.ok(paths.includes(`/${file}`), `${file} is probed`);
   }
+  assert.ok(paths.includes('/CNAME'), 'the custom domain marker is probed');
   assert.ok(paths.includes('/assets/app.css'), 'the precache manifest still supplies the app files');
   assert.equal(paths.includes('/.nojekyll'), false, '.nojekyll is a host control marker, not app content');
 
@@ -118,6 +119,16 @@ test('a deployment missing 404.html fails the smoke', async (t) => {
   await assert.rejects(
     checkDeployment(base, { paths: await smokePaths({ root: out }), attempts: 1, delayMs: 0 }),
     /\/404\.html never answered 200/
+  );
+});
+
+test('a deployment missing CNAME fails the smoke', async (t) => {
+  const out = await stagedSite(t);
+  const base = await serve(t, out, { missing: ['/CNAME'] });
+  await assert.rejects(
+    checkDeployment(base, { paths: await smokePaths({ root: out }), attempts: 1, delayMs: 0 }),
+    /\/CNAME never answered 200/,
+    'a deployment without the custom domain marker is incomplete'
   );
 });
 

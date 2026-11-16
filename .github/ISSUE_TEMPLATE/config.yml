@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Live app and quick start
-    url: https://llm-4-people.github.io/drypoint/
+    url: https://drypoint.llm4people.dev/
     about: Open the app, or read the quick start before filing a report.
   - name: Report a security vulnerability privately
     url: https://github.com/LLM-4-People/drypoint/security/advisories/new

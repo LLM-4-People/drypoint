@@ -4,8 +4,9 @@
  *
  * The file set is not written here: `collectFiles()` in `scripts/precache.mjs`
  * is the one owner of the runtime surface, and this script adds only what a
- * static host needs on top of it: the service worker, a redirecting 404 page
- * and the Jekyll opt-out marker. The repository root is never staged.
+ * static host needs on top of it: the service worker, a redirecting 404 page,
+ * the custom-domain marker and the Jekyll opt-out marker. The repository root
+ * is never staged.
  *
  * Usage:
  *   node scripts/build-pages.mjs                 # build _site/
@@ -27,6 +28,7 @@ export const WORKER_FILE = SW_FILE;
 export const PRECACHE_FILE = OUTPUT;
 export const NOT_FOUND_FILE = '404.html';
 export const NO_JEKYLL_FILE = '.nojekyll';
+export const CNAME_FILE = 'CNAME';
 
 /**
  * Files on top of the runtime surface; never a second runtime list.
@@ -34,9 +36,10 @@ export const NO_JEKYLL_FILE = '.nojekyll';
  * The worker and its imported manifest are not part of `collectFiles()` (a
  * manifest cannot carry its own digest, and the worker is what loads it), so
  * they are named here from the precache owner's own constants. Omitting either
- * ships a worker that cannot install.
+ * ships a worker that cannot install. The CNAME file keeps the custom domain
+ * bound after every deployment; its value comes from the homepage below.
  */
-export const SITE_ONLY_FILES = Object.freeze([WORKER_FILE, PRECACHE_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE]);
+export const SITE_ONLY_FILES = Object.freeze([WORKER_FILE, PRECACHE_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE, CNAME_FILE]);
 
 /**
  * The staged copy of each site-only file. The list above is the file set; this
@@ -48,11 +51,12 @@ const SITE_ONLY_CONTENT = Object.freeze({
   [PRECACHE_FILE]: null,
   [NOT_FOUND_FILE]: (basePath) => notFoundPage(basePath),
   [NO_JEKYLL_FILE]: '',
+  [CNAME_FILE]: () => `${new URL(brand.homepage).hostname}\n`,
 });
 
 /**
  * The path a Pages deployment is served from, derived from the one authored
- * homepage. `https://llm-4-people.github.io/drypoint/` → `/drypoint/`.
+ * homepage. `https://drypoint.llm4people.dev/` → `/`.
  *
  * A 404 document keeps the URL that missed, so `./` inside it would resolve
  * against the broken path; the generated page carries this value in a `<base>`

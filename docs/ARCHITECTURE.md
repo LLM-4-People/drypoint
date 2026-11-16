@@ -559,7 +559,7 @@ block; the dev server, the browser harness and the Pages smoke import the same
 module. A host that labels a module `text/html` therefore fails the same way in
 all four places, and the smoke cannot accept a type the worker would refuse.
 `scripts/smoke-pages.mjs` also probes the deployment-only files the precache
-manifest cannot name (`sw.js`, `assets/precache.js`, `404.html`).
+manifest cannot name (`sw.js`, `assets/precache.js`, `404.html`, `CNAME`).
 
 `npm run check:precache` and `test/precache.test.mjs` fail when the graph, the
 generated manifest, or the worker stamp disagree.

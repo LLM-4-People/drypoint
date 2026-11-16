@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: 'f61021cddf7ba7ee',
+  version: 'ef2ef264db8673d1',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -86,14 +86,14 @@ self.__PRECACHE = {
     'src/vendor/qrcode.js',
   ],
   digests: {
-    'assets/app.css': '32a364392fed40bf19c4c2f517a6366cb667d3113af78b8636f22b053bdbd9c6',
+    'assets/app.css': '9f92e01d9a85f161354e3f889324abc96d95d658597c3d4cd0bde68c50b52d86',
     'assets/icon-192.png': 'f09102b1c7ae346aeceaf1a20d16c74e4900d19b907945acbf786f4198231a92',
     'assets/icon-512.png': '45fcfcfb212262f227be5745c0cd0b85b58787c4338471e0ea3c1583971c1573',
     'assets/icon-maskable-512.png': 'd5df4b979fd21e9af56424f3777ae974f8cb115e0ef8b92884588e55186b9688',
     'assets/icon.svg': '9594f42b96c05448a9c7c1cda46b2bfa6a8f2699105c19f2697a9d7e6c9a39f3',
-    'index.html': 'c2847d8ea5fa8c880fd7806f19150006abd793d439b48c5c65406f9e9cad562f',
+    'index.html': '854d0ae55f96f00987822f1d5391cf97f6c8d10c72962dc334ffae171d79c2e5',
     'manifest.webmanifest': 'a10e67c48b85ab46e6ed82d1e0069c11c1bf41f14ced34af76e987c54e629c64',
-    'src/core/brand.js': '9220ed90b9a408b35ffe2db7b766372c09268162a570f5bbe685df284f877386',
+    'src/core/brand.js': '967d91f1b497a06b38962345291e579a0095a611d503c02515973206c9b3baaa',
     'src/core/config.js': 'e034ea3a041c993e97b56f91ec4676d12a80328819699e37b04d2bbba298e8f2',
     'src/core/dom.js': '104d1f832a8421d800ff0c87d9b776d9f9daa3fe83748906ac6b230936c56f3f',
     'src/core/events.js': 'f5f36474ae1e697206e4997916dcd865f86ea364f9cc3ef176f1e2e0feb6ec9f',
@@ -129,7 +129,7 @@ self.__PRECACHE = {
     'src/label/templates.js': '165b47fc6bee66c8f7121053bd24d26227ac0d951300b56714b0c0e2fc17142a',
     'src/label/text-layout.js': '475d60e209e7ecade8208829c8a244b6d37d5c01ef04069d577afbe165171599',
     'src/label/transfer.js': '52e7235d27f578655dfb14c4e194d4ca8080e29b690607c5479c0dccf11daa88',
-    'src/main.js': '6b040fb5fa647b4b95070858ffaed91477984d3d27cb9c3ad9976214f5af0082',
+    'src/main.js': '9c35242b1e43a786676f9ebf49bca7a7cc86de63f159649ee120ef03ab49e646',
     'src/protocol/client.js': '1124bfaf6668838e602c2cd9c7a36f8569fa78ccba3501cde37803721a400ea0',
     'src/protocol/commands.js': '9638deb402f20694bb88b2736a726ead9c298f289cd7a89f7ec3c66275f0ef01',
     'src/protocol/errors.js': '999d1ff965921784134f1585b63d0b9f3a2e1123ac3ef5d316ce18402490844a',

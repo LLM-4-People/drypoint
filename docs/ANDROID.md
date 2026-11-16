@@ -54,7 +54,8 @@ The script:
    else in the source tree can ride along;
 3. compiles the resources with PNG crunching off (`--no-crunch`, so the launcher
    drawable is byte-for-byte `assets/icon-192.png`) and links them with the
-   manifest inside the scratch directory;
+   manifest inside the scratch directory, emitting the generated `R` class that
+   the Java shell compiles against;
 4. compiles the Java sources, dexes them, and appends `classes.dex` through an
    explicit `ZipInfo` with the fixed 1980-01-01 timestamp;
 5. aligns and signs with `android/keystore/drypoint-release.jks`, using exactly

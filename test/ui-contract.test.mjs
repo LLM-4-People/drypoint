@@ -450,6 +450,37 @@ test('the compact header keeps every icon target and a 22px brand mark', () => {
   assert.match(rule('.brand-mark'), /width:\s*22px/);
   const compact = mediaBlocks().find((block) => /#labelPx/.test(block.body));
   assert.doesNotMatch(compact.body, /\.brand-mark\s*\{[^}]*display:\s*none/, 'the mark survives a narrow header');
+  const narrow = mediaBlocks().find((block) => block.width === 420);
+  assert.ok(narrow, 'the narrow-phone block exists');
+  assert.doesNotMatch(narrow.body, /\.brand-text\s*\{[^}]*display:\s*none/, 'the link keeps its accessible name');
+  assert.match(narrow.body, /\.brand-text\s*\{[^}]*clip-path:\s*inset\(50%\)/, 'the wordmark is visually hidden, not removed from the tree');
+});
+
+test('the header brand is the one repository link', () => {
+  const link = html.match(
+    /<a class="brand" id="brandLink" href="" target="_blank" rel="noopener" title="Drypoint on GitHub">([\s\S]*?)<\/a>/
+  );
+  assert.ok(link, 'the brand is an anchor with the fixed link attributes');
+  assert.match(link[1], /class="brand-mark" aria-hidden="true"/);
+  assert.match(
+    link[1],
+    /<span class="brand-text">Drypoint<span class="visually-hidden"> on GitHub<\/span><\/span>/,
+    'the hidden suffix names the destination'
+  );
+
+  const brand = rule('.brand');
+  assert.match(brand, /color:\s*inherit/);
+  assert.match(brand, /text-decoration:\s*none/);
+  assert.match(
+    css,
+    /\.brand:hover \.brand-text,[\s\S]*?\.brand:focus-visible \.brand-text\s*\{[^}]*color:\s*var\(--accent\)/,
+    'hover and keyboard focus share one visible style from the accent token'
+  );
+
+  assert.match(main, /brandLink: \$\('#brandLink'\)/, 'the composition root resolves the link');
+  assert.match(main, /import \{ BRAND \} from '\.\/core\/brand\.js'/);
+  assert.match(main, /ui\.brandLink\.href = BRAND\.repository/, 'the href comes from the one brand owner');
+  assert.doesNotMatch(main, /LLM-4-People\/drypoint/, 'the repository URL is not repeated in JavaScript');
 });
 
 test('a warning hint can shrink and wrap instead of widening the page', () => {

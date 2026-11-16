@@ -10,7 +10,7 @@ in the browser, entirely offline, with no account, no server and no telemetry.
 > 1.0.1 or later, and has no label export, so uninstalling it deletes every
 > label. Use the latest release.
 
-- **Live app:** <https://llm-4-people.github.io/drypoint/>
+- **Live app:** <https://drypoint.llm4people.dev/>
 - **Android APK:** [latest release](https://github.com/LLM-4-People/drypoint/releases/latest)
 
 Drypoint is not affiliated with NIIMBOT. It is an independent client for
@@ -30,7 +30,7 @@ would need before it could print is in [docs/PRINTERS.md](docs/PRINTERS.md).
 
 ## Quick start
 
-**In a browser.** Open <https://llm-4-people.github.io/drypoint/> in a browser
+**In a browser.** Open <https://drypoint.llm4people.dev/> in a browser
 that exposes the printer API you need: Chrome or Edge on desktop, or Chrome on
 Android (see [Browser support](#browser-support)). Pair the printer first
 (Windows: Settings → Bluetooth), then use **Connect printer** in the header or

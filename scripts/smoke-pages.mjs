@@ -9,7 +9,7 @@
  * enough to pass while the list grew to sixty-four.
  *
  * Usage:
- *   node scripts/smoke-pages.mjs --base https://host/drypoint/ [--cache-bust <id>]
+ *   node scripts/smoke-pages.mjs --base https://host/ [--cache-bust <id>]
  */
 
 import { createHash } from 'node:crypto';
@@ -31,15 +31,16 @@ export const ROOT_PATH = '/';
  *
  * `sw.js` is registered from the document, not precached by itself;
  * `assets/precache.js` is the manifest the worker imports; `404.html` is the
- * host's static fallback and is never part of a successful navigation. They
- * ride beside the app, so a deployment can lose one and still pass the
- * precache list. This is a different distribution from `DISTRIBUTION_FILES`,
- * which is the licence/notices list every artifact carries.
+ * host's static fallback and is never part of a successful navigation; and
+ * `CNAME` keeps the custom domain bound to this deployment. They ride beside
+ * the app, so a deployment can lose one and still pass the precache list. This
+ * is a different distribution from `DISTRIBUTION_FILES`, which is the
+ * licence/notices list every artifact carries.
  *
  * `.nojekyll` is deliberately absent: it is an empty host control marker, not
  * app content, and a 200 for it proves nothing about the deployment.
  */
-export const SITE_ONLY_FILES = Object.freeze(['sw.js', 'assets/precache.js', '404.html']);
+export const SITE_ONLY_FILES = Object.freeze(['sw.js', 'assets/precache.js', '404.html', 'CNAME']);
 
 /**
  * The one file whose content type is part of the contract: a manifest served as

@@ -85,6 +85,14 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - Release notes are generated from their owners; the repeated documentation
   tables and marker blocks are generated or contract-tested against the code,
   while the prose is maintained.
+- **The app is served at its custom domain root.** The Pages deployment now
+  publishes at <https://drypoint.llm4people.dev/> instead of the repository
+  subpath, and ships the `CNAME` file that keeps the domain bound across
+  deployments.
+- **The header title opens the repository.** The Drypoint wordmark is a link to
+  <https://github.com/LLM-4-People/drypoint> in a new browser tab. In the
+  Android shell it opens the same page in the browser, and every other
+  external navigation stays refused.
 
 ## [1.0.2] - 2026-11-16
 
