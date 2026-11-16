@@ -63,8 +63,9 @@ jobs:
       - name: The tagged commit passes every gate
         run: |
           set -euo pipefail
-          # The same gate a pull request runs: brand, precache, privacy, tests,
-          # docs and workflow policy. A tag cannot publish a red commit.
+          # The web gates plus the browser suites. The Android build, artifact
+          # check and clean-tree proof follow below; a tag cannot publish a red
+          # commit.
           npm run verify:all
           node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/notes.md"
       - name: Decode the release keystore
@@ -100,10 +101,35 @@ jobs:
             sha256sum "drypoint-${version}.apk" > "drypoint-${version}.apk.sha256"
             cat "drypoint-${version}.apk.sha256"
           )
+      - name: The built APK matches its manifest and policy
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          apk="android/build/drypoint-${version}.apk"
+          # The template tests prove the source; this proves the bytes that
+          # would be installed: every assets/www entry, no INTERNET permission
+          # and allowBackup=false.
+          node scripts/check-apk.mjs \
+            --apk "$apk" \
+            --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2"
       - name: Attest the APK's provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/drypoint-*.apk
+      - name: Download the provenance bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          (
+            cd dist
+            # `download` writes sha256-<digest>.jsonl; there is no --bundle flag.
+            gh attestation download "drypoint-${version}.apk" -R "$GITHUB_REPOSITORY"
+            bundle="$(ls sha256-*.jsonl)"
+            mv "$bundle" "drypoint-${version}.apk.intoto.jsonl"
+          )
+          test -f "dist/drypoint-${version}.apk.intoto.jsonl"
       - name: Upload the release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -154,7 +180,10 @@ jobs:
           # run built and verified.
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/existing" --clobber
-            for asset in "drypoint-${version}.apk" "drypoint-${version}.apk.sha256"; do
+            for asset in \
+              "drypoint-${version}.apk" \
+              "drypoint-${version}.apk.sha256" \
+              "drypoint-${version}.apk.intoto.jsonl"; do
               if ! cmp -s "dist/${asset}" "$RUNNER_TEMP/existing/${asset}"; then
                 echo "::error::the existing release asset ${asset} differs from this build"
                 exit 1
@@ -170,6 +199,7 @@ jobs:
             "$GITHUB_REF_NAME" \
             "$apk" \
             "$checksum" \
+            "dist/drypoint-${version}.apk.intoto.jsonl" \
             --verify-tag \
             --title "v${version}" \
             --notes-file "$RUNNER_TEMP/notes.md" \

@@ -12,7 +12,7 @@ Paste the output of the commands you actually ran. Do not tick a box for a
 command you did not run.
 
 - [ ] `npm run verify` — brand, precache, privacy, tests, docs, workflows
-- [ ] `npm run test:browser` — the three measured layout suites (needs Chromium)
+- [ ] `npm run test:browser` — the measured browser suites (needs Chromium)
 - [ ] `npm run build:android` — the APK still builds and signs
 - [ ] `node scripts/build-pages.mjs` — the Pages tree still stages
 - [ ] Nothing here: <!-- explain why, and what you verified instead -->

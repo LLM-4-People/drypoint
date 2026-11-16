@@ -20,6 +20,7 @@ import {
   checkWorkflows,
   jobsOf,
   needsOf,
+  shellCommands,
   topLevelBlock,
   usesReferences,
 } from '../scripts/check-workflows.mjs';
@@ -111,9 +112,30 @@ test('a job without timeout-minutes is rejected', () => {
   assert.ok(findings.some((finding) => /job "build" has no timeout-minutes/.test(finding)));
 });
 
-test('write-all is rejected and a checkout must not persist credentials', () => {
-  const writeAll = VALID.replace('  contents: read', '  write-all');
-  assert.ok(checkWorkflow(writeAll).some((finding) => /write-all/.test(finding)));
+test('write-all and read-all are rejected in every declaration, quoted or not', () => {
+  const scalar = (value) => VALID.replace('permissions:\n  contents: read', `permissions: ${value}`);
+  const nested = (value) => VALID.replace('  contents: read', `  ${value}`);
+  const jobLevel = (value) => VALID.replace('    timeout-minutes: 5', `    timeout-minutes: 5\n    permissions: ${value}`);
+  const quotedKey = (value) => VALID.replace('permissions:\n  contents: read', `"permissions": ${value}`);
+  const quotedNestedKey = (value) => VALID.replace('permissions:\n  contents: read', `"permissions":\n  ${value}`);
+
+  for (const value of ['write-all', '"write-all"', "'write-all'", 'read-all', '"read-all"', "'read-all'"]) {
+    assert.ok(checkWorkflow(scalar(value)).some((finding) => /write-all\/read-all/.test(finding)), `inline ${value} is rejected`);
+    assert.ok(checkWorkflow(nested(value)).some((finding) => /write-all\/read-all/.test(finding)), `nested ${value} is rejected`);
+    assert.ok(checkWorkflow(jobLevel(value)).some((finding) => /write-all\/read-all/.test(finding)), `job-level ${value} overrides the default and is rejected`);
+    assert.ok(checkWorkflow(quotedKey(value)).some((finding) => /write-all\/read-all/.test(finding)), `quoted key with ${value} is rejected`);
+    assert.ok(
+      checkWorkflow(quotedNestedKey(value)).some((finding) => /write-all\/read-all/.test(finding)),
+      `quoted key with nested ${value} is rejected`
+    );
+  }
+
+  // A per-scope grant is the supported shape in either key spelling, and a
+  // comment mentioning the banned token is not a declaration.
+  assert.deepEqual(checkWorkflow(VALID), []);
+  assert.deepEqual(checkWorkflow(VALID.replace('permissions:', '"permissions":')), []);
+  assert.deepEqual(checkWorkflow(VALID.replace('  contents: read', '  contents: read # never write-all')), []);
+
   const persisting = VALID.replace('          persist-credentials: false\n', '');
   assert.ok(checkWorkflow(persisting).some((finding) => /persist-credentials: false/.test(finding)));
 });
@@ -127,8 +149,11 @@ test('a trailing comment does not relax the permissions rule', () => {
   assert.deepEqual(checkWorkflow(VALID.replace('  contents: read', '  contents: read # never write-all')), []);
 });
 
-test('the required job must inspect every leg in its needs list', () => {
-  const required = (results) => `name: Aggregate
+test('the aggregate lists every job and derives its result from toJSON(needs)', () => {
+  const aggregate = ({
+    extra = '',
+    results = '            const results = ${{ toJSON(needs) }};\n            core.setFailed(JSON.stringify(results));',
+  } = {}) => `name: Aggregate
 
 on:
   pull_request:
@@ -158,7 +183,7 @@ jobs:
     needs: [web]
     steps:
       - run: echo android
-  required:
+${extra}  required:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: always()
@@ -169,29 +194,44 @@ jobs:
           script: |
 ${results}
 `;
-  const explicit = '            const results = { web: "${{ needs.web.result }}", browser: "${{ needs.browser.result }}" };';
-  const findings = checkWorkflow(required(explicit), { file: 'checks.yml' });
+
+  assert.deepEqual(checkWorkflow(aggregate(), { file: 'checks.yml' }), [], 'the real shape is accepted');
+
+  const unlisted = aggregate({
+    extra: '  lint:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - run: echo lint\n',
+  });
   assert.ok(
-    findings.some((finding) => /job "required" depends on "android" but never inspects its result/.test(finding)),
-    'a leg added to needs without a reader is drift, not a pass'
+    checkWorkflow(unlisted, { file: 'checks.yml' }).some((finding) => /job "lint" is not listed in required\.needs/.test(finding)),
+    'a new job cannot quietly stay outside the aggregate'
   );
 
-  const derived = '            const results = ${{ toJSON(needs) }};';
-  assert.deepEqual(
-    checkWorkflow(required(derived), { file: 'checks.yml' }),
-    [],
-    'toJSON(needs) covers every leg, including one added later'
+  const explicit = aggregate({
+    results: '            const results = { web: "${{ needs.web.result }}", browser: "${{ needs.browser.result }}", android: "${{ needs.android.result }}" };',
+  });
+  assert.ok(
+    checkWorkflow(explicit, { file: 'checks.yml' }).some((finding) => /must derive its result from toJSON\(needs\)/.test(finding)),
+    'a hand-built results map is drift, even when it names every leg today'
   );
-  assert.deepEqual(needsOf(jobsOf(required(derived)).find((job) => job.name === 'required').block), ['web', 'browser', 'android']);
-  // An ordinary job's needs is an ordering edge, not a result to read.
-  const plain = '            const results = { web: "${{ needs.web.result }}" };';
-  assert.deepEqual(
-    checkWorkflow(required(plain), { file: 'checks.yml' }).filter((finding) => /"browser"|"android"/.test(finding)),
-    ['checks.yml: job "required" depends on "browser" but never inspects its result', 'checks.yml: job "required" depends on "android" but never inspects its result']
+
+  const mixed = aggregate({
+    results:
+      '            const all = ${{ toJSON(needs) }};\n            core.info(JSON.stringify(all));\n            const web = "${{ needs.web.result }}";',
+  });
+  assert.ok(
+    checkWorkflow(mixed, { file: 'checks.yml' }).some((finding) => /hardcodes a leg name/.test(finding)),
+    'the toJSON expression does not excuse a second hardcoded leg read'
   );
+
+  const unused = aggregate({ results: '            const results = ${{ toJSON(needs) }};' });
+  assert.ok(
+    checkWorkflow(unused, { file: 'checks.yml' }).some((finding) => /never reads it/.test(finding)),
+    'assigning the expression and ignoring it is not a derived result'
+  );
+
+  assert.deepEqual(needsOf(jobsOf(aggregate()).find((job) => job.name === 'required').block), ['web', 'browser', 'android']);
 });
 
-test('the release workflow must be tag-only and verify the tag on a command line', () => {
+test('the release workflow is tag-only and verifies the tag on the publish command', () => {
   const release = `name: Release
 
 on:
@@ -212,9 +252,10 @@ jobs:
     steps:
       - name: Publish
         run: |
-          args=("$GITHUB_REF_NAME")
-          args+=(--verify-tag)
-          gh release create "\${args[@]}"
+          gh release create \\
+            "$GITHUB_REF_NAME" \\
+            "dist/drypoint.apk" \\
+            --verify-tag
 `;
   assert.deepEqual(checkReleaseWorkflow(release), []);
   assert.ok(checkReleaseWorkflow(release.replace("tags: ['v*']", 'branches: [main]')).some((finding) => /must trigger on tags/.test(finding)));
@@ -222,15 +263,28 @@ jobs:
   assert.ok(checkReleaseWorkflow(release.replace(/--verify-tag/g, '')).some((finding) => /--verify-tag/.test(finding)));
   assert.ok(checkReleaseWorkflow(release.replace('  push:', '  pull_request:')).some((finding) => /must not trigger on pull_request/.test(finding)));
 
-  // The bypass: the flag survives only as a comment.
-  const commented = release.replace('          args+=(--verify-tag)', '          # args+=(--verify-tag)');
+  // The flag on an unrelated command is the bypass: it was found anywhere in
+  // the run block, so an echo satisfied the gate while the publish did not.
+  const unrelated = release.replace('            --verify-tag\n', '').replace('          gh release create', '          echo --verify-tag\n          gh release create');
   assert.ok(
-    checkReleaseWorkflow(commented).some((finding) => /--verify-tag on a command line/.test(finding)),
-    'a commented-out flag is not a flag'
+    checkReleaseWorkflow(unrelated).some((finding) => /--verify-tag on the gh release create command itself/.test(finding)),
+    'an echo is not the publish command'
   );
-  // A commented-out whole command is the same bypass.
-  const everything = release.replace(/          args=.*\n          args\+=.*\n          gh release create.*\n/, '          # gh release create "$GITHUB_REF_NAME" --verify-tag\n          echo nothing\n');
-  assert.ok(checkReleaseWorkflow(everything).some((finding) => /--verify-tag/.test(finding)));
+
+  // A commented-out flag is not a flag, including one inside the command.
+  const commented = release.replace('            --verify-tag', '            # --verify-tag');
+  assert.ok(checkReleaseWorkflow(commented).some((finding) => /--verify-tag/.test(finding)));
+
+  // A flag collected in an array and expanded later is not visible on the
+  // publish command, so the static check refuses it.
+  const assembled = release.replace('            --verify-tag', '').replace('          gh release create', '          args+=(--verify-tag)\n          gh release create');
+  assert.ok(checkReleaseWorkflow(assembled).some((finding) => /--verify-tag/.test(finding)));
+
+  // An unrelated command before the publish does not satisfy it either.
+  const chained = release
+    .replace('            --verify-tag\n', '')
+    .replace('          gh release create', '          echo --verify-tag && gh release create');
+  assert.ok(checkReleaseWorkflow(chained).some((finding) => /--verify-tag/.test(finding)));
 });
 
 test('every workflow file in the tree satisfies the policy', async () => {
@@ -241,7 +295,6 @@ test('every workflow file in the tree satisfies the policy', async () => {
     'checks.yml',
     'codeql.yml',
     'dependency-review.yml',
-    'docs.yml',
     'pages.yml',
     RELEASE_FILE,
     'scorecard.yml',
@@ -265,7 +318,6 @@ test('the pinned allowlist is exactly the briefed commits', () => {
     'ossf/scorecard-action': 'fa7117db83c52d787ae5a89f350999701505d78e',
     'actions/stale': '4391f3da665fdf50b6810c1a66712fb9ba21aa93',
     'actions/github-script': '3a2844b7e9c422d3c10d287c895573f7108da1b3',
-    'raven-actions/actionlint': '3d39aea434753780c3b3d4a1a31c854b4dbf49d7',
   });
 });
 
@@ -301,6 +353,8 @@ test('the aggregate job is named required and is the only one', async () => {
   const required = jobs.find((job) => job.name === 'required');
   assert.match(required.block, /^ {4}if: always\(\)$/m, 'it runs even when a leg failed');
   assert.match(required.block, /^ {4}needs: \[web, browser, android\]$/m);
+  assert.match(required.block, /toJSON\(needs\)/, 'the legs are read from the needs map, not a copied list');
+  assert.doesNotMatch(required.block, /needs\.[A-Za-z0-9_-]+/, 'no leg is hardcoded');
   assert.match(required.block, /!== 'success'/, 'anything other than success fails it');
   assert.match(required.block, /core\.setFailed/, 'the failure is a failed check');
 
@@ -317,6 +371,7 @@ test('checks.yml runs the gates, covers the Node matrix and proves the APK ident
   assert.match(checks, /npm run build:brand -- --check/);
   assert.match(checks, /npm run check:precache/);
   assert.match(checks, /npm run docs:check/, 'the documentation gate is in the merge gate');
+  assert.match(checks, /node scripts\/build-docs\.mjs --check/, 'the generated docs blocks are in the merge gate');
   assert.match(checks, /npm run workflows:check/, 'the workflow policy is in the merge gate');
   assert.match(checks, /git diff --exit-code/, 'a build that rewrote a generated file fails');
   assert.match(checks, /git status --porcelain/, 'an untracked generated file fails too');
@@ -390,6 +445,37 @@ test('the release publishes the APK, checksum and changelog notes', async () => 
   assert.match(release, /base64 --decode/);
 });
 
+test('the release attaches the provenance bundle and checks the built APK', async () => {
+  const release = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
+  assert.match(
+    release,
+    /gh attestation download "drypoint-\$\{version\}\.apk" -R "\$GITHUB_REPOSITORY"/,
+    'the bundle is downloaded for the attested subject'
+  );
+  assert.match(release, /sha256-\*\.jsonl/, 'download writes sha256-<digest>.jsonl');
+  assert.match(release, /drypoint-\$\{version\}\.apk\.intoto\.jsonl/, 'the bundle is renamed to the release asset');
+  assert.doesNotMatch(release, /attestation download[^\n]*--bundle/, 'gh attestation download has no --bundle flag');
+  const publishes = shellCommands(release).filter((command) => /(?:^|\s)gh\s+release\s+create(?:\s|$)/.test(command));
+  assert.equal(publishes.length, 1, 'one publish command');
+  assert.ok(
+    publishes[0].includes('"dist/drypoint-${version}.apk.intoto.jsonl"'),
+    'the bundle is passed to gh release create'
+  );
+  assert.match(release, /node scripts\/check-apk\.mjs/, 'the built bytes are checked, not only the template');
+  assert.match(release, /--aapt2 "\$ANDROID_HOME\/build-tools\/\$ANDROID_BUILD_TOOLS\/aapt2"/);
+  assert.match(release, /"drypoint-\$\{version\}\.apk\.intoto\.jsonl"; do/, 'a re-run compares the bundle too');
+});
+
+test('actionlint is downloaded directly and checksum-verified', async () => {
+  const actionlint = await readFile(join(projectRoot, WORKFLOW_DIR, 'actionlint.yml'), 'utf8');
+  assert.match(actionlint, /actionlint_1\.7\.12_linux_amd64\.tar\.gz/);
+  assert.match(actionlint, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
+  assert.match(actionlint, /sha256sum -c -/, 'the archive is verified before extraction');
+  assert.match(actionlint, /tar -xzf/);
+  assert.match(actionlint, /run: actionlint -color/);
+  assert.doesNotMatch(actionlint, /raven-actions\/actionlint/, 'the unverified action is gone');
+});
+
 test('re-running the release for an existing tag verifies it instead of failing', async () => {
   const release = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
   const publish = jobsOf(release).find((job) => job.name === 'publish').block;
@@ -401,37 +487,45 @@ test('re-running the release for an existing tag verifies it instead of failing'
   assert.match(publish, /exit 0/, 'an identical release is a pass, not a failure');
 });
 
-test('pages deploys only a successful Checks run for the commit it validated', async () => {
+test('pages checks out main, then proves it is the commit Checks validated', async () => {
   const pages = await readFile(join(projectRoot, WORKFLOW_DIR, 'pages.yml'), 'utf8');
   assert.match(pages, /^concurrency:\n  group: pages\n  cancel-in-progress: false$/m);
   assert.match(pages, /workflow_run:/, 'the trigger is the Checks run');
   assert.match(pages, /workflows: \[Checks\]/);
   assert.match(pages, /types: \[completed\]/);
   assert.match(pages, /branches: \[main\]/);
-  // A red Checks run must not deploy: the condition is on the job, and the
-  // commit checked out is the run's own head SHA.
   assert.match(pages, /github\.event\.workflow_run\.conclusion == 'success'/, 'a red run cannot deploy');
-  // The guard that makes head_sha a commit of *this* repository on main sits on
-  // the checkout it protects, for both jobs that check the commit out.
+
+  // No checkout may interpolate a SHA from the triggering event: Scorecard
+  // flags that pattern even when a step guard protects it. The constant ref is
+  // checked out and the next step proves it is the validated commit.
+  const refs = [...pages.matchAll(/^\s+ref:\s*(.+)$/gm)].map((match) => match[1].trim());
+  assert.equal(refs.some((ref) => ref.includes('head_sha')), false, 'no checkout interpolates head_sha');
+  assert.equal(refs.filter((ref) => ref === 'main').length, 2, 'both workflow_run checkouts use main');
+  assert.equal(refs.filter((ref) => ref === 'refs/heads/main').length, 2, 'both manual checkouts use the constant main ref');
+
+  // The guard that makes the run one of *this* repository on main sits on the
+  // checkout it protects, for both jobs that check the commit out.
   assert.equal(
     (pages.match(/github\.event\.workflow_run\.head_repository\.full_name == github\.repository/g) ?? []).length,
     2,
     'each checkout refuses a run from a fork'
   );
-  assert.equal((pages.match(/ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/g) ?? []).length, 2, 'the validated commit is checked out');
-  // A manual dispatch has no validated commit, so it deploys main and only
-  // main; a constant ref cannot be steered at another branch.
-  assert.equal((pages.match(/ref: refs\/heads\/main/g) ?? []).length, 2, 'a manual deploy deploys main');
-  assert.match(pages, /workflow_dispatch:/, 'a manual deploy is still possible');
+  assert.equal(
+    (pages.match(/expected="\$\{\{ github\.event\.workflow_run\.head_sha \}\}"/g) ?? []).length,
+    2,
+    'both jobs compare the checked-out commit with the run head'
+  );
+  assert.equal((pages.match(/actual="\$\(git rev-parse HEAD\)"/g) ?? []).length, 2, 'both jobs read HEAD');
+  assert.equal((pages.match(/if \[ "\$actual" != "\$expected" \]/g) ?? []).length, 2, 'both jobs refuse a moved main');
 
   const jobs = jobsOf(pages);
   assert.deepEqual(jobs.map((job) => job.name), ['build', 'deploy', 'smoke']);
   for (const name of ['build', 'smoke']) {
-    assert.match(
-      jobs.find((job) => job.name === name).block,
-      /ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/,
-      `${name} checks out the commit Checks validated`
-    );
+    const block = jobs.find((job) => job.name === name).block;
+    assert.match(block, /ref: main/, `${name} checks out main`);
+    assert.match(block, /The checked-out commit is the one Checks validated/, `${name} asserts the commit`);
+    assert.match(block, /git rev-parse HEAD/, `${name} reads the real HEAD`);
   }
 
   const deploy = jobs.find((job) => job.name === 'deploy').block;
@@ -448,6 +542,10 @@ test('pages deploys only a successful Checks run for the commit it validated', a
   assert.match(pages, /npm run pages:build/);
   assert.match(pages, /node scripts\/build-pages\.mjs --check/);
   assert.match(pages, /node scripts\/smoke-pages\.mjs --base "\$BASE_URL" --cache-bust "\$RUN_ID"/, 'the smoke test reads the worker manifest');
+
+  // The operator override is stated where the trigger is defined.
+  assert.match(pages, /manual dispatch[\s\S]{0,200}without a Checks run/i);
+  assert.match(pages, /operator override/i);
 });
 
 test('the pages smoke test covers every precached file exactly once', async () => {
@@ -472,12 +570,11 @@ test('codeql analyses the Android shell too', async () => {
   }
 });
 
-test('docs runs on Markdown and workflow changes and runs every repository gate', async () => {
-  const docs = await readFile(join(projectRoot, WORKFLOW_DIR, 'docs.yml'), 'utf8');
-  const paths = docs.match(/paths:\n(?:\s+- .*\n)+/g) ?? [];
-  assert.equal(paths.length, 2, 'both push and pull_request filter on paths');
-  for (const block of paths) assert.match(block, /- '\*\*\/\*\.md'/);
+test('there is no duplicate Docs workflow; every web leg runs the docs gates', async () => {
+  const names = await readdir(join(projectRoot, WORKFLOW_DIR));
+  assert.equal(names.includes('docs.yml'), false, 'the path-filtered duplicate is gone');
+  const checks = await readFile(join(projectRoot, WORKFLOW_DIR, 'checks.yml'), 'utf8');
   for (const script of ['npm run docs:check', 'npm run workflows:check', 'npm run privacy:check', 'npm run build:brand -- --check']) {
-    assert.ok(docs.includes(script), `docs.yml runs ${script}`);
+    assert.ok(checks.includes(script), `checks.yml runs ${script}`);
   }
 });

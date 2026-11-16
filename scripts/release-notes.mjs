@@ -62,6 +62,10 @@ export function changelogSection(markdown, version) {
 /**
  * Build the notes for one tag.
  *
+ * The changelog owns the prose; the signing certificate footer is a generated
+ * fact from brand.json, the same value the release build compares. A
+ * downloader can verify the artifact without finding a second copy elsewhere.
+ *
  * @param {{tag: string, version: string, changelog: string}} input
  * @returns {{version: string, title: string, body: string}}
  */
@@ -70,10 +74,11 @@ export function releaseNotes({ tag, version, changelog }) {
   if (tagged !== version) {
     throw new Error(`tag ${tag} does not match package.json version ${version}`);
   }
+  const certificate = brand.androidSigningCertificateSha256;
   return {
     version,
     title: `${brand.name} ${version}`,
-    body: changelogSection(changelog, version),
+    body: `${changelogSection(changelog, version)}\n\n---\n\nSigning certificate SHA-256 (\`apksigner verify --print-certs\`): \`${certificate}\``,
   };
 }
 

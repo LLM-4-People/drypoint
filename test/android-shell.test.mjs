@@ -393,7 +393,7 @@ test('the signing schemes follow the manifest minimum', () => {
   assert.equal(value(args(21), '--v1-signing-enabled'), 'true', 'below API 24 the v1 signature is still required');
 
   const manifest = read('android/AndroidManifest.template.xml');
-  assert.equal(minSdkVersionOf(renderManifest(manifest, { versionName: '1.0.0', versionCode: 10000 })), 26, 'the manifest owns the minimum');
+  assert.equal(minSdkVersionOf(renderManifest(manifest, { versionName: '1.0.0', versionCode: 10000, packageName: 'dev.example.labels' })), 26, 'the manifest owns the minimum');
   assert.throws(() => minSdkVersionOf('<manifest/>'), /no android:minSdkVersion/);
 });
 

@@ -6,6 +6,7 @@ both keep their attribution next to the code or data they belong to.
 ## QR Code Generator for JavaScript
 
 - **File:** `src/vendor/qrcode.js`
+- **Version:** qrcode-generator 1.5.2 (the `qrcode.js` bytes are identical to the 1.4.4 release)
 - **Copyright (c) 2009 Kazuhiko Arase**
 - **URL:** <http://www.d-project.com/>
 - **Licence:** MIT — <http://www.opensource.org/licenses/mit-license.php>

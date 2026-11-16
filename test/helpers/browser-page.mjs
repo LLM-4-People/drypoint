@@ -14,6 +14,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, extname, join, sep } from 'node:path';
 
 import { projectRoot } from './project-files.mjs';
+import { chromeTimeoutMs } from './env-timeout.mjs';
 
 /** Where an installed Playwright keeps its browsers. Built at run time, never committed. */
 const PLAYWRIGHT_CACHE = join(homedir(), '.cache', 'ms-playwright');
@@ -102,10 +103,7 @@ export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * so the bound has to cover contention, not just a warm local start. Override
  * with `D110_CHROME_TIMEOUT_MS` when a slower machine needs more.
  */
-const DEVTOOLS_TIMEOUT_MS = (() => {
-  const raw = Number(process.env.D110_CHROME_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 30000;
-})();
+const DEVTOOLS_TIMEOUT_MS = chromeTimeoutMs(process.env, 30000);
 
 /**
  * @param {string} profile
@@ -215,6 +213,18 @@ async function connect(port, timeoutMs = 10000) {
 }
 
 /**
+ * How long the page may take to mount the editor. The same environment knob
+ * that raises the DevTools start bound also raises this one, so a slow runner
+ * has one setting; the 15 s default is the measured mount budget.
+ *
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {number}
+ */
+export function mountTimeoutMs(env = process.env) {
+  return chromeTimeoutMs(env, 15000);
+}
+
+/**
  * Navigate to the served app and wait until the editor has actually mounted.
  *
  * A fixed delay after `Page.navigate` is a race: a cold, loaded CI runner can
@@ -226,7 +236,7 @@ async function connect(port, timeoutMs = 10000) {
  * @param {number} port
  * @param {{timeoutMs?: number}} [options]
  */
-export async function openApp(cdp, port, { timeoutMs = 15000 } = {}) {
+export async function openApp(cdp, port, { timeoutMs = mountTimeoutMs() } = {}) {
   await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

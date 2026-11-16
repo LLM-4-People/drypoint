@@ -99,9 +99,10 @@ publish anything on a mismatch. The pin is on by default; there are exactly two
 declared exceptions, and both say so in the build log:
 
 - a key the build just generated cannot be the release key;
-- `CI` sets `ANDROID_ALLOW_TEST_KEY=1`, which the pull-request gate does because
-  it proves the toolchain with a throwaway key and publishes nothing. The
-  release workflow never sets it.
+- `CI` sets `ANDROID_ALLOW_TEST_KEY='true'` (both `'1'` and `'true'` are
+  accepted), which the pull-request gate does because it proves the toolchain
+  with a throwaway key and publishes nothing. The release workflow never sets
+  it.
 
 ## Signature schemes and reproducible bytes
 
@@ -113,13 +114,15 @@ stamped with the wall clock, and the same tree would produce a different APK on
 every build. Below API 24 the build re-enables v1, because it is required there.
 
 Together with the fixed `classes.dex` entry timestamp and `aapt2 --no-crunch`,
-two builds of the same tree are byte-identical: `sha256sum` of
-`android/build/drypoint-1.0.0.apk` is the same after every run. What cannot be
-pinned is the APK Signing Block itself — the v2/v3 digests and signatures
-`apksigner` writes between the zip entries and the central directory. For one
-fixed key and one `apksigner` build it is deterministic (RSA PKCS#1 v1.5 has no
-random salt and apksigner adds no signing time), but its bytes belong to the
-signing tool and change if that tool's scheme version changes.
+two builds of the same tree **with the same key** are byte-identical:
+`sha256sum` of `android/build/drypoint-<version>.apk` is the same after every
+run. A different key changes only the signing block, not the bundled
+`assets/www` or the manifest. What cannot be pinned across tool versions is the
+APK Signing Block itself — the v2/v3 digests and signatures `apksigner` writes
+between the zip entries and the central directory. For one fixed key and one
+`apksigner` build it is deterministic (RSA PKCS#1 v1.5 has no random salt and
+apksigner adds no signing time), but its bytes belong to the signing tool and
+change if that tool's scheme version changes.
 
 Changing the signing key costs one uninstall: Android refuses to replace an app
 signed by a different key, so the first install after a key change needs the old

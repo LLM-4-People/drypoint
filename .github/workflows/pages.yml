@@ -9,6 +9,10 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+  # A manual dispatch deploys the current main branch without a Checks run:
+  # that is the deliberate operator override for recovering a deployment, not
+  # a path that proves the commit. A workflow_run deployment below is gated by
+  # the successful Checks run and by the commit assertion.
 
 permissions:
   contents: read
@@ -30,23 +34,35 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Checkout the commit Checks validated
-        # The repository and branch comparison is the guard that makes
-        # `head_sha` a commit of *this* repository on main rather than a fork's
-        # or another branch's; it sits on the checkout it protects.
+      - name: Checkout main for the Checks run
+        # The repository and branch comparison is the guard that makes the
+        # triggering run a run of *this* repository on main. The checkout
+        # itself names `main`, never a SHA from the event: Scorecard flags a
+        # workflow_run.head_sha checkout as a dangerous pattern, and a moved
+        # main is caught by the assertion below instead.
         if: >-
           github.event_name == 'workflow_run' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
           github.event.workflow_run.head_branch == 'main'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `github.sha` on a workflow_run event is the default branch head,
-          # which may already have moved on from the commit Checks validated.
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: main
           persist-credentials: false
+      - name: The checked-out commit is the one Checks validated
+        if: github.event_name == 'workflow_run'
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.workflow_run.head_sha }}"
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::main moved: checked out $actual, but Checks validated $expected; the newer Checks run will deploy it"
+            exit 1
+          fi
+          echo "checked out $actual, the commit Checks validated"
       - name: Checkout main for a manual deploy
         # A dispatch has no validated commit, so it deploys main and nothing
-        # else: the ref is a constant, never whatever the operator typed.
+        # else: the ref is a constant, never whatever the operator typed. It
+        # is the deliberate operator override, not a gated deployment.
         if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,15 +119,26 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout the commit Checks validated
+      - name: Checkout main for the Checks run
         if: >-
           github.event_name == 'workflow_run' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
           github.event.workflow_run.head_branch == 'main'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: main
           persist-credentials: false
+      - name: The checked-out commit is the one Checks validated
+        if: github.event_name == 'workflow_run'
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.workflow_run.head_sha }}"
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::main moved: checked out $actual, but Checks validated $expected; the newer Checks run will deploy it"
+            exit 1
+          fi
+          echo "checked out $actual, the commit Checks validated"
       - name: Checkout main for a manual deploy
         if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -45,11 +45,13 @@ test('the release workflow reads the version, never a copy of it', () => {
   assert.match(release, /release-notes\.mjs --tag "\$GITHUB_REF_NAME"/, 'the tested script owns the tag comparison');
 });
 
-test('the release notes are the matching changelog section', () => {
+test('the release notes are the changelog section plus the signing certificate', () => {
   const notes = releaseNotes({ tag: `v${pkg.version}`, version: pkg.version, changelog });
   assert.equal(notes.version, pkg.version);
   assert.equal(notes.title, `${BRAND.name} ${pkg.version}`);
-  assert.equal(notes.body, changelogSection(changelog, pkg.version));
+  assert.ok(notes.body.startsWith(changelogSection(changelog, pkg.version)), 'the section comes first');
+  assert.match(notes.body, /^Signing certificate SHA-256 \(`apksigner verify --print-certs`\): `[0-9a-f]{64}`$/m);
+  assert.ok(notes.body.includes(BRAND.androidSigningCertificateSha256), 'the footer is the brand fact');
   assert.ok(notes.body.trim().length > 0, 'the release has notes');
   assert.doesNotMatch(notes.body, /^## /m, 'the body does not repeat the section heading');
 });
@@ -96,7 +98,8 @@ test('the command line writes the notes and fails on a wrong tag', async (t) => 
   const notes = join(out, 'notes.md');
   run('--tag', `v${pkg.version}`, '--out', notes);
   const written = await readFile(notes, 'utf8');
-  assert.equal(written, `${changelogSection(changelog, pkg.version)}\n`);
+  assert.ok(written.startsWith(`${changelogSection(changelog, pkg.version)}\n`));
+  assert.ok(written.includes(BRAND.androidSigningCertificateSha256), 'the written notes carry the certificate');
 
   assert.throws(
     () => run('--tag', 'v9.9.9', '--out', join(out, 'wrong.md')),

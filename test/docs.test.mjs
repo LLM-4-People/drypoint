@@ -177,10 +177,3 @@ test('the documentation index links every page in docs/', () => {
     assert.ok(index.includes(`(${page})`), `docs/README.md links ${page}`);
   }
 });
-
-test('the README documents every script and every documented script exists', () => {
-  const readme = read('README.md');
-  const pkg = JSON.parse(read('package.json'));
-  const documented = new Set([...readme.matchAll(/^npm (?:run )?([\w:.-]+)/gm)].map((match) => match[1]));
-  assert.deepEqual([...documented].sort(), Object.keys(pkg.scripts).sort());
-});

@@ -22,31 +22,47 @@ lockfile, so `npm ci` does not apply.
 | Leg | Needs | Without it |
 | --- | --- | --- |
 | Most of `npm test` | Node 22+ | — |
-| Three measured layout suites (`actionbar-clearance`, `stage-hint`, `toast-overlay`) | A Chromium binary | Skipped locally, **failed** when `CI=true` |
+| The browser suites (listed below) | A Chromium binary | Skipped locally, **failed** when `CI=true` |
 | `safe-filename` | A JDK (`javac`) | Skipped locally, **failed** when `CI=true` |
 | `npm run build:android` | JDK 17+, Android SDK platform 34+ and build-tools, `python3` | Not run |
 
 Chromium is discovered from `D110_CHROME`, then `CHROME_PATH`, then
 `google-chrome`/`chromium`/`chromium-browser` on `PATH`, then the Playwright
-browser cache. `npm run test:browser` runs just the three measured suites.
+browser cache.
+
+<!-- generated:suites -->
+The browser leg runs **6 tests in 5 files**:
+
+- `actionbar-clearance.test.mjs` (1 test)
+- `content-security.test.mjs` (2 tests)
+- `layout-edges.test.mjs` (1 test)
+- `stage-hint.test.mjs` (1 test)
+- `toast-overlay.test.mjs` (1 test)
+<!-- /generated:suites -->
+
+`npm run test:browser` runs only that list.
 
 ## Commands
 
 ```bash
-npm test                  # the full suite
-npm run test:browser      # the three measured layout suites
+npm test                  # every test file; browser suites need Chromium
+npm run test:unit         # the unit suite only
+npm run test:browser      # only the measured browser suites listed above
 npm run check:precache    # fail when the generated offline files are stale
 npm run build:brand -- --check   # fail when a generated brand file drifted
+npm run docs:generate     # regenerate the marker blocks in README/CONTRIBUTING
 npm run docs:check        # Markdown and issue-template links and anchors
 npm run privacy:check     # private hosts, paths, serials, foreign e-mails
 npm run workflows:check   # action pins, permissions, timeouts
 npm run pages:build       # stage the static site in _site/
-npm run verify            # everything CI requires, in one command
+npm run verify            # the unit gate: brand, precache, privacy, unit, docs, workflows
+npm run verify:all        # verify, then the browser suites
 ```
 
-`npm run verify` is the gate: brand drift, precache drift, privacy, the full
-test suite, documentation links and workflow policy. Run it before you open a
-pull request.
+`npm run verify` is the **unit gate**, not everything CI does. `npm run
+verify:all` adds the measured browser suites. CI also builds and signs the APK
+and proves the build left no tracked or untracked file. Run `verify:all` before
+you open a pull request when the change touches layout.
 
 ## Branch model
 
@@ -80,7 +96,9 @@ These are generated and checked byte-for-byte in CI:
 | `assets/icon.svg` | `brand.json` | `npm run build:brand -- --write` |
 | `android/app/src/main/res/values/strings.xml` | `brand.json` | `npm run build:brand -- --write` |
 | `assets/precache.js` | the real import graph | `npm run build` |
-| the `BUILD` stamp in `sw.js` | the precache content hash | `npm run build` |
+| the `BUILD` and cache-prefix stamps in `sw.js` | the precache hash and `brand.json` | `npm run build` |
+| the `generated:scripts` block in `README.md` | `package.json` | `npm run docs:generate` |
+| the `generated:suites` block in `CONTRIBUTING.md` | `scripts/test-suites.mjs` | `npm run docs:generate` |
 | `_site/` | `collectFiles()` | `npm run pages:build` |
 
 Edit the owner and regenerate. If a generated file changed and you did not touch
