@@ -7,6 +7,39 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
 `package.json` is the one owner of that number: a release tag must be exactly
 `v<version>` and its notes are copied from the matching section below.
 
+## [1.0.1] - 2026-11-16
+
+### Changed
+
+- **The release signing identity is new.** v1.0.0 was signed with a key that
+  was retired before any public install; v1.0.1 is signed by the key whose
+  fingerprint is recorded in `brand.json`. Android treats a different key as a
+  different app, so uninstall v1.0.0 before installing this build.
+- Pages deploys only after the `Checks` run for the same commit succeeds, and
+  its smoke test now requests every precached file instead of four.
+- The APK is byte-reproducible: generated ZIP entries carry a fixed timestamp,
+  and the signing block is the only part a rebuild cannot reproduce.
+- Documentation was corrected against the code: refusal wording, LAN binding,
+  browser support, dpi class versus capability value, ownership and limits.
+
+### Fixed
+
+- Every mutating printer command is gated, not only printing. Unsupported and
+  unknown models are refused with **zero frames**; a sensor refusal reads one
+  heartbeat and prints nothing. Self-test on an experimental model asks first.
+- Undo history is bounded by bytes (32 MiB), so image edits cannot retain
+  hundreds of megabytes.
+- Image hydration reaches a fixed point above the 16-source cache, and the 17th
+  distinct image is refused before insertion.
+- Image import rejects oversized files before reading them.
+- A hostile reported dpi can no longer allocate a giant canvas.
+- The web manifest no longer claims the origin-root app identity, the PWA icons
+  have transparent corners, and the service worker notifies only its own scope.
+- The Android shell disables backup, enforces a CSP, rejects foreign hosts in
+  the asset interceptor, and writes exports with `IS_PENDING`.
+- The test suite is split by the real Chromium import, so only the browser job
+  launches a browser.
+
 ## [1.0.0] - 2026-11-15
 
 First public release: a static, offline editor and printer client for 12 mm

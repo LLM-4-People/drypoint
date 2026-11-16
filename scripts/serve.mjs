@@ -203,13 +203,13 @@ server.listen(port, host, () => {
   const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
   console.log(`${CONFIG.app.name} on http://localhost:${port}/  (pid ${process.pid})`);
   if (loopback) {
-    console.log('  Local only. For a phone: node scripts/serve.mjs --host 0.0.0.0 (or adb reverse).');
+    console.log('  Local only. For a phone, use adb reverse (or a TLS tunnel); a LAN bind is view-only.');
   } else {
     const addresses = Object.values(networkInterfaces())
       .flat()
       .filter((entry) => entry && entry.family === 'IPv4' && !entry.internal)
       .map((entry) => `http://${entry.address}:${port}/`);
     for (const address of addresses) console.log(`  LAN: ${address}`);
-    console.log('  Serving only the app surface. Web Serial needs localhost or HTTPS.');
+    console.log('  Viewing only: Web Serial, Bluetooth and the service worker need localhost or HTTPS.');
   }
 });

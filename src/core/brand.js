@@ -12,5 +12,5 @@ export const BRAND = Object.freeze({
   homepage: "https://llm-4-people.github.io/drypoint/",
   license: "MIT",
   author: "LLM-4-People",
-  androidSigningCertificateSha256: "28e9497fced0ecf6d20b73dbd090e146050ee318cd1e19b6678314d15933148f",
+  androidSigningCertificateSha256: "fe7ac311e139eddfc1a9b1d5afb9e20b7c95693206351a3368ec88dc1f38aece",
 });
