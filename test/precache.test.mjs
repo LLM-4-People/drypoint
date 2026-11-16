@@ -22,6 +22,7 @@ import {
   resolveSurfacePath,
   stampWorker,
   SURFACE_FILES,
+  SW_FILE,
 } from '../scripts/precache.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -292,20 +293,34 @@ test('a root-absolute CSS url is not joined to the stylesheet directory', () => 
   assert.deepEqual(cssReferences('.x { background: url(../assets/icon.svg); }', 'assets/app.css'), ['assets/icon.svg']);
 });
 
-test('the worker stamp is replaced only at the anchored declaration', () => {
-  const decoy = '// const BUILD = \'0123456789abcdef\';\nconst BUILD = \'f'.padEnd(0) + '';
+test('the worker stamps are replaced only at the anchored declarations', () => {
   const source = [
     "// An old stamp quoted in a comment: const BUILD = '0123456789abcdef';",
     "const BUILD = 'fedcba9876543210';",
+    "// const CACHE_PREFIX = 'old-';",
+    "const CACHE_PREFIX = 'old-';",
   ].join('\n');
-  const stamped = stampWorker(source, 'aaaabbbbccccdddd');
-  assert.match(stamped, /^const BUILD = 'aaaabbbbccccdddd';$/m, 'the real declaration is rewritten');
-  assert.match(stamped, /^\/\/ An old stamp quoted in a comment: const BUILD = '0123456789abcdef';$/m, 'the comment is untouched');
+  const stamped = stampWorker(source, 'aaaabbbbccccdddd', 'new-');
+  assert.match(stamped, /^const BUILD = 'aaaabbbbccccdddd';$/m, 'the real build declaration is rewritten');
+  assert.match(stamped, /^const CACHE_PREFIX = 'new-';$/m, 'the real prefix declaration is rewritten');
+  assert.match(stamped, /^\/\/ An old stamp quoted in a comment: const BUILD = '0123456789abcdef';$/m, 'the build comment is untouched');
+  assert.match(stamped, /^\/\/ const CACHE_PREFIX = 'old-';$/m, 'the prefix comment is untouched');
   assert.equal(stamped.match(/^const BUILD = /gm).length, 1);
-  assert.throws(() => stampWorker('// no stamp here\n', 'aaaabbbbccccdddd'), /exactly one build stamp/);
+  assert.equal(stamped.match(/^const CACHE_PREFIX = /gm).length, 1);
+  assert.throws(() => stampWorker('// no stamp here\n', 'aaaabbbbccccdddd', 'new-'), /exactly one build stamp/);
   assert.throws(
-    () => stampWorker(`${source}\nconst BUILD = '1111111111111111';`, 'aaaabbbbccccdddd'),
+    () => stampWorker(`${source}\nconst BUILD = '1111111111111111';`, 'aaaabbbbccccdddd', 'new-'),
     /exactly one build stamp/,
-    'two declarations are ambiguous'
+    'two build declarations are ambiguous'
   );
+  assert.throws(
+    () => stampWorker(`${source}\nconst CACHE_PREFIX = 'second-';`, 'aaaabbbbccccdddd', 'new-'),
+    /exactly one cache prefix stamp/,
+    'two prefix declarations are ambiguous'
+  );
+});
+
+test('the live worker carries the authored cache prefix', async () => {
+  const { BRAND } = await import('../src/core/brand.js');
+  assert.match(read(SW_FILE), new RegExp(`^const CACHE_PREFIX = '${BRAND.cachePrefix}';$`, 'm'));
 });

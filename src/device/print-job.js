@@ -39,7 +39,6 @@ function popcountThirds(row, widthPx) {
 
 /** Run-length encode the raster into row frames. */
 export function encodeRows(rows, widthPx) {
-  const stride = Math.ceil(widthPx / 8);
   const frames = [];
   let index = 0;
 

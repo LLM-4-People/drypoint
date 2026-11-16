@@ -9,7 +9,7 @@ import { createEmitter } from '../core/events.js';
 import { createLogger } from '../core/log.js';
 import { FrameReader } from './frames.js';
 import { OP } from './commands.js';
-import { PrinterError, abortReason, cancelledError, describeErrorCode } from './errors.js';
+import { PrinterError, abortReason, describeErrorCode } from './errors.js';
 
 export class Session {
   /** At most one entry: exchange() serialises callers through #tail. */

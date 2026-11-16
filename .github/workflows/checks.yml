@@ -39,8 +39,8 @@ jobs:
           npm run check:precache
       - name: Privacy gate
         run: npm run privacy:check
-      - name: Test suite
-        run: npm test
+      - name: Unit test suite (the browser suites have their own job)
+        run: npm run test:unit
       - name: Documentation and workflow policy
         # Both are gates, so both run in the merge gate and not only in the
         # path-filtered Docs workflow.

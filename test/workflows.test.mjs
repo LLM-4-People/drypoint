@@ -18,12 +18,10 @@ import {
   checkReleaseWorkflow,
   checkWorkflow,
   checkWorkflows,
-  commandLines,
   jobsOf,
   needsOf,
   topLevelBlock,
   usesReferences,
-  withoutRunBlocks,
 } from '../scripts/check-workflows.mjs';
 import { projectRoot } from './helpers/project-files.mjs';
 import { collectFiles } from '../scripts/precache.mjs';

@@ -65,7 +65,7 @@ jobs:
           set -euo pipefail
           # The same gate a pull request runs: brand, precache, privacy, tests,
           # docs and workflow policy. A tag cannot publish a red commit.
-          npm run verify
+          npm run verify:all
           node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/notes.md"
       - name: Decode the release keystore
         env:

@@ -18,7 +18,6 @@ import {
   renderManifest,
   sdkDirs,
   syncAssets,
-  syncResources,
   UMASK_WRAPPER,
   versionCodeOf,
   withStaging,
@@ -471,9 +470,12 @@ test('classes.dex is appended with a pinned timestamp', async (t) => {
   const dex = join(directory, 'classes.dex');
   await writeFile(dex, Buffer.from('dex\n035\0payload'));
 
-  // The way aapt2 leaves the APK before the dex is added: one entry.
+  // The way aapt2 leaves the APK before the dex is added: one entry. Pin this
+  // fixture entry's timestamp too: `writestr(name, data)` otherwise stamps the
+  // current local second, so two fixture builds made across a clock tick
+  // differed before the dex append and the determinism assertion flaked.
   const base = (path) =>
-    execFileSync('python3', ['-c', 'import sys,zipfile\nwith zipfile.ZipFile(sys.argv[1],"w") as z:\n    z.writestr("AndroidManifest.xml","x")\n', path]);
+    execFileSync('python3', ['-c', 'import sys,zipfile\nwith zipfile.ZipFile(sys.argv[1],"w") as z:\n    info = zipfile.ZipInfo("AndroidManifest.xml",(1980,1,1,0,0,0))\n    z.writestr(info,"x")\n', path]);
   const first = join(directory, 'base.apk');
   const second = join(directory, 'second.apk');
   base(first);

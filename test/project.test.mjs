@@ -45,7 +45,9 @@ test('dead configuration keys stay deleted', () => {
   assert.equal(CONFIG.ui.panelWidthPx, undefined);
   assert.equal(CONFIG.device.autoShutdownDefault, undefined);
   assert.equal(CONFIG.transport.reconnectDelaysMs, undefined);
-  // print.speed is NOT dead: the setting is the job's quality switch.
+  assert.equal(CONFIG.print.speed, undefined, 'the unused SET_PRINT_SPEED bounds are gone');
+  assert.equal(CONFIG.ui.zoom.fitMin, undefined, 'Fit no longer has a minimum');
+  // The setting key survives: it is the job's quality switch, not CONFIG bounds.
   assert.match(read('src/device/print-options.js'), /JOB_SPEED\[settings\['print\.speed'\]\]/);
 });
 
@@ -57,24 +59,50 @@ test('every CONFIG leaf is read outside its own module', () => {
     .filter((file) => (file.endsWith('.js') || file.endsWith('.mjs')) && file !== 'src/core/config.js')
     .map((file) => read(file))
     .join('\n');
+
+  // A leaf is a primitive, an array, or a lookup table whose keys are all
+  // numeric ids. A table is one value: reading it consumes every entry.
   const leaves = [];
   const walk = (value, path) => {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      for (const [key, child] of Object.entries(value)) walk(child, [...path, key]);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      leaves.push(path);
       return;
     }
-    leaves.push(path);
+    const keys = Object.keys(value);
+    if (keys.length > 0 && keys.every((key) => /^\d+$/.test(key))) {
+      leaves.push(path);
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) walk(child, [...path, key]);
   };
   walk(CONFIG, []);
+
+  const escape = (key) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Dotted reads may wrap or space the dots; a reference to a deeper path still
+  // starts with the leaf path, which is what a consumed table needs.
+  const dotted = (path) => `CONFIG${path.map((key) => `\\s*\\.\\s*${escape(key)}`).join('')}`;
+  const consumed = (path) => {
+    if (new RegExp(dotted(path)).test(sources)) return true;
+    const parent = path.slice(0, -1);
+    if (parent.length === 0) return false;
+    // Destructuring (`const { widthPx } = CONFIG.geometry`) is the other real
+    // read form; it names the key only in the pattern, so a leaf scan has to
+    // resolve the parent object explicitly.
+    const pattern = new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${dotted(parent)}(?![\\w.])`, 'g');
+    for (const match of sources.matchAll(pattern)) {
+      const names = match[1].split(',').map((part) => part.trim().split(':')[0].trim());
+      if (names.includes(path.at(-1))) return true;
+    }
+    return false;
+  };
+
   // `storagePrefix` is read by config.js's own storageKey() helper: the prefix
   // has exactly one reader, so no module can build a storage key by hand.
-  const ownerInternal = new Set(['storagePrefix']);
-  // Destructuring (`const { widthPx } = CONFIG.geometry`) and indexing both keep
-  // the key name, so a key nobody reads is exactly a key no source mentions.
+  const ownerInternal = new Set(['app.storagePrefix']);
   const unused = leaves
-    .map((path) => path.at(-1))
-    .filter((key) => !ownerInternal.has(key) && !new RegExp(`\\b${key}\\b`).test(sources));
-  assert.deepEqual([...new Set(unused)], [], 'every CONFIG value has a consumer');
+    .map((path) => path.join('.'))
+    .filter((path) => !ownerInternal.has(path) && !consumed(path.split('.')));
+  assert.deepEqual(unused, [], 'every CONFIG value has a consumer');
 });
 
 test('the label-type table has one owner', () => {
@@ -111,6 +139,17 @@ test('one selector names every setting a print job reads', () => {
   const snapshot = printSettingsSnapshot();
   const printingKeys = SETTINGS_SCHEMA.filter((definition) => definition.group === 'Printing').map((definition) => definition.key);
   assert.deepEqual(Object.keys(snapshot).sort(), printingKeys.sort());
+});
+
+test('the authored brand prefixes reach every consumer', () => {
+  const serve = read('scripts/serve.mjs');
+  const stop = read('scripts/stop.mjs');
+  for (const [file, source] of [['serve', serve], ['stop', stop]]) {
+    assert.match(source, /\$\{BRAND\.cliPrefix\}/, `${file} reads the one CLI prefix`);
+    assert.doesNotMatch(source, /['"`]drypoint:/, `${file} hard-codes no prefix`);
+  }
+  assert.match(read('src/main.js'), /`\$\{CONFIG\.app\.id\}-diagnostics-/);
+  assert.doesNotMatch(read('src/main.js'), /drypoint-diagnostics/);
 });
 
 /* ---------------- H12: product name and theme colours ---------------- */

@@ -50,8 +50,7 @@ export function fitScale({ docWidth, docHeight, availableWidth, availableHeight,
  * The scale a Fit action should apply. One floored path for both layouts: a
  * fitted 1.471 must become 1.4, never 1.5 (which is 16 px wider than the
  * stage), and it may go below the manual zoom floor because Fit promises the
- * whole label, not a comfortable size. `fitMin` no longer bounds Fit; it stays
- * the manual zoom floor.
+ * whole label, not a comfortable size. The manual floor does not bound Fit.
  */
 export function fitZoom({ docWidth, docHeight, availableWidth, availableHeight, compact = false }) {
   const scale = fitScale({ docWidth, docHeight, availableWidth, availableHeight, compact });

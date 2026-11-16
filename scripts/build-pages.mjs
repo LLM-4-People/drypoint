@@ -39,6 +39,18 @@ export const NO_JEKYLL_FILE = '.nojekyll';
 export const SITE_ONLY_FILES = Object.freeze([WORKER_FILE, PRECACHE_FILE, NOT_FOUND_FILE, NO_JEKYLL_FILE]);
 
 /**
+ * The staged copy of each site-only file. The list above is the file set; this
+ * map owns only how each one is produced, so adding a file to the list without
+ * a producer is a loud staging failure rather than a silently omitted file.
+ */
+const SITE_ONLY_CONTENT = Object.freeze({
+  [WORKER_FILE]: null,
+  [PRECACHE_FILE]: null,
+  [NOT_FOUND_FILE]: (basePath) => notFoundPage(basePath),
+  [NO_JEKYLL_FILE]: '',
+});
+
+/**
  * The path a Pages deployment is served from, derived from the one authored
  * homepage. `https://llm-4-people.github.io/drypoint/` → `/drypoint/`.
  *
@@ -107,10 +119,13 @@ export function siteEntries(runtimeFiles, { basePath = pagesBasePath() } = {}) {
   }
   const entries = new Map();
   for (const path of runtimeFiles) entries.set(path, { path, content: null });
-  entries.set(WORKER_FILE, { path: WORKER_FILE, content: null });
-  entries.set(PRECACHE_FILE, { path: PRECACHE_FILE, content: null });
-  entries.set(NOT_FOUND_FILE, { path: NOT_FOUND_FILE, content: notFoundPage(basePath) });
-  entries.set(NO_JEKYLL_FILE, { path: NO_JEKYLL_FILE, content: '' });
+  for (const path of SITE_ONLY_FILES) {
+    if (!Object.prototype.hasOwnProperty.call(SITE_ONLY_CONTENT, path)) {
+      throw new Error(`no staging producer for site-only file ${path}`);
+    }
+    const content = SITE_ONLY_CONTENT[path];
+    entries.set(path, { path, content: typeof content === 'function' ? content(basePath) : content });
+  }
   for (const path of DISTRIBUTION_FILES) entries.set(path, { path, content: null });
   // Codepoint order, like every other sorted list in the repository: a locale
   // must never decide whether two builds produce the same tree.

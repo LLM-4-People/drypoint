@@ -20,7 +20,7 @@ import { createCanvasEditor } from './editor/canvas.js';
 import { pickImageFile } from './editor/image-import.js';
 import { createLayersPanel } from './ui/layers.js';
 import { createInspector } from './ui/inspector.js';
-import { clampZoom, fitZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom, zoomLimits } from './ui/stage-layout.js';
+import { clampZoom, fitZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
 import { createPrintPanel } from './ui/print-panel.js';
 import { createPrintFlow, printButtonState } from './ui/print-flow.js';
 import { openSettingsSheet } from './ui/settings-sheet.js';
@@ -45,6 +45,7 @@ const ui = {
   deviceButton: $('#deviceButton'),
   deviceDot: $('#deviceDot'),
   deviceLabel: $('#deviceLabel'),
+  deviceShortLabel: $('#deviceShortLabel'),
   settingsButton: $('#settingsButton'),
   rail: $('#toolRail'),
   layerList: $('#layerList'),
@@ -187,7 +188,17 @@ function publishActionbarClearance() {
   const clearance = Math.ceil(actionbar.offsetHeight) + ACTIONBAR_GAP_PX;
   document.documentElement.style.setProperty('--actionbar-clearance', `${clearance}px`);
 }
-if (actionbar && typeof ResizeObserver === 'function') new ResizeObserver(publishActionbarClearance).observe(actionbar);
+// ResizeObserver defaults to the content box; a safe-area inset changes the
+// bar's padding and border-box height without changing its content box, which
+// is why the inset-only change used to leave the token stale.
+if (actionbar && typeof ResizeObserver === 'function') {
+  new ResizeObserver(publishActionbarClearance).observe(actionbar, { box: 'border-box' });
+}
+// A safe-area inset can change without the bar's own box changing first (a
+// navigation bar sliding away, a rotation); the viewport events make the
+// measured token follow the inset instead of only the action-bar observer.
+on(window, 'resize', publishActionbarClearance);
+window.visualViewport?.addEventListener('resize', publishActionbarClearance);
 publishActionbarClearance();
 
 /**
@@ -242,15 +253,18 @@ function stageViewport() {
   return { availableWidth: ui.stageScroll.clientWidth, availableHeight: cap };
 }
 
-/** Largest scale at which the label fits the stage, for the current layout. */
-function compactFitZoom() {
-  if (!compactQuery.matches) return null;
+/**
+ * Largest scale at which the label fits the stage, for the current layout.
+ * Desktop has no compact max-height cap, but a default 200% scale still clips a
+ * label between 901 and 1100 px, so the same fit owner serves both layouts.
+ */
+function stageFitZoom() {
   const document = controller.document;
   return fitZoom({
     docWidth: documentWidthPx(document),
     docHeight: documentHeightPx(document),
     ...stageViewport(),
-    compact: true,
+    compact: compactQuery.matches,
   });
 }
 
@@ -261,7 +275,7 @@ function clampZoomToStage() {
   // A deliberate user zoom survives a plain resize; the stage only refits its
   // own automatic scale, or when the breakpoint itself changed the stage size.
   if (!shouldClampZoom({ zoom, autoZoom, breakpointChanged })) return;
-  const fit = compactFitZoom();
+  const fit = stageFitZoom();
   if (fit === null || (zoom <= fit && !breakpointChanged)) return;
   autoZoom = fit;
   applyZoom(fit, { persist: false });
@@ -280,7 +294,10 @@ function refitForDocument() {
   if (key === fitKey) return;
   fitKey = key;
   if (adjustingZoom) return;
-  const fit = compactFitZoom();
+  // On desktop a document-size change only re-fits while the automatic scale
+  // is still on screen; a deliberate user zoom is not replaced.
+  if (!compactQuery.matches && zoom !== autoZoom) return;
+  const fit = stageFitZoom();
   if (fit === null) return;
   adjustingZoom = true;
   autoZoom = fit;
@@ -497,13 +514,11 @@ function applyTemplate(template) {
 
 /* ---------------- zoom ---------------- */
 
-function setZoom(next) {
-  // The manual controls keep a comfortable floor; Fit is the one path allowed
-  // below it (a whole label is better than a clipped one). The floor follows
-  // the current value, so Zoom out at a 20% Fit never jumps up to 50%.
-  const limits = zoomLimits({ compact: compactQuery.matches });
-  const min = Math.min(zoom, limits.min);
-  applyZoom(Math.min(limits.max, Math.max(min, Math.round(next * 10) / 10)), { persist: true });
+function setZoom(delta) {
+  // One quantized manual step owns the floor, the cap and the rounding. The
+  // floor follows the value on screen, so Zoom out at a 20% Fit never jumps to
+  // the 50% manual floor.
+  applyZoom(stepZoom(zoom, delta, { compact: compactQuery.matches }), { persist: true });
 }
 
 /**
@@ -543,9 +558,9 @@ function updateZoomLabel() {
 const zoomWrap = el(
   'div',
   { class: 'zoom' },
-  el('button', { type: 'button', title: 'Zoom out', 'aria-label': 'Zoom out', onClick: () => setZoom(zoom - CONFIG.ui.zoom.step) }, icon('zoomOut', { size: 15 })),
+  el('button', { type: 'button', title: 'Zoom out', 'aria-label': 'Zoom out', onClick: () => setZoom(-CONFIG.ui.zoom.step) }, icon('zoomOut', { size: 15 })),
   el('span', { class: 'zoom-value' }, `${Math.round(zoom * 100)}%`),
-  el('button', { type: 'button', title: 'Zoom in', 'aria-label': 'Zoom in', onClick: () => setZoom(zoom + CONFIG.ui.zoom.step) }, icon('zoomIn', { size: 15 })),
+  el('button', { type: 'button', title: 'Zoom in', 'aria-label': 'Zoom in', onClick: () => setZoom(CONFIG.ui.zoom.step) }, icon('zoomIn', { size: 15 })),
   el('button', { type: 'button', title: 'Fit', 'aria-label': 'Fit to screen', onClick: applyFitZoom }, icon('fit', { size: 15 }))
 );
 ui.zoomControls.append(zoomWrap);
@@ -611,6 +626,7 @@ function setDeviceState() {
   const status = describeDeviceStatus(device.state);
   ui.deviceDot.dataset.state = status.dot;
   ui.deviceLabel.textContent = status.label;
+  ui.deviceShortLabel.textContent = status.shortLabel;
   ui.deviceButton.title = status.title;
   // The accessible name must contain the visible text (WCAG 2.5.3).
   ui.deviceButton.setAttribute('aria-label', status.ariaLabel);
@@ -659,6 +675,13 @@ device.events.on('printer-error', (error) => {
 
 device.events.on('disconnected', () => {
   setDeviceState();
+  // A link that drops mid-job leaves the raster and the printer state unknown:
+  // say so instead of reporting an ordinary disconnect.
+  if (printFlow.busy) {
+    setStatus('Disconnected during print');
+    toast('Disconnected during print: the label may be incomplete', { tone: 'error' });
+    return;
+  }
   setStatus('Disconnected');
 });
 
@@ -860,7 +883,7 @@ function openLogViewer() {
 }
 
 function exportDiagnostics() {
-  const saved = downloadJson(`drypoint-diagnostics-${Date.now()}.json`, exportLogReport({ capabilities: device.state.capabilities }));
+  const saved = downloadJson(`${CONFIG.app.id}-diagnostics-${Date.now()}.json`, exportLogReport({ capabilities: device.state.capabilities }));
   if (saved === false) toast('Could not save the diagnostics report', { tone: 'error' });
   else toast('Diagnostics exported', { tone: 'ok' });
 }
@@ -945,7 +968,7 @@ if (settingsIssue) toast(settingsIssue.message, { tone: 'error' });
 // and then clamping would resize the canvas after the first frame. An
 // automatic boot fit is not persisted: the shared zoom key belongs to the
 // user's last deliberate choice, not to this viewport.
-const initialFit = compactFitZoom();
+const initialFit = stageFitZoom();
 if (initialFit !== null && zoom > initialFit) {
   zoom = initialFit;
   autoZoom = initialFit;

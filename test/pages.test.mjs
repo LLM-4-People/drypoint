@@ -30,7 +30,7 @@ import {
 import { collectFiles } from '../scripts/precache.mjs';
 import { DISTRIBUTION_FILES } from '../scripts/lib/distribution.mjs';
 import { BRAND } from '../src/core/brand.js';
-import { projectRoot } from './helpers/project-files.mjs';
+import { projectRoot, readProjectFile } from './helpers/project-files.mjs';
 
 async function walk(directory, prefix = '') {
   const files = [];
@@ -267,4 +267,17 @@ test('the default output directory is the git-ignored _site', async () => {
   assert.equal(SITE_DIR, '_site');
   const ignored = await readFile(join(projectRoot, '.gitignore'), 'utf8');
   assert.match(ignored, /^_site\/$/m);
+});
+
+
+test('siteEntries consumes the exported site-only file list', () => {
+  const source = readProjectFile('scripts/build-pages.mjs');
+  const body = source.match(/export function siteEntries\([\s\S]*?\n\}/)?.[0];
+  assert.ok(body, 'siteEntries exists');
+  assert.match(body, /for \(const path of SITE_ONLY_FILES\)/, 'the staging loop reads the exported list');
+  assert.doesNotMatch(
+    body,
+    /entries\.set\((?:WORKER_FILE|PRECACHE_FILE|NOT_FOUND_FILE|NO_JEKYLL_FILE)/,
+    'no second copy of the file set'
+  );
 });

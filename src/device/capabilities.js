@@ -51,9 +51,9 @@ export function capabilityState(value) {
 export const CONNECTION_STATUSES = Object.freeze(['idle', 'connecting', 'connected', 'error']);
 
 const OFFLINE_TEXT = Object.freeze({
-  idle: { dot: 'offline', label: 'Connect printer', title: 'Connect printer', panelLabel: 'Offline' },
-  connecting: { dot: 'connecting', label: 'Connecting…', title: 'Connecting…', panelLabel: 'Connecting…' },
-  error: { dot: 'error', label: 'Connect printer', title: 'Connect printer', panelLabel: 'Connection error' },
+  idle: { dot: 'offline', label: 'Connect printer', shortLabel: 'Connect', title: 'Connect printer', panelLabel: 'Offline' },
+  connecting: { dot: 'connecting', label: 'Connecting…', shortLabel: 'Connecting…', title: 'Connecting…', panelLabel: 'Connecting…' },
+  error: { dot: 'error', label: 'Connect printer', shortLabel: 'Connect', title: 'Connect printer', panelLabel: 'Connection error' },
 });
 
 /**
@@ -70,11 +70,15 @@ export function describeDeviceStatus(state = {}) {
     const model = reportedModel === 'Unknown' ? 'Unknown model' : reportedModel ?? 'Printer';
     const serial = state.capabilities?.serial;
     const label = `${model}${serial ? ` · ${serial}` : ''}`;
+    // The narrow header pill shows only the model, never a truncated
+    // "Connect p…"; the full label and the accessible name keep the serial.
+    const shortLabel = reportedModel === 'Unknown' ? 'Unknown' : reportedModel ?? 'Printer';
     const transport = state.transportLabel ? ` · ${state.transportLabel}` : '';
     return {
       status,
       dot: 'online',
       label,
+      shortLabel,
       title: `Open printer controls${transport}`,
       // The accessible name contains the visible text (WCAG 2.5.3).
       ariaLabel: `${label} — open printer controls`,

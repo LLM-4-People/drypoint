@@ -612,6 +612,25 @@ test('summariseWarnings is the one footer/dialog summary', () => {
   assert.equal(summariseWarnings(['a', 'b'], { limit: 1 }), 'a · … and 1 more');
 });
 
+test('the summary counts only real warnings, never its own count entry', () => {
+  const elements = Array.from({ length: 30 }, (_, index) =>
+    createElement(ELEMENT_TYPES.TEXT, { name: `Box ${index}`, text: 'x', x: 4, y: 4, w: 88, h: 40 })
+  );
+  const warnings = layoutWarnings(documentWith(elements, 200));
+  assert.equal(warnings.length, CONFIG.bounds.maxWarnings + 1, '20 real warnings plus one count entry');
+  assert.match(warnings.at(-1), /^… and 415 more$/);
+
+  // The dialog limit equals the real-warning cap: the existing count entry
+  // must pass through, not become "… and 1 more".
+  const full = summariseWarnings(warnings, { limit: CONFIG.bounds.maxWarnings });
+  assert.equal(full, warnings.join(' · '));
+  assert.equal((full.match(/… and/g) ?? []).length, 1, 'one count entry');
+  assert.doesNotMatch(full, /and 1 more/);
+
+  // A tighter footer summary still reports every suppressed warning once.
+  assert.match(summariseWarnings(warnings, { limit: 3 }), /… and 432 more$/);
+});
+
 /* ---------------- empty text (R5B-8) ---------------- */
 
 test('an empty text element is reported instead of printing a blank label', () => {

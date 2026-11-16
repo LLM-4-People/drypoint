@@ -11,6 +11,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { networkInterfaces } from 'node:os';
 
+import { BRAND } from '../src/core/brand.js';
 import { CONFIG } from '../src/core/config.js';
 import { isAllowed, OUTPUT, SW_FILE, resolveSurfacePath, writePrecache } from './precache.mjs';
 import {
@@ -31,7 +32,7 @@ try {
   port = resolvePort();
   host = resolveHost();
 } catch (error) {
-  console.error(`drypoint: ${error.message}`);
+  console.error(`${BRAND.cliPrefix}: ${error.message}`);
   process.exit(1);
 }
 const pidFile = pidFileFor(root, port);
@@ -56,15 +57,15 @@ async function claimPort() {
     port,
     deps: {
       write: writeTrackedServer,
-      warn: (message) => console.warn(`drypoint: ${message}`),
+      warn: (message) => console.warn(`${BRAND.cliPrefix}: ${message}`),
     },
   });
   if (claimed.ok) return;
   if (claimed.reason === 'tracked') {
-    console.error(`drypoint: port ${port} is already tracked by pid ${claimed.record.pid} (started ${claimed.record.startedAt ?? 'unknown'}).`);
+    console.error(`${BRAND.cliPrefix}: port ${port} is already tracked by pid ${claimed.record.pid} (started ${claimed.record.startedAt ?? 'unknown'}).`);
     console.error(`      Stop it with: node scripts/stop.mjs --port ${port}`);
   } else {
-    console.error(`drypoint: could not claim ${pidFile} for port ${port}`);
+    console.error(`${BRAND.cliPrefix}: could not claim ${pidFile} for port ${port}`);
   }
   process.exit(1);
 }
@@ -119,7 +120,7 @@ const server = createServer(async (request, response) => {
       response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('Not found');
       return;
     }
-    console.error(`drypoint: refused ${key}: ${error.message}`);
+    console.error(`${BRAND.cliPrefix}: refused ${key}: ${error.message}`);
     response.writeHead(403).end('Forbidden');
     return;
   }
@@ -138,7 +139,7 @@ const server = createServer(async (request, response) => {
       response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('Not found');
       return;
     }
-    console.error(`drypoint: could not read ${relative}: ${error.message}`);
+    console.error(`${BRAND.cliPrefix}: could not read ${relative}: ${error.message}`);
     response.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' }).end('Internal error');
   }
 });
@@ -148,16 +149,16 @@ server.on('error', async (error) => {
   // this process never started listening.
   if (!server.listening) await removeTrackedServerIfOwned(pidFile, process.pid);
   if (error.code === 'EADDRINUSE') {
-    console.error(`drypoint: port ${port} is already in use by another process.`);
+    console.error(`${BRAND.cliPrefix}: port ${port} is already in use by another process.`);
     console.error(`      If it is this project's server: node scripts/stop.mjs --port ${port}`);
     console.error(`      If it is untracked, find it with "ss -ltnp 'sport = :${port}'" (Linux) or`);
     console.error(`      "netstat -ano | findstr :${port}" (Windows) and stop it with: node scripts/stop.mjs --pid <pid>`);
     console.error(`      Or use another port: node scripts/serve.mjs --port ${port + 1}
       (Windows: npm start -- --port ${port + 1} --host 127.0.0.1)`);
   } else if (error.code === 'EACCES') {
-    console.error(`drypoint: not allowed to listen on port ${port}. Use PORT=8080 or higher.`);
+    console.error(`${BRAND.cliPrefix}: not allowed to listen on port ${port}. Use PORT=8080 or higher.`);
   } else {
-    console.error(`drypoint: server failed: ${error.message}`);
+    console.error(`${BRAND.cliPrefix}: server failed: ${error.message}`);
   }
   process.exitCode = 1;
 });
@@ -166,7 +167,7 @@ let shuttingDown = false;
 async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`\ndrypoint: ${signal}; stopping server`);
+  console.log(`\n${BRAND.cliPrefix}: ${signal}; stopping server`);
   await new Promise((resolveClose) => {
     const timer = setTimeout(resolveClose, 2000);
     timer.unref?.();
@@ -192,7 +193,7 @@ try {
   allowed = new Set([...built.files, SW_FILE, OUTPUT]);
   console.log(`precache: ${built.files.length} files (version ${built.version})`);
 } catch (error) {
-  console.error(`drypoint: could not generate the offline manifest: ${error.message}`);
+  console.error(`${BRAND.cliPrefix}: could not generate the offline manifest: ${error.message}`);
   process.exit(1);
 }
 

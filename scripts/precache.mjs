@@ -22,6 +22,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { lexJavaScript } from './lib/js-scan.mjs';
+import { BRAND } from '../src/core/brand.js';
 import { CONFIG } from '../src/core/config.js';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,6 +31,8 @@ export const SW_FILE = 'sw.js';
 // Anchored: a comment that happens to contain a plausible stamp must never be
 // rewritten in place of the real declaration.
 const BUILD_PATTERN = /^const BUILD = '[0-9a-f]{16}';$/m;
+// The cache prefix is authored in brand.json, not in this worker.
+const CACHE_PREFIX_PATTERN = /^const CACHE_PREFIX = '[a-z0-9-]+';$/m;
 
 /** Files the service worker cannot work without; the generator always adds them. */
 export const REQUIRED_FILES = Object.freeze(['index.html', 'src/main.js', 'assets/app.css', 'manifest.webmanifest']);
@@ -329,16 +332,27 @@ export function renderPrecache({ version, files, required, digests, navigationTi
 }
 
 /**
- * Replace the worker's build stamp, requiring exactly one declaration. The
- * pattern is anchored to a whole line so a comment quoting an old stamp can
- * never be rewritten while the real constant stays stale.
+ * Replace the worker's build and cache-prefix stamps, requiring exactly one
+ * declaration of each. The patterns are anchored to whole lines so a comment
+ * quoting an old value can never be rewritten while the real constant stays
+ * stale. Both facts are generated: the build hash from the file graph, the
+ * prefix from brand.json.
  */
-export function stampWorker(swSource, version) {
-  const matches = [...String(swSource).matchAll(new RegExp(BUILD_PATTERN.source, 'gm'))];
-  if (matches.length !== 1) {
-    throw new Error(`${SW_FILE} must contain exactly one build stamp (${BUILD_PATTERN}), found ${matches.length}`);
+export function stampWorker(swSource, version, cachePrefix = BRAND.cachePrefix) {
+  const source = String(swSource);
+  const stamps = [
+    [BUILD_PATTERN, 'build', `const BUILD = '${version}';`],
+    [CACHE_PREFIX_PATTERN, 'cache prefix', `const CACHE_PREFIX = '${cachePrefix}';`],
+  ];
+  let stamped = source;
+  for (const [pattern, label, replacement] of stamps) {
+    const matches = [...source.matchAll(new RegExp(pattern.source, 'gm'))];
+    if (matches.length !== 1) {
+      throw new Error(`${SW_FILE} must contain exactly one ${label} stamp (${pattern}), found ${matches.length}`);
+    }
+    stamped = stamped.replace(pattern, replacement);
   }
-  return String(swSource).replace(BUILD_PATTERN, `const BUILD = '${version}';`);
+  return stamped;
 }
 
 /** Build the manifest and the matching worker stamp in memory. */
@@ -353,7 +367,7 @@ export async function buildPrecache() {
     navigationTimeoutMs: CONFIG.offline.navigationTimeoutMs,
   });
   const swSource = await readFile(join(ROOT, SW_FILE), 'utf8');
-  const swContent = stampWorker(swSource, version);
+  const swContent = stampWorker(swSource, version, BRAND.cachePrefix);
   return { files, version, digests, content, swContent };
 }
 

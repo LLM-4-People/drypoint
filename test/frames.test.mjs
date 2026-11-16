@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FrameReader, crc8, encodeFrame } from '../src/protocol/frames.js';
+import { FrameReader, crc8, encodeFrame, frameIsValid } from '../src/protocol/frames.js';
 import { CONFIG } from '../src/core/config.js';
 import { fromHex, toHex } from '../src/core/format.js';
 
@@ -92,4 +92,28 @@ test('real capability reply parses through the reader', () => {
   const frames = reader.push(encodeFrame(0xbf, [...payload]));
   assert.equal(frames.length, 1);
   assert.equal(frames[0].data.length, 90);
+});
+
+
+test('one validity predicate owns the CRC for push and resynchronisation', () => {
+  const good = encodeFrame(0x24, [0x02]);
+  assert.equal(frameIsValid(good, 0), true);
+
+  const bad = encodeFrame(0x23, [0x01]);
+  bad[4] ^= 0xff;
+  assert.equal(frameIsValid(bad, 0), false, 'a changed payload byte invalidates the CRC');
+
+  // push() must not deliver the corrupted frame on its own.
+  const single = new FrameReader();
+  assert.deepEqual(single.push(bad), []);
+  assert.equal(single.dropped, 1);
+
+  // The resync scan runs when a corrupted length byte makes the first
+  // candidate incomplete. It must step over the CRC-invalid frame and land on
+  // the valid one that follows.
+  const resync = new FrameReader();
+  const prefix = Uint8Array.from([0x55, 0x55, 0xff]);
+  const frames = resync.push(Uint8Array.from([...prefix, ...bad, ...good]));
+  assert.deepEqual(frames.map((frame) => frame.cmd), [0x24]);
+  assert.deepEqual([...frames[0].data], [0x02]);
 });

@@ -233,21 +233,27 @@ export function droppedSourceNotice() {
  * and the inspector all pass through here, so one owner decides how much text a
  * field may carry. An image source longer than the cap is dropped whole:
  * truncating a data URL would leave a corrupt image that looks valid.
- * @returns {{element:object, droppedSrc:boolean}}
+ * @returns {{element:object, droppedSrc:boolean, truncated:boolean}}
  */
 export function boundElementText(element) {
-  if (typeof element.name === 'string') element.name = clampText(element.name, maxNameChars);
+  let truncated = false;
+  const clampField = (value, max) => {
+    const text = clampText(value, max);
+    if (text.length !== value.length) truncated = true;
+    return text;
+  };
+  if (typeof element.name === 'string') element.name = clampField(element.name, maxNameChars);
   if (element.type === ELEMENT_TYPES.TEXT && typeof element.text === 'string') {
-    element.text = clampText(element.text, maxTextChars);
+    element.text = clampField(element.text, maxTextChars);
   }
   if ((element.type === ELEMENT_TYPES.QR || element.type === ELEMENT_TYPES.BARCODE) && typeof element.value === 'string') {
-    element.value = clampText(element.value, maxValueChars);
+    element.value = clampField(element.value, maxValueChars);
   }
   if (element.type === ELEMENT_TYPES.IMAGE && typeof element.src === 'string' && element.src.length > maxSrcChars) {
     element.src = '';
-    return { element, droppedSrc: true };
+    return { element, droppedSrc: true, truncated };
   }
-  return { element, droppedSrc: false };
+  return { element, droppedSrc: false, truncated };
 }
 
 /** Normalise one element against its type defaults without mutating the input. */
@@ -303,7 +309,7 @@ function normaliseElement(input, defaults) {
     default:
       break;
   }
-  return boundElementText(element).element;
+  return boundElementText(element);
 }
 
 /**
@@ -332,8 +338,13 @@ export function validateDocument(input) {
   const seen = new Set();
   let droppedElements = 0;
   let droppedSources = 0;
+  let droppedUnknown = 0;
+  let truncatedElements = 0;
   for (const raw of Array.isArray(source.elements) ? source.elements : []) {
-    if (!raw || !Object.values(ELEMENT_TYPES).includes(raw.type)) continue;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Object.values(ELEMENT_TYPES).includes(raw.type)) {
+      droppedUnknown++;
+      continue;
+    }
     // The input cap comes before the expensive normalisation: a pasted
     // 2000-element document must not cost a normalise pass per element.
     if (document.elements.length >= maxElements) {
@@ -341,16 +352,31 @@ export function validateDocument(input) {
       continue;
     }
     if (raw.type === ELEMENT_TYPES.IMAGE && typeof raw.src === 'string' && raw.src.length > maxSrcChars) droppedSources++;
-    const element = normaliseElement(raw, defaultsFor(raw.type));
+    const { element, truncated } = normaliseElement(raw, defaultsFor(raw.type));
+    if (truncated) truncatedElements++;
     if (seen.has(element.id)) element.id = createId(raw.type);
     seen.add(element.id);
     document.elements.push(clampElement(element, document));
+  }
+  if (droppedUnknown) {
+    notices.push(
+      droppedUnknown === 1
+        ? '1 element was dropped because it is not a valid element for this version.'
+        : `${droppedUnknown} elements were dropped because they are not valid elements for this version.`
+    );
   }
   if (droppedElements) {
     notices.push(
       droppedElements === 1
         ? `1 element was dropped: a label holds at most ${maxElements} elements.`
         : `${droppedElements} elements were dropped: a label holds at most ${maxElements} elements.`
+    );
+  }
+  if (truncatedElements) {
+    notices.push(
+      truncatedElements === 1
+        ? '1 element had text shortened to fit the label limits.'
+        : `${truncatedElements} elements had text shortened to fit the label limits.`
     );
   }
   if (droppedSources) {

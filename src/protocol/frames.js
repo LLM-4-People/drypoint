@@ -47,6 +47,31 @@ export function encodeFrame(cmd, data = []) {
 }
 
 /**
+ * True when a complete, checksum-valid frame starts at `index`.
+ *
+ * The one validity predicate: the push loop and the resynchronisation scan
+ * must agree, or a frame the scan trusts is dropped by the loop (or worse, a
+ * corrupted frame is delivered because only one path checked the CRC).
+ *
+ * @param {Uint8Array} buffer
+ * @param {number} index offset of the candidate frame head
+ */
+export function frameIsValid(buffer, index) {
+  const { frameHead, frameTail } = CONFIG.protocol;
+  if (!buffer || index < 0 || index + 7 > buffer.length) return false;
+  if (buffer[index] !== frameHead || buffer[index + 1] !== frameHead) return false;
+  const length = buffer[index + 3];
+  if (index + length + 7 > buffer.length) return false;
+  const cmd = buffer[index + 2];
+  const data = buffer.subarray(index + 4, index + 4 + length);
+  return (
+    buffer[index + 4 + length] === crc8([cmd, length, ...data]) &&
+    buffer[index + 5 + length] === frameTail &&
+    buffer[index + 6 + length] === frameTail
+  );
+}
+
+/**
  * Incremental parser. Transports deliver arbitrary fragments, so bytes are
  * buffered until a complete, checksum-valid frame is available. Bad frames are
  * skipped one byte at a time to resynchronise.
@@ -76,30 +101,13 @@ export class FrameReader {
     return -1;
   }
 
-  /** A frame at `index` is complete and checksum-valid. */
-  #isCompleteFrame(index) {
-    const { frameTail } = CONFIG.protocol;
-    if (index + 4 > this.#buffer.length) return false;
-    const length = this.#buffer[index + 3];
-    const total = length + 7;
-    if (index + total > this.#buffer.length) return false;
-    const cmd = this.#buffer[index + 2];
-    const data = this.#buffer.subarray(index + 4, index + 4 + length);
-    return (
-      this.#buffer[index + 4 + length] === crc8([cmd, length, ...data]) &&
-      this.#buffer[index + 5 + length] === frameTail &&
-      this.#buffer[index + 6 + length] === frameTail
-    );
-  }
-
-  /**
-   * Index of the next complete, valid frame at or after `from`, or -1.
+  /** Index of the next complete, valid frame at or after `from`, or -1.
    * Used to escape a candidate whose length byte was corrupted.
    */
   #findCompleteFrame(from) {
     let index = this.#findHead(from);
     while (index >= 0) {
-      if (this.#isCompleteFrame(index)) return index;
+      if (frameIsValid(this.#buffer, index)) return index;
       index = this.#findHead(index + 1);
     }
     return -1;
@@ -110,7 +118,7 @@ export class FrameReader {
     if (!chunk?.length) return [];
     this.#buffer = concatBytes(this.#buffer, chunk);
     const frames = [];
-    const { frameHead, frameTail } = CONFIG.protocol;
+    const { frameHead } = CONFIG.protocol;
 
     for (;;) {
       const start = this.#findHead();
@@ -138,10 +146,7 @@ export class FrameReader {
 
       const cmd = this.#buffer[2];
       const data = this.#buffer.slice(4, 4 + length);
-      const valid =
-        this.#buffer[4 + length] === crc8([cmd, length, ...data]) &&
-        this.#buffer[5 + length] === frameTail &&
-        this.#buffer[6 + length] === frameTail;
+      const valid = frameIsValid(this.#buffer, 0);
 
       if (!valid) {
         this.#dropped += 1;
