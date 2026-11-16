@@ -298,6 +298,55 @@ test('the transfer-memory limit is stated with the bound and the mitigation', ()
   assert.match(read('docs/ANDROID.md'), /about 65 MB of JSON/);
 });
 
+test('the release runbook covers every failed or partial outcome', () => {
+  const doc = read('docs/ARCHITECTURE.md');
+  const section = doc.slice(doc.indexOf('### Failed or partial releases'), doc.indexOf('Every workflow pins'));
+  assert.ok(section.length > 0, 'the runbook exists');
+  for (const phrase of [
+    'Re-run the failed job',
+    'Do not delete or recreate the tag',
+    'asset is missing or wrong',
+    'Immutable releases',
+    'signature or an asset digest does not match',
+    'Pages failed after a green',
+    'Pages has no per-deploy rollback',
+    'provenance workflow ref refs/heads/main',
+    'git rev-list -n 1',
+  ]) {
+    assert.ok(section.includes(phrase), `the runbook states: ${phrase}`);
+  }
+
+  // The tag example is derived from package.json, never a past/future literal.
+  assert.match(doc, /v<package\.json version>/);
+  assert.match(doc, /git tag "v\$\{version\}"/);
+  assert.match(doc, /must not already exist/);
+  assert.doesNotMatch(doc, /git tag v1\.0\.\d/);
+
+  const history = doc.slice(doc.indexOf('### Historical release bodies'));
+  assert.match(history, /--tag v1\.0\.0 --historical --out/);
+  assert.match(history, /gh api repos\/LLM-4-People\/drypoint\/releases\/tags\/v1\.0\.0/);
+  assert.match(history, /never used by the release workflow/);
+});
+
+test('the issue templates target the current release line, not 1.0.0', () => {
+  const bug = read('.github/ISSUE_TEMPLATE/bug_report.yml');
+  const question = read('.github/ISSUE_TEMPLATE/question.yml');
+  assert.match(bug, /placeholder: 1\.0\.2 or a commit SHA/);
+  assert.match(bug, /latest release tag from the Releases page/);
+  assert.doesNotMatch(bug, /placeholder: 1\.0\.0/);
+  assert.doesNotMatch(question, /placeholder: Web app 1\.0\.0/);
+  assert.match(question, /Web app 1\.0\.2/);
+});
+
+test('SECURITY.md does not present 1.0.0 as a supported install', () => {
+  const security = read('SECURITY.md');
+  const table = security.slice(security.indexOf('## Supported versions'), security.indexOf('## Reporting a vulnerability'));
+  assert.match(table, /\| 1\.0\.0 \| No — do not install it\./);
+  assert.match(table, /signed with a retired key/);
+  assert.match(table, /uninstalling it deletes every label/);
+  assert.doesNotMatch(table, /\| 1\.x \| Yes/);
+});
+
 test('the documentation index links every page in docs/', () => {
   const index = read('docs/README.md');
   for (const page of ['ARCHITECTURE.md', 'ANDROID.md', 'PRINTERS.md', 'PROTOCOL.md']) {

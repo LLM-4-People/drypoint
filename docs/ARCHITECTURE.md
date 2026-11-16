@@ -625,11 +625,13 @@ verifies.
    with a real tag builds and signs, and publishes only when `publish=true`.
    This is the pre-tag dry-run mode, not a fallback: v1.0.2 predates the tracked
    lockfile, so its tree cannot satisfy `npm ci`; the merge commit can.
-4. Tag that commit and push the tag:
+4. Tag that commit and push the tag. The tag is `v<package.json version>` and
+   must not already exist; a release tag is never moved, reused or recreated:
 
    ```bash
-   git tag v1.0.3
-   git push origin v1.0.3
+   version="$(node -p "require('./package.json').version")"
+   git tag "v${version}"
+   git push origin "v${version}"
    ```
 
 5. `release.yml` triggers on the completed `Checks` run for a push (and on
@@ -691,6 +693,59 @@ be served as `application/manifest+json`.
 `workflow_dispatch` is the deliberate operator override: it checks out the
 constant `refs/heads/main` and deploys the current `main` without a `Checks`
 run. It exists to recover a deployment, not to prove a commit.
+
+### Failed or partial releases
+
+The release authority is the `main`-defined workflow: a tag push only triggers
+it, and a published body names the commit it built (`Built from tag … at commit
+…; provenance workflow ref refs/heads/main.`). The tag and assets of a published
+release are immutable; only its title, notes and pre-release flag can change.
+
+- **The tag exists but the release workflow failed.** Re-run the failed job
+  (`gh run rerun <run-id> --failed`). Do not delete or recreate the tag: an
+  immutable release locks its tag, and the tag ruleset blocks a rewrite. If the
+  tag itself is wrong, bump `package.json`, add the changelog section and cut a
+  new tag.
+- **The release exists but an asset is missing or wrong.** Immutable releases
+  cannot have assets replaced or deleted. Do not attach a second asset to the
+  same tag: cut a new patch version, publish it, and mark the bad release with a
+  note (and as a pre-release when it must not be "latest").
+- **The signature or an asset digest does not match.** Stop; do not publish.
+  Treat the signing key as suspect until the certificate pin in `brand.json`,
+  the environment `RELEASE_CERT_SHA256` and the checksum agree. A mismatch is a
+  security incident, not a retry.
+- **Pages failed after a green `Checks` run.** Re-run the failed Pages job for
+  the same SHA (or re-run the Pages workflow); its build asserts that `main` is
+  still the validated commit. The documented `workflow_dispatch` override
+  deploys the current `main` without a `Checks` run and is only for recovery.
+- **Rollback.** Pages has no per-deploy rollback. Redeploy the previous commit
+  with `workflow_dispatch`, record the commit and the reason, and let the next
+  green `Checks` run deploy forward. A published release is never rolled back;
+  it is superseded by a new patch.
+- **Verify the tag/commit binding.** The release body carries the tag, the
+  40-character commit and `refs/heads/main`. Check that
+  `git rev-list -n 1 "v<version>"` is that commit; if it is not, the body and the
+  tag disagree and the release must not be trusted.
+
+### Historical release bodies
+
+`CHANGELOG.md` is the one owner of each release body. A published body can be
+regenerated for comparison from the current changelog:
+
+```bash
+gh api repos/LLM-4-People/drypoint/releases/tags/v1.0.0 --jq .body > /tmp/v1.0.0.published.md
+node scripts/release-notes.mjs --tag v1.0.0 --historical --out /tmp/v1.0.0.md
+diff -u /tmp/v1.0.0.published.md /tmp/v1.0.0.md
+```
+
+v1.0.0 matches byte-for-byte, including its release-page banner. v1.0.1
+regenerates with the two published claims superseded by the historical note in
+its section; the published body is left as published. v1.0.2 regenerates the
+corrected body after the dated Android note and the narrowed banner claim are
+applied to the release page. A section whose body predates the generated
+certificate footer carries `<!-- release-notes: no signing footer -->`; the
+directive is consumed by the generator and never published. Tags and assets are
+never edited, and a historical section is never used by the release workflow.
 
 Every workflow pins each action to a commit SHA, declares explicit
 `permissions`, a `concurrency` group and a job `timeout-minutes`, and sets

@@ -3,20 +3,33 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and the version number follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-`package.json` is the one owner of that number: a release tag must be exactly
-`v<version>` and its notes are copied from the matching section below.
+and tags use the [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+`MAJOR.MINOR.PATCH` shape. The project's actual rule is narrower: patch releases
+carry fixes and small, backward-compatible additions that do not change the
+stored document format (1.0.2 added label export and import); a document-format
+change or a user-visible redesign is a minor release. `package.json` is the one
+owner of that number: a release tag must be exactly `v<version>` and its notes
+are copied from the matching section below by `scripts/release-notes.mjs`.
 
 ## [1.0.2] - 2026-11-16
+
+<!-- release-notes: the blockquote below is the top of the corrected v1.0.2 release body -->
+> **Android 1.0.2 limitation (recorded 2026-11-16).** The APK's system file
+> picker in this build is filtered to images, so **Document → Import label**
+> cannot select a label `.json` file on Android. Label import works in the web
+> app; it is fixed in 1.0.3.
 
 ### Added
 
 - **Label export and import.** The Document panel saves the current label as
-  one JSON file and loads it again on any device. This is the backup path a
-  signing-key change or a device replacement needs; before this version only
-  diagnostics could be exported.
-- The print refusal reason is visible above the action bar, not only in a
-  tooltip, so a disabled Print button explains itself on a phone.
+  one JSON file and loads it again in the web app; the 1.0.2 APK filters the
+  picker to images (see the note above), so on Android this build can export but
+  not import. This is the backup path a signing-key change or a device
+  replacement needs; before this version only diagnostics could be exported.
+- A model or geometry refusal is visible above the action bar, not only in a
+  tooltip, so a disabled Print button names the unsupported model or guessed
+  head on a phone. Printing, empty, offline and reading states explain
+  themselves through the button label and title.
 
 ### Fixed
 
@@ -55,8 +68,9 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
   from every job in the workflow.
 - Pages checks out `main` and asserts it equals the validated `Checks` commit,
   removing the untrusted-checkout pattern.
-- The browser suite runs at most two Chromiums at once, and its mount timeout
-  honours `D110_CHROME_TIMEOUT_MS`.
+- The browser suite runs two Chromiums at once by default —
+  `D110_BROWSER_CONCURRENCY` raises or lowers it — and its mount timeout honours
+  `D110_CHROME_TIMEOUT_MS`.
 - The release attaches its provenance bundle, prints the signing certificate
   fingerprint, and asserts the built APK's contents, permissions and backup
   setting. The Android manifest package comes from `brand.json`.
@@ -76,8 +90,10 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
   installing this build.
 - Pages deploys only after the `Checks` run for the same commit succeeds, and
   its smoke test now requests every precached file instead of four.
-- The APK is byte-reproducible: generated ZIP entries carry a fixed timestamp,
-  and the signing block is the only part a rebuild cannot reproduce.
+- The APK is byte-reproducible with the same key and `apksigner`: generated ZIP
+  entries carry a fixed timestamp, and a different key changes only the signing
+  block. The signing block's bytes belong to the signing tool, so a different
+  `apksigner` version can change them.
 - Documentation was corrected against the code: refusal wording, LAN binding,
   browser support, dpi class versus capability value, ownership and limits.
 
@@ -99,7 +115,20 @@ and the version number follows [Semantic Versioning](https://semver.org/spec/v2.
 - The test suite is split by the real Chromium import, so only the browser job
   launches a browser.
 
+<!-- release-notes: the published v1.0.1 body is left as published; this note supersedes it -->
+> **Historical note (added 2026-11-16).** The published v1.0.1 release body says
+> the v1.0.0 key "was retired before any public install" and that "the signing
+> block is the only part a rebuild cannot reproduce". Both are superseded here:
+> the 1.0.0 APK had been downloaded, and a rebuild with the same key and
+> `apksigner` build is byte-identical. The published body is not edited; this
+> changelog is the corrected record.
+
+<!-- release-notes: no signing footer; the v1.0.1 body was published before the generated footer -->
+
 ## [1.0.0] - 2026-11-15
+
+<!-- release-notes: the blockquote below is the published v1.0.0 release-page banner -->
+> **Do not install this build for new work.** v1.0.0 is signed with a retired key and cannot be upgraded to v1.0.1; uninstalling it deletes every label, because this build has no project export. Use [v1.0.1](https://github.com/LLM-4-People/drypoint/releases/tag/v1.0.1) for a fresh install.
 
 First public release: a static, offline editor and printer client for 12 mm
 labels on the NIIMBOT D110 family, plus a self-signed Android app.
@@ -165,3 +194,6 @@ labels on the NIIMBOT D110 family, plus a self-signed Android app.
 - A privacy gate fails the build when a private host, an absolute home
   directory, the reference unit's serial or a non-fixture e-mail address
   reaches the published tree.
+
+<!-- release-notes: no signing footer; the v1.0.0 body was published before the generated footer -->
+<!-- release-notes: one trailing blank line; the published v1.0.0 body ended with it -->

@@ -42,7 +42,8 @@ bytes cannot poison the cache.
 
 | Version | Supported |
 | --- | --- |
-| 1.x | Yes — fixes land on `main` and are released as a new tag |
+| 1.x, except 1.0.0 | Yes — fixes land on `main` and are released as a new tag. The 1.0.2 APK cannot import an exported label; the fix ships in 1.0.3. |
+| 1.0.0 | No — do not install it. It is signed with a retired key, cannot be upgraded in place, and has no label export; uninstalling it deletes every label. |
 | Anything older than 1.0 | No — there is no compatibility branch |
 
 Releases are the signed APK and the static site at
