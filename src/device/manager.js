@@ -657,8 +657,10 @@ export function createDeviceManager({ candidates = transportCandidates } = {}) {
       // a Cancel would be a silent no-op. Every terminal outcome (success,
       // failure, user cancel) publishes this before the refresh. `started`
       // tells the UI whether paper ever began moving, so a refused job keeps
-      // its "Preparing…" state instead of claiming Finishing.
-      if (owner) events.emit('finishing', { started });
+      // its "Preparing…" state instead of claiming Finishing. `committed` is
+      // true only once printEnd went on the wire: a lost link after that point
+      // did not interrupt the label, and the disconnect copy may say so.
+      if (owner) events.emit('finishing', { started, committed: controllerAbort.committed });
       // Refresh INSIDE the job lock, for every outcome: its probe frames must
       // not land between the next job's bitmap rows, and `printing` must stay
       // true until the printer state is current again. runDiscovery() rather

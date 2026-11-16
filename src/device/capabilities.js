@@ -312,12 +312,12 @@ export function autoShutdownOptions(capabilities) {
 /**
  * The paper-moving commands and the words a sensor refusal uses for each one.
  * The gate owns the sentence; a command names its action so a feed refusal
- * cannot claim "nothing was printed".
+ * cannot claim "nothing was printed". Only the actions this app can actually
+ * command exist here: an unused `advance` entry was dead configuration.
  */
-export const PAPER_ACTIONS = Object.freeze({
+const PAPER_ACTIONS = Object.freeze({
   print: Object.freeze({ verb: 'print', doing: 'printing', done: 'printed' }),
   feed: Object.freeze({ verb: 'feed', doing: 'feeding', done: 'fed' }),
-  advance: Object.freeze({ verb: 'advance', doing: 'advancing', done: 'advanced' }),
 });
 
 /**
@@ -333,7 +333,7 @@ export const PAPER_ACTIONS = Object.freeze({
  * capability object blocks, it never throws.
  *
  * @param {object|null|undefined} capabilities
- * @param {{requiresPaper?: boolean, action?: keyof typeof PAPER_ACTIONS}} [options]
+ * @param {{requiresPaper?: boolean, action?: 'print'|'feed'}} [options]
  * @returns {{allowed: boolean, reason: string|null, kind: 'model'|'geometry'|'sensor'|null}}
  */
 export function supportGate(capabilities, { requiresPaper = true, action = 'print' } = {}) {

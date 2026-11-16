@@ -502,7 +502,7 @@ test('the gate reason is visible above the action bar and hidden when allowed', 
   assert.match(css, /\.gate-reason\s*\{[^}]*bottom:\s*100%/, 'it sits directly above the bar');
   assert.match(css, /\.gate-reason\[hidden\]\s*\{[^}]*display:\s*none/);
   const update = main.match(/function updatePrintButton\(\) \{([\s\S]*?)\n\}/)?.[1];
-  assert.match(update, /ui\.printGateReason\.textContent = state\.supportBlocked/);
+  assert.match(update, /setText\(ui\.printGateReason, state\.supportBlocked\)/, 'the shared writer skips identical text');
   assert.match(update, /ui\.printGateReason\.hidden = !state\.supportBlocked/, 'the banner disappears when the gate allows');
 });
 
@@ -568,4 +568,35 @@ test('a disconnect during a job says the label may be incomplete', () => {
   const flow = read('src/ui/print-flow.js');
   assert.match(flow, /if \(!device\.connected\) \{/);
   assert.match(flow, /setStatus\(''\);\s*\n\s*notify\(error\.message, \{ tone: 'error' \}\)/, 'only a connected failure takes the flow toast');
+});
+
+/* ---------------- live-region discipline (K-F7, PR-F6) ---------------- */
+
+test('the gate banner is written only when its reason changes', () => {
+  const update = main.match(/function updatePrintButton\(\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(update, 'the one button-state owner exists');
+  // setText skips an identical string, so typing in the label does not
+  // re-announce an unchanged refusal. `role=status` stays: a *new* reason must
+  // be announced without a focus change, and `aria-describedby` only carries
+  // the reason once the control is reached.
+  assert.match(update, /setText\(ui\.printGateReason, state\.supportBlocked\)/);
+  assert.doesNotMatch(update, /ui\.printGateReason\.textContent\s*=/);
+  assert.match(html, /id="printGateReason" role="status"/);
+});
+
+test('a connection refresh never overwrites a job status', () => {
+  // The discovered handler also runs inside the post-print refresh, while
+  // `#status` is the finished job's outcome.
+  const handler = main.match(/device\.events\.on\('discovered', \(capabilities\) => \{([\s\S]*?)\n\}\);/)?.[1];
+  assert.ok(handler, 'the discovered handler exists');
+  assert.match(handler, /connectionStatus\(\{ jobBusy: printFlow\.busy, remaining: capabilities\.roll\?\.remaining \}\)/);
+  assert.match(handler, /if \(line\) setStatus\(line, 'ok'\)/, 'the job status is kept while a job is busy');
+  assert.doesNotMatch(handler, /setStatus\(`Connected/);
+});
+
+test('the design canvas is a named image', () => {
+  const html = read('index.html');
+  assert.match(html, /id="labelCanvas"[^>]*role="img"/);
+  assert.match(html, /id="overlayCanvas"[^>]*aria-hidden="true"/);
+  assert.match(main, /labelCanvasName\(\{/);
 });

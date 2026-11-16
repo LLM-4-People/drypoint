@@ -1078,7 +1078,9 @@ test('finishing reports whether paper ever started', async () => {
   const finished = [];
   manager.events.on('finishing', (info) => finished.push(info));
   await manager.print(raster, { lengthMm: 40 });
-  assert.deepEqual(finished, [{ started: true }]);
+  // `committed` is true only once printEnd went on the wire: the disconnect
+  // copy may then say the label was printed (V2).
+  assert.deepEqual(finished, [{ started: true, committed: true }]);
 
   const lidOpen = ADVANCED.slice();
   lidOpen[4] = 1;
@@ -1088,7 +1090,7 @@ test('finishing reports whether paper ever started', async () => {
   const refusedFinished = [];
   refused.events.on('finishing', (info) => refusedFinished.push(info));
   await assert.rejects(refused.print(raster, { lengthMm: 40 }), /lid/i);
-  assert.deepEqual(refusedFinished, [{ started: false }], 'a refused job never started');
+  assert.deepEqual(refusedFinished, [{ started: false, committed: false }], 'a refused job never started');
 });
 
 test('a transport open that never settles times out, is disposed, and frees the next attempt', async (t) => {

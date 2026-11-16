@@ -360,7 +360,10 @@ test('a paper action says what did not move, without a second gate', () => {
   assert.equal(supportGate(lidOpen).reason, 'Close the printer lid before printing; nothing was printed.');
   assert.equal(supportGate(lidOpen, { action: 'feed' }).reason, 'Close the printer lid before feeding; nothing was fed.');
   assert.equal(supportGate(noPaper, { action: 'feed' }).reason, 'Load a label roll before feeding; nothing was fed.');
-  assert.equal(supportGate(noPaper, { action: 'advance' }).reason, 'Load a label roll before advancing; nothing was advanced.');
+  assert.equal(supportGate(noPaper, { action: 'feed' }).reason, 'Load a label roll before feeding; nothing was fed.');
+  // An action the app cannot command falls back to the print wording instead of
+  // inventing a verb.
+  assert.equal(supportGate(noPaper, { action: 'advance' }).reason, 'Load a label roll before printing; nothing was printed.');
   // An unknown action falls back to the print wording instead of throwing.
   assert.equal(supportGate(lidOpen, { action: 'nope' }).reason, supportGate(lidOpen).reason);
   // The model and geometry reasons are action-independent: they never moved paper.

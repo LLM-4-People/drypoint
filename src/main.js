@@ -22,12 +22,13 @@ import { createLayersPanel } from './ui/layers.js';
 import { createInspector } from './ui/inspector.js';
 import { clampZoom, fitZoom, placementPlan, shouldClampZoom, stepZoom, wheelZoom } from './ui/stage-layout.js';
 import { createPrintPanel } from './ui/print-panel.js';
-import { createPrintFlow, printButtonState } from './ui/print-flow.js';
+import { connectionStatus, createPrintFlow, printButtonState } from './ui/print-flow.js';
 import { reportDisconnect } from './ui/disconnect-report.js';
 import { openSettingsSheet } from './ui/settings-sheet.js';
 import { applyTheme as applyThemeSetting } from './ui/theme.js';
 import { createSaveFailureNotice } from './ui/save-failure.js';
 import { createStorageAlert } from './ui/storage-alert.js';
+import { labelCanvasName } from './ui/canvas-name.js';
 import { createDeviceManager } from './device/manager.js';
 import { applyRollProfile } from './device/roll-profiles.js';
 import { describeDeviceStatus, labelTypeName, supportGate } from './device/capabilities.js';
@@ -383,6 +384,14 @@ function rerender() {
   const warnings = canvasEditor.render();
   const active = geometry();
   ui.labelSize.textContent = `${round1(active.widthMm)} × ${controller.document.lengthMm} mm`;
+  // The canvas is the label: its accessible name carries the size and how much
+  // is on it, written only when it changes.
+  const canvasName = labelCanvasName({
+    widthMm: active.widthMm,
+    lengthMm: controller.document.lengthMm,
+    count: controller.document.elements.length,
+  });
+  if (ui.labelCanvas.getAttribute('aria-label') !== canvasName) ui.labelCanvas.setAttribute('aria-label', canvasName);
   ui.labelPx.textContent = `${documentWidthPx(controller.document)} × ${documentHeightPx(controller.document)} px · ${round1(active.dotsPerMm)} dots/mm (${active.dpi ?? 'unknown'} dpi${active.reported ? '' : ' assumed'})`;
   setStageWarnings(warnings);
   layers.render();
@@ -769,8 +778,10 @@ device.events.on('discovered', (capabilities) => {
     rerender();
   }
   printPanel.render();
-  const remaining = capabilities.roll?.remaining;
-  setStatus(remaining != null ? `Connected · ${remaining} labels left` : 'Connected', 'ok');
+  // The post-print refresh also publishes this event, while `#status` belongs
+  // to the finished job: the connection line must not overwrite the outcome.
+  const line = connectionStatus({ jobBusy: printFlow.busy, remaining: capabilities.roll?.remaining });
+  if (line) setStatus(line, 'ok');
 });
 
 device.events.on('roll-profile', (profile) => {
@@ -872,7 +883,9 @@ function updatePrintButton() {
   // visible banner above the action bar so a sighted user does not have to open
   // the Print tab to learn why the buttons are disabled. It is absolutely
   // positioned: showing it never reflows the bar.
-  ui.printGateReason.textContent = state.supportBlocked;
+  // The banner is a live region: only a changed reason is written, so a
+  // rerender while typing the same label never re-announces the refusal.
+  setText(ui.printGateReason, state.supportBlocked);
   ui.printGateReason.hidden = !state.supportBlocked;
   for (const button of [ui.printButton, ui.testButton]) {
     if (state.supportBlocked) button.setAttribute('aria-describedby', 'printGateReason');

@@ -83,6 +83,7 @@ src/
     modal.js               dialog stack, focus trap, inert background
     print-flow.js          one print flow: in-flight guard, warnings, progress
     print-panel.js         printer state, job settings, maintenance, logs
+    canvas-name.js         the one accessible name of the design canvas
     save-failure.js        one owner of the persistent save-failure notice
     storage-alert.js       keeps an unreadable stored label and blocks every write
     setting-control.js     schema → control
