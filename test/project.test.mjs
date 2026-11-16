@@ -517,7 +517,7 @@ test('ANDROID.md keeps the signing, asset and filename contracts', () => {
   const packageName = brand.appId;
   assert.match(read('android/AndroidManifest.template.xml'), /package="@PACKAGE@"/, 'the template has no second package owner');
   assert.ok(doc.includes(`adb uninstall ${packageName}`), 'the documented uninstall command names the real package');
-  assert.match(build, /const dir = join\(androidDir, 'keystore'\)/);
+  assert.match(build, /directory = join\(androidDir, 'keystore'\)/);
   assert.match(build, /const store = env\.ANDROID_KEYSTORE_FILE \|\| join\(directory, 'drypoint-release\.jks'\)/);
   assert.ok(doc.includes('android/keystore/drypoint-release.jks'));
 
