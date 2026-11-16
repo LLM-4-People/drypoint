@@ -106,6 +106,7 @@ scripts/
   check-privacy.mjs        the one deny list for the published tree, with required roots
   check-required.mjs       aggregate gate: reads toJSON(needs), fails any non-success
   check-workflows.mjs      parsed-YAML policy: pins, permissions, timeouts, gates, publish tag
+  ci-keystore.mjs          the one CI throwaway signing identity: keytool, 0600 files, GITHUB_ENV
   find-chrome.mjs          CI Chromium owner: fails missing/old browsers, writes D110_CHROME
   release-notes.mjs        tag ↔ package.json version, optional commit binding, CHANGELOG → notes
   smoke-pages.mjs          headless check that every precached URL answers 200
@@ -604,12 +605,15 @@ verifies.
    `git merge-base --is-ancestor "$sha" origin/main` and the tag's package
    version, and records whether a release already exists. No tag means
    `publish=false` and the run stops after resolve.
-6. The `build` job has no environment and no secret. It checks out
-   `needs.resolve.outputs.ref` (the tag for a release, the commit for a dry
-   run), runs `npm ci` and `npm run verify:all`, generates the notes with
-   `release-notes.mjs --tag "$TAG" --commit "$SHA"`, builds the APK with
-   `ANDROID_ALLOW_TEST_KEY=true`, checks it with `check-apk.mjs`, proves the
-   tree is clean and uploads `drypoint-unsigned`.
+6. The `build` job has no environment and no secret. It checks out fixed
+   `main` and materializes the resolved tag/SHA as a detached worktree
+   (`git worktree add --detach "$RELEASE_TREE" "$REF"`), then proves
+   `HEAD == $SHA`. It runs `npm ci` and `npm run verify:all` in that worktree,
+   generates the notes with `release-notes.mjs --tag "$TAG" --commit "$SHA"`,
+   creates the explicit throwaway key with `scripts/ci-keystore.mjs`, builds
+   the APK with that key, checks it with `check-apk.mjs`, proves the tree is
+   clean and uploads `drypoint-unsigned`. `CI=true` with no key is still a hard
+   failure: the build never invents one.
 7. The `sign` job is the only job in the `release` environment. It checks
    nothing out and runs no `npm`, `node` or repository script: every command is
    workflow-owned. It re-signs the downloaded APK with the pinned `apksigner`

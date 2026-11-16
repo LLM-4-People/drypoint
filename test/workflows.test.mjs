@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  GATE_COMMANDS,
   PINNED_ACTIONS,
   RELEASE_FILE,
   WORKFLOW_DIR,
@@ -487,6 +488,60 @@ jobs:
   assert.equal(await runPolicy(t, files), 0, 'the exact owned set passes');
 });
 
+test('both unprivileged jobs create the one throwaway key before the build', async (t) => {
+  const releaseText = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
+  const checksText = await readFile(join(projectRoot, WORKFLOW_DIR, 'checks.yml'), 'utf8');
+  const parsed = (text) => parseWorkflow(text).workflow;
+  for (const [file, job] of [
+    ['checks.yml', parsed(checksText).jobs.android],
+    [RELEASE_FILE, parsed(releaseText).jobs.build],
+  ]) {
+    const commands = job.steps.map((step) => step.run ?? '').filter(Boolean);
+    const keystore = commands.findIndex((run) => run.includes('node scripts/ci-keystore.mjs'));
+    const build = commands.findIndex((run) => run.includes('npm run build:android'));
+    assert.ok(keystore >= 0, `${file}: the keystore step exists`);
+    assert.ok(build > keystore, `${file}: the key is created before the build`);
+    assert.equal(commands.filter((run) => run.includes('node scripts/ci-keystore.mjs')).length, 1, `${file}: called once`);
+  }
+  assert.ok(GATE_COMMANDS['checks.yml'].android.includes('node scripts/ci-keystore.mjs'));
+  assert.doesNotMatch(JSON.stringify(parsed(releaseText).jobs.sign), /ci-keystore|ANDROID_ALLOW_TEST_KEY/);
+  assert.doesNotMatch(releaseText, /ci-throwaway-not-a-release-key/);
+  assert.doesNotMatch(checksText, /ci-throwaway-not-a-release-key/);
+
+  // Removing or reordering the owner is a policy finding, not a silent
+  // "CI=true with no key" failure at release time.
+  const files = await real();
+  const mutations = {
+    'checks keystore removed': {
+      'checks.yml': checksText.replace('        run: node scripts/ci-keystore.mjs', '        run: echo no-key'),
+    },
+    'release keystore removed': {
+      [RELEASE_FILE]: releaseText.replace('        run: node scripts/ci-keystore.mjs', '        run: echo no-key'),
+    },
+    'release keystore moved after the build': {
+      [RELEASE_FILE]: releaseText
+        .replace('        run: node scripts/ci-keystore.mjs', '        run: echo moved')
+        .replace(
+          '        run: npm run build:android',
+          '        run: npm run build:android\n      - name: Create a throwaway signing key\n        working-directory: ${{ env.RELEASE_TREE }}\n        run: node scripts/ci-keystore.mjs'
+        ),
+    },
+  };
+  for (const [name, replacement] of Object.entries(mutations)) {
+    assert.notEqual(await runPolicy(t, { ...files, ...replacement }), 0, `${name}: the CLI exits nonzero`);
+  }
+
+  const hardcoded = checksText.replace(
+    '        run: node scripts/ci-keystore.mjs',
+    '        run: echo ci-throwaway-not-a-release-key > pass.txt'
+  );
+  assert.ok(
+    checkWorkflow(hardcoded, { file: 'checks.yml' }).some((finding) => /must not hardcode the CI throwaway password/.test(finding)),
+    'the password has one owner'
+  );
+  assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': hardcoded }), 0);
+});
+
 test('the release parser reads one real publish command and rejects decoys', async () => {
   const files = await real();
   const release = files[RELEASE_FILE];
@@ -612,7 +667,8 @@ test('the release build proves a clean unsigned tree and the sign job proves the
   const checks = files['checks.yml'];
   assert.match(release, /npm run verify:all/);
   assert.match(release, /release-notes\.mjs --tag "\$TAG" --commit "\$SHA" --out dist\/notes\.md/);
-  assert.match(release, /ANDROID_ALLOW_TEST_KEY: 'true'/);
+  assert.match(release, /node scripts\/ci-keystore\.mjs/);
+  assert.doesNotMatch(release, /ANDROID_ALLOW_TEST_KEY/);
   assert.match(release, /node scripts\/check-apk\.mjs/);
   assert.match(release, /git diff --exit-code/);
   assert.match(release, /git status --porcelain/);
@@ -893,7 +949,8 @@ test('checks.yml runs every gate and proves the APK identity', async () => {
   assert.match(checks, /brand\.json'\)\.appId/);
   assert.match(checks, /--version-code/);
   assert.match(checks, /versionCode='\$\{version_code\}'/);
-  assert.match(checks, /ANDROID_ALLOW_TEST_KEY: 'true'/);
+  assert.match(checks, /run: node scripts\/ci-keystore\.mjs/);
+  assert.doesNotMatch(checks, /ANDROID_ALLOW_TEST_KEY/);
 
   // The Android build must leave no tracked or untracked file, like the web job.
   const androids = checks.indexOf('  android:');

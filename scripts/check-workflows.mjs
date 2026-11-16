@@ -38,6 +38,8 @@ import { fileURLToPath } from 'node:url';
 
 import { parseDocument } from 'yaml';
 
+import { THROWAWAY as CI_THROWAWAY } from './ci-keystore.mjs';
+
 export const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
 export const WORKFLOW_DIR = '.github/workflows';
 export const RELEASE_FILE = 'release.yml';
@@ -111,6 +113,7 @@ export const GATE_COMMANDS = Object.freeze({
     android: Object.freeze([
       'npm ci',
       'bash scripts/android-sdk.sh',
+      'node scripts/ci-keystore.mjs',
       'npm run build:android',
       'node scripts/check-apk.mjs --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
       'git diff --exit-code',
@@ -134,6 +137,8 @@ const MASKABLE_WORKFLOWS = new Set(['checks.yml', RELEASE_FILE]);
 const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/;
 /** The exact opt-in a gated step may put before its registered command. */
 const GATE_PREAMBLE = 'set -euo pipefail';
+/** The one owner of the CI throwaway key; both unprivileged jobs call it. */
+export const CI_KEYSTORE_COMMAND = 'node scripts/ci-keystore.mjs';
 
 /** YAML may hold a scalar or a list in either form; callers want a list. */
 function list(value) {
@@ -674,6 +679,25 @@ function gateStepFindings(job, file, jobName, required) {
 }
 
 /**
+ * The throwaway key must be created before the build that consumes it. A
+ * reordered workflow leaves `CI=true` with no key, which is a hard failure —
+ * or worse, tempts someone to relax that rule instead.
+ */
+function keystoreOrderFindings(job, file, jobName) {
+  const steps = stepsOf(job);
+  const keystore = steps.findIndex((step) => stepCommands(step).includes(CI_KEYSTORE_COMMAND));
+  const build = steps.findIndex((step) => stepCommands(step).includes('npm run build:android'));
+  if (build < 0) return [];
+  if (keystore < 0) {
+    return [`${file}: job "${jobName}" must create the throwaway key with ${CI_KEYSTORE_COMMAND} before ${'npm run build:android'}`];
+  }
+  if (keystore > build) {
+    return [`${file}: job "${jobName}" must create the throwaway key before npm run build:android`];
+  }
+  return [];
+}
+
+/**
  * Every required merge-gate command must appear in the registered order, in
  * gate steps that cannot be skipped or masked.
  */
@@ -688,6 +712,7 @@ function gateFindings(workflow, jobs, file) {
       continue;
     }
     findings.push(...gateStepFindings(job, file, jobName, required));
+    findings.push(...keystoreOrderFindings(job, file, jobName));
   }
   return findings;
 }
@@ -745,6 +770,26 @@ function secretFindings(workflow, file) {
 }
 
 /**
+ * The throwaway identity has one owner: `scripts/ci-keystore.mjs`. A workflow
+ * that spells the password, DN or a raw `keytool -genkeypair` is a second
+ * owner, so it is rejected even if it would work.
+ */
+function keystoreOwnershipFindings(text, file) {
+  const findings = [];
+  const source = String(text);
+  if (source.includes(CI_THROWAWAY.password)) {
+    findings.push(`${file}: must not hardcode the CI throwaway password; call ${CI_KEYSTORE_COMMAND}`);
+  }
+  if (source.includes(CI_THROWAWAY.dn)) {
+    findings.push(`${file}: must not hardcode the CI throwaway DN; call ${CI_KEYSTORE_COMMAND}`);
+  }
+  if (/keytool\s+-genkeypair/.test(source)) {
+    findings.push(`${file}: must not run a raw keytool -genkeypair; call ${CI_KEYSTORE_COMMAND}`);
+  }
+  return findings;
+}
+
+/**
  * Check one workflow's text against the general policy.
  *
  * @param {string} text
@@ -754,7 +799,11 @@ function secretFindings(workflow, file) {
 export function checkWorkflow(text, { file = 'workflow' } = {}) {
   const { workflow, findings } = parseWorkflow(text);
   if (!workflow) return findings.map((finding) => `${file}: ${finding}`);
-  return [...findings.map((finding) => `${file}: ${finding}`), ...parsedWorkflowFindings(workflow, file)];
+  return [
+    ...findings.map((finding) => `${file}: ${finding}`),
+    ...keystoreOwnershipFindings(text, file),
+    ...parsedWorkflowFindings(workflow, file),
+  ];
 }
 
 function jobEnvText(job) {
@@ -890,6 +939,7 @@ function buildFindings(workflow, file) {
     'node scripts/find-chrome.mjs',
     'npm run verify:all',
     'node scripts/release-notes.mjs --tag "$TAG" --commit "$SHA" --out dist/notes.md',
+    CI_KEYSTORE_COMMAND,
     'npm run build:android',
     'node scripts/check-apk.mjs --apk "dist/drypoint-${VERSION}-unsigned.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
     'git diff --exit-code',
@@ -932,8 +982,12 @@ function buildFindings(workflow, file) {
   if (!steps.some((step) => stepCommands(step).some((command) => command.startsWith('node scripts/check-apk.mjs')))) {
     findings.push(`${file}: job "build" must check the built APK`);
   }
-  if (!steps.some((step) => step.env?.ANDROID_ALLOW_TEST_KEY === 'true')) {
-    findings.push(`${file}: job "build" must build with ANDROID_ALLOW_TEST_KEY=true and no release secret`);
+  findings.push(...keystoreOrderFindings(job, file, 'build'));
+  if (
+    JSON.stringify(job.env ?? {}).includes('ANDROID_ALLOW_TEST_KEY') ||
+    steps.some((step) => JSON.stringify(step.env ?? {}).includes('ANDROID_ALLOW_TEST_KEY'))
+  ) {
+    findings.push(`${file}: job "build" must not set ANDROID_ALLOW_TEST_KEY itself; ${CI_KEYSTORE_COMMAND} owns the flag`);
   }
   if (!steps.some((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@'))) {
     findings.push(`${file}: job "build" must upload the unsigned artifact`);
@@ -959,6 +1013,14 @@ function signFindings(workflow, file) {
   }
   if (!jobEnvText(job).includes('secrets.ANDROID_KEYSTORE_BASE64')) {
     findings.push(`${file}: job "sign" must decode the keystore from the release environment`);
+  }
+  const signText = JSON.stringify(job);
+  for (const [needle, message] of [
+    ['ANDROID_ALLOW_TEST_KEY', 'must never set ANDROID_ALLOW_TEST_KEY'],
+    ['ci-keystore', 'must never run the CI throwaway keystore script'],
+    [CI_THROWAWAY.password, 'must never contain the CI throwaway password'],
+  ]) {
+    if (signText.includes(needle)) findings.push(`${file}: job "sign" ${message}`);
   }
   for (const step of stepsOf(job)) {
     if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {

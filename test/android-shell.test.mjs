@@ -12,6 +12,7 @@ import {
   APK_ENTRY_DATE_TIME,
   apksignerArgs,
   certificateSha256,
+  keystoreAction,
   minSdkVersionOf,
   publishApkPair,
   releaseIdentityRequired,
@@ -458,15 +459,24 @@ test('the certificate pin applies to a release key and not to a throwaway', () =
   assert.equal(releaseIdentityRequired({ generated: false, env: { ANDROID_ALLOW_TEST_KEY: '1' } }), false);
   assert.equal(releaseIdentityRequired({ generated: false, env: { ANDROID_ALLOW_TEST_KEY: 'no' } }), true, 'any other value keeps the pin');
 
-  // The release build job has no secret and declares the throwaway key; the
-  // privileged sign job re-signs and never opts out of the certificate pin.
+  // CI never invents a key: the unprivileged jobs create one explicitly with
+  // the one shared script before the build.
+  assert.equal(keystoreAction({ exists: false, requireKey: true }), 'fail');
+  assert.equal(keystoreAction({ exists: true, requireKey: true }), 'use');
+  assert.equal(keystoreAction({ exists: false, requireKey: false }), 'generate');
+
   const release = read('.github/workflows/release.yml');
   const { workflow } = parseWorkflow(release);
-  const buildKey = workflow.jobs.build.steps.find((step) => step.env?.ANDROID_ALLOW_TEST_KEY != null);
-  assert.equal(buildKey?.env.ANDROID_ALLOW_TEST_KEY, 'true', 'the unprivileged build declares a throwaway key');
+  const checks = read('.github/workflows/checks.yml');
+  assert.match(checks, /run: node scripts\/ci-keystore\.mjs/, 'the gate calls the one keystore script');
+  assert.match(release, /run: node scripts\/ci-keystore\.mjs/, 'the release build calls the same script');
+  assert.equal((release.match(/ci-keystore\.mjs/g) ?? []).length, 1, 'one call in the build; the sign job has none');
   assert.doesNotMatch(JSON.stringify(workflow.jobs.build), /secrets\./, 'the build cannot read a release secret');
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.build), /ANDROID_ALLOW_TEST_KEY/, 'the script owns the flag, not the workflow');
   assert.doesNotMatch(JSON.stringify(workflow.jobs.sign), /ANDROID_ALLOW_TEST_KEY/, 'the sign job never allows a test key');
-  assert.match(read('.github/workflows/checks.yml'), /ANDROID_ALLOW_TEST_KEY: 'true'/, 'the gate declares its throwaway key');
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.sign), /ci-keystore/, 'the sign job never creates a throwaway key');
+  assert.doesNotMatch(checks, /ci-throwaway-not-a-release-key/, 'the workflow never hardcodes the password');
+  assert.doesNotMatch(release, /ci-throwaway-not-a-release-key/, 'the workflow never hardcodes the password');
 });
 
 test('the APK carries the licence and the notices from the one distribution list', async (t) => {

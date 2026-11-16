@@ -225,12 +225,14 @@ jobs:
       - name: Install the pinned SDK packages
         working-directory: ${{ env.RELEASE_TREE }}
         run: bash scripts/android-sdk.sh
-      - name: Build the unsigned APK with a throwaway key
-        # No release secret is present. The test key only keeps CI's
-        # no-new-key rule out of the way; the sign job replaces its signature.
+      - name: Create a throwaway signing key
+        # The build job holds no release secret. The one shared script creates
+        # the throwaway key the unsigned artifact is signed with; the sign job
+        # replaces that signature with the project key.
         working-directory: ${{ env.RELEASE_TREE }}
-        env:
-          ANDROID_ALLOW_TEST_KEY: 'true'
+        run: node scripts/ci-keystore.mjs
+      - name: Build the unsigned APK with a throwaway key
+        working-directory: ${{ env.RELEASE_TREE }}
         run: npm run build:android
       - name: Package the unsigned artifact
         working-directory: ${{ env.RELEASE_TREE }}

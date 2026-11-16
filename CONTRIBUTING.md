@@ -123,8 +123,9 @@ CI builds and then checks, in that order.
   (`npm run privacy:check`) fails the build when a private host, an absolute
   home directory, the reference unit's serial or a non-fixture e-mail address
   appears in the published tree.
-- CI signs with a throwaway key generated in the job; a real release is signed
-  from the repository secret. A pull request never sees that key.
+- CI signs with a throwaway key created by the one shared script
+  (`scripts/ci-keystore.mjs`); a real release is signed from the repository
+  secret. A pull request never sees that key.
 
 ## Printer models: the support policy
 
