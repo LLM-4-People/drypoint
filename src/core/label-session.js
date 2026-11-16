@@ -199,12 +199,16 @@ export function createLabelSession({
     await flush();
     const result = await library.read(id);
     if (!result.ok) throw new Error(result.reason);
+    // Every read must succeed before the stored pointer or the in-memory
+    // session moves. A failed switch leaves the old label fully intact,
+    // including any write that is still owed.
+    const storedSession = await library.readSession(id);
+    const history = (await library.readHistory(id)) ?? { past: [], future: [] };
+    const nextSession = storedSession ? normalizeSession(storedSession) : defaultSession(result.document);
     await library.setCurrent(id);
     discardOwed();
     labelId = id;
-    const storedSession = await library.readSession(id);
-    sessionState = storedSession ? normalizeSession(storedSession) : defaultSession(result.document);
-    const history = (await library.readHistory(id)) ?? { past: [], future: [] };
+    sessionState = nextSession;
     return {
       label: result.label,
       document: result.document,

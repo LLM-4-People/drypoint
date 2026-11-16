@@ -138,6 +138,37 @@ test('switchTo flushes the old label, writes the current pointer and returns the
   assert.equal(session.labelId, second.id);
 });
 
+test('a failed switch read leaves the old label current and keeps the owed session write', async () => {
+  const { library, first, second } = await harness();
+  const boot = await library.boot();
+  const session = createLabelSession({ library, boot, persistMs: 5, historyMs: 5, sessionMs: 5 });
+
+  const originalWriteSession = library.writeSession;
+  let sessionWritesFail = true;
+  library.writeSession = async (...args) => {
+    if (sessionWritesFail) throw new Error('session storage blocked');
+    return originalWriteSession(...args);
+  };
+  session.saveSession({ selection: 'owed' });
+  await session.flush();
+  assert.equal(await library.readSession(first.id), null, 'the failed session write is still owed');
+
+  const originalReadHistory = library.readHistory;
+  library.readHistory = async (id) => {
+    if (id === second.id) throw new Error('history read failed');
+    return originalReadHistory(id);
+  };
+
+  await assert.rejects(session.switchTo(second.id), /history read failed/);
+  assert.equal(session.labelId, first.id, 'the old label stayed current in memory');
+  assert.equal(await library.currentId(), first.id, 'the stored current pointer did not move');
+  assert.equal(await library.readSession(first.id), null, 'the failed switch did not land the owed write');
+
+  sessionWritesFail = false;
+  await session.flush();
+  assert.equal((await library.readSession(first.id)).selection, 'owed', 'the owed write was not discarded');
+});
+
 test('a failed document write stays owed, reports once and succeeds on flush', async () => {
   const { library } = await harness();
   const boot = await library.boot();
@@ -241,7 +272,7 @@ test('removing the current label opens the next recent one, or creates a default
   assert.equal((await library.read(bad.id)).ok, false, 'and it was never overwritten');
 });
 
-test('resetLegacy removes the legacy key and switches to a fresh label', async () => {
+test('resetLegacy removes the legacy key and keeps the label boot opened', async () => {
   const storage = fakeStorage({ 'drypoint.document': '{"elements":"nope"}' });
   let sequence = 0;
   const db = createMemoryDatabase();
@@ -254,10 +285,13 @@ test('resetLegacy removes the legacy key and switches to a fresh label', async (
   const boot = await library.boot();
   assert.match(boot.legacyError.message, /no valid element list/);
   const session = createLabelSession({ library, boot, persistMs: 5, historyMs: 5, sessionMs: 5 });
+  session.saveDocument(doc('Edited before reset', [{ id: 'text_reset', type: 'text', text: 'Hi' }]));
   const payload = await session.resetLegacy();
-  assert.equal(payload.label.name, 'Untitled');
+  assert.equal(payload.label.id, boot.label.id, 'the label opened at boot is kept');
+  assert.equal(payload.document.name, 'Edited before reset', 'the pending edit reached the kept label');
   assert.equal(storage.values.has('drypoint.document'), false);
-  assert.equal(session.labelId, payload.label.id);
+  assert.equal(session.labelId, boot.label.id);
+  assert.equal((await library.list()).length, 1, 'reset did not add a second label');
   assert.equal(payload.session.selection, payload.document.elements.at(-1).id, 'a reset label selects its last element');
 });
 

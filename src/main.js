@@ -100,8 +100,8 @@ const storageAlert = createStorageAlert({
   // refuse to round-trip the truncation that made it unreadable.
   exportRaw: (filename) => downloadText(filename, storageAlert.raw ?? '', 'application/json'),
   onReset: (raw) => {
-    // The operator answered: replace the legacy value with a fresh label. The
-    // alert has already hidden; a failure restores the quarantine below.
+    // The operator answered: remove the legacy value and keep the current
+    // label. The alert has already hidden; a failure restores it below.
     void resetLegacyLabel(raw);
   },
   // The one confirmation owner and tone; the alert owns the wording of the
@@ -471,8 +471,9 @@ function applyLabelPayload(payload) {
 
 /**
  * The confirmed reset of the unreadable legacy value. The library removes the
- * key and creates a fresh label; if anything fails the quarantine is put back,
- * because the raw value is still the only copy.
+ * key and keeps the current readable label, creating one only when none exists;
+ * if anything fails the quarantine is put back, because the raw value is still
+ * the only copy.
  */
 async function resetLegacyLabel(raw) {
   try {

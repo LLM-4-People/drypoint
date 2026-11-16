@@ -134,8 +134,8 @@ test('an invalid stored label is kept until the operator resets it', async (t) =
       name: document.querySelector('#docName')?.value ?? '',
       layers: document.querySelectorAll('#layerList .layer-row').length,
     }))()`);
-    assert.equal(fresh.name, 'Untitled', 'a fresh default label is open');
-    assert.ok(fresh.layers > 0, 'the fresh label is usable');
+    assert.equal(fresh.name, 'Edited after a cancelled reset', 'the label open at boot is kept, with its edit');
+    assert.ok(fresh.layers > 0, 'the kept label is usable');
 
     // And a fresh reload no longer warns.
     await openApp(cdp, port);

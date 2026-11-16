@@ -200,10 +200,11 @@ placement and the first render; it never enters the document or history.
 
 A valid `drypoint.document` migrates into one label and the key is removed. An
 unreadable value is kept exactly as it is, reported on every boot, and removed
-only by the confirmed reset, which creates a fresh label. The Android native
-`lastDevice` remains the reconnect owner in the APK. On the web, only the BLE or
-serial printer identity is stored under `drypoint.printer`; a reload never
-claims the old connection is still live.
+only by the confirmed reset, which keeps the current readable label and
+creates one only when none is readable. The Android native `lastDevice` remains
+the reconnect owner in the APK. On the web, only the BLE or serial printer
+identity is stored under `drypoint.printer`; a reload never claims the old
+connection is still live.
 
 ### Rendering and printing
 

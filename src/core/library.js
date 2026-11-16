@@ -268,12 +268,36 @@ function createLibrary({ db, storage, newId = defaultNewId, now = defaultNow }) 
     return { migrated: true, label };
   }
 
+  /**
+   * The label a reset must keep: the current one when it is readable,
+   * otherwise the most recently updated readable one.
+   */
+  async function currentReadableLabel() {
+    const preferred = await currentId();
+    if (preferred) {
+      const result = await read(preferred);
+      if (result.ok) return result.label;
+    }
+    for (const candidate of await list()) {
+      if (candidate.id === preferred) continue;
+      const result = await read(candidate.id);
+      if (result.ok) return result.label;
+    }
+    return null;
+  }
+
+  /**
+   * Remove the quarantined legacy value. Boot has already opened a usable
+   * label when the value is unreadable, so reset keeps that label and any
+   * edits made since; it creates one only when no readable label exists.
+   */
   async function resetLegacy() {
-    const label = await create(createDocument());
+    const retained = await currentReadableLabel();
+    const label = retained ?? (await create(createDocument()));
     await setCurrent(label.id);
     await recordMigrated();
     removeRaw(storage, LEGACY_DOCUMENT_KEY);
-    log.warn('the unreadable legacy label was reset', { id: label.id });
+    log.warn('the unreadable legacy label was reset', { id: label.id, retained: Boolean(retained) });
     return label;
   }
 

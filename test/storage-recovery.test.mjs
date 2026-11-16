@@ -112,7 +112,7 @@ test('the reset button asks before it destroys the only copy', async (t) => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(asks.length, 1, 'one confirmation request');
   assert.match(asks[0].title, /Reset the unreadable label/);
-  assert.match(asks[0].message, /removed and a fresh label will open/);
+  assert.match(asks[0].message, /removed\. The label open now is kept/);
   assert.match(asks[0].message, /Export the raw value first/);
   assert.match(asks[0].message, /cannot be undone/);
   assert.equal(asks[0].confirmLabel, 'Reset the label');
@@ -178,7 +178,8 @@ test('reset is the only path that removes the quarantined value', async (t) => {
   assert.equal(label.name, 'Untitled');
   assert.equal(await library.currentId(), label.id);
   assert.equal((await library.read(label.id)).document.elements.length, 1);
-  assert.notEqual(label.id, boot.label.id);
+  assert.equal(label.id, boot.label.id, 'the label boot opened is kept');
+  assert.equal((await library.list()).length, 1, 'reset does not add a duplicate label');
 });
 
 test('the raw export writes the quarantined text unchanged and never releases the quarantine', (t) => {

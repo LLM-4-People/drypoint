@@ -231,15 +231,33 @@ test('an already populated library still reports an unreadable legacy key', asyn
   assert.equal((await db.get('meta', 'legacyMigrated'))?.value, true, 'a populated library records the migration state even when the key is unreadable');
 });
 
-test('reset removes the legacy key and opens a fresh default label', async () => {
+test('one reset keeps the current readable label and removes the legacy key', async () => {
   const raw = '{"lengthMm":40,"elements":"nope"}';
   const storage = fakeStorage({ 'drypoint.document': raw });
-  const { library, db } = await harness({ storage });
+  const { library } = await harness({ storage });
+  const boot = await library.boot();
+  await library.save(boot.label.id, doc('Edited after boot'));
+
+  const label = await library.resetLegacy();
+  assert.equal(label.id, boot.label.id, 'the label opened at boot is kept');
+  assert.equal(label.name, 'Edited after boot', 'edits made since boot survive');
+  assert.equal(await library.currentId(), boot.label.id);
+  assert.equal(storage.values.has('drypoint.document'), false, 'the legacy key is removed');
+  const labels = await library.list();
+  assert.equal(labels.length, 1, 'reset does not add a second Untitled label');
+  assert.equal((await library.read(labels[0].id)).ok, true, 'the only label is readable');
+});
+
+test('reset creates a label only when no readable label exists and removes the legacy key', async () => {
+  const raw = '{"lengthMm":40,"elements":"nope"}';
+  const storage = fakeStorage({ 'drypoint.document': raw });
+  const { library } = await harness({ storage });
   const label = await library.resetLegacy();
   assert.equal(label.name, 'Untitled');
   assert.equal(storage.values.has('drypoint.document'), false);
   assert.equal(await library.currentId(), label.id);
   assert.equal((await library.read(label.id)).document.elements.length, 1);
+  assert.equal((await library.list()).length, 1);
 });
 
 test('boot skips an unreadable current label and chooses a readable one', async () => {

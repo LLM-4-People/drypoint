@@ -47,9 +47,11 @@ are copied from the matching section below by `scripts/release-notes.mjs`.
 - **An unreadable stored label is quarantined, not replaced.** A label whose
   stored value cannot be parsed is kept as raw bytes behind a banner; edits
   cannot overwrite it until the operator resets it, and Reset now asks first.
-  Other labels keep saving, and Reset removes the legacy value and opens a fresh
-  label. A v3 label with no valid element list is quarantined; a v3 label whose
-  geometry has to be bounded loads with a notice. Both report what changed.
+  Other labels keep saving, and Reset removes the legacy value while keeping the
+  label opened at boot and any edits made since; it creates a label only when
+  none is readable. A v3 label with no valid element list is quarantined; a v3
+  label whose geometry has to be bounded loads with a notice. Both report what
+  changed.
 - **A lost link is described honestly.** A disconnect after the page counter
   proved the copies, but before the printer confirmed the end of the job, says
   so instead of "may be incomplete"; a disconnect before that proof still says

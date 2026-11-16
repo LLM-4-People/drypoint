@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: 'fd28e1b767ac966d',
+  version: '208b2ecabebccf87',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -104,9 +104,9 @@ self.__PRECACHE = {
     'src/core/events.js': 'f5f36474ae1e697206e4997916dcd865f86ea364f9cc3ef176f1e2e0feb6ec9f',
     'src/core/format.js': 'f88752fe79c6ff7809555c6dd7fe5fd57adffa1194ed1f0b1883365f427f5a6a',
     'src/core/geometry.js': '7ff525954d39b13f3c95c495ebeb798d76815a0a75f128c1c11f7a33d60f6a1b',
-    'src/core/label-session.js': 'd934362c8c543386af476241f204d3ec3ee6ab7f06eb21ebad12ca0fb0c88aee',
+    'src/core/label-session.js': '485c36ee99e534f6128d4b3511ae9696b7f4b36cd756cf68dd2ca93dde111b82',
     'src/core/library-db.js': 'a2359057c09e3bc24792edd5622dde0834141aaac04834c93404536df41b990a',
-    'src/core/library.js': '9f4f17ee74eb6681c752368dd7b847ff1ac8838dca98e2d06ec5f6cfaac5049f',
+    'src/core/library.js': '555aa73f033a133df8e93d7076e0d6a72eb906ebf433bb51f8c4976ebe33e14b',
     'src/core/log.js': '56aef6a0a9320285cac60d3b922de61bf62654a1711506d5e1d896a45246f5c9',
     'src/core/precache-status.js': 'c1fdb81d0a42a763b94b60b75f64337f7378c876159269246bfcb4e125252a09',
     'src/core/session.js': '9edfa0d55e60a23c2c4bf2ead760b046968ee8f531811b79d375db447f420439',
@@ -139,7 +139,7 @@ self.__PRECACHE = {
     'src/label/templates.js': '165b47fc6bee66c8f7121053bd24d26227ac0d951300b56714b0c0e2fc17142a',
     'src/label/text-layout.js': '475d60e209e7ecade8208829c8a244b6d37d5c01ef04069d577afbe165171599',
     'src/label/transfer.js': '52e7235d27f578655dfb14c4e194d4ca8080e29b690607c5479c0dccf11daa88',
-    'src/main.js': '7599d0bcd48c99067ae0e8b66866b33141d73d5fdc2867e2c83e4ddcbeb51f97',
+    'src/main.js': '9b5f189361cc68a2e92ac19a1def965b5b35bb41dda75a04a9da5c938f1dd835',
     'src/protocol/client.js': '1124bfaf6668838e602c2cd9c7a36f8569fa78ccba3501cde37803721a400ea0',
     'src/protocol/commands.js': '9638deb402f20694bb88b2736a726ead9c298f289cd7a89f7ec3c66275f0ef01',
     'src/protocol/errors.js': '999d1ff965921784134f1585b63d0b9f3a2e1123ac3ef5d316ce18402490844a',
@@ -161,7 +161,7 @@ self.__PRECACHE = {
     'src/ui/settings-sheet.js': '61d5bc25f5358a865061f57818c02be7429740459c4b749c3fccf50d0d57e58e',
     'src/ui/stage-layout.js': '63546311abb7c1d474fceb1318a27a5abf199261b0949ef371b3308b8af60c02',
     'src/ui/status-line.js': '173c19f4fc7a8cc2b1f72ed0421c09597bde31bc78290782ce800c4de148b627',
-    'src/ui/storage-alert.js': 'aa0767e2e0cabbfb1223e4851919c4512720db7cddde5914fb18ecc2970a84e7',
+    'src/ui/storage-alert.js': '15975fbcee1a00051b5ea3f7f5e6b8b5b2a4bd82fc57fe400aa88bd5bb017886',
     'src/ui/theme.js': '232a928d7901d33b309593fde8e769630150e9cfe0ffeb849842aada038bca13',
     'src/ui/toast.js': '53be960d09c48bddc17fdc937a1649461397c172d566a39ca5f3566b917e4b7d',
     'src/ui/z-order.js': 'fa130dc8696bf1ceb7e20fbf10271402025b51c182e0cc846367c7f07d31018b',

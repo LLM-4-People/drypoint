@@ -110,7 +110,8 @@ export function createStorageAlert({
 
   /**
    * The operator accepted the loss. This is the only path that replaces the
-   * legacy value: the quarantine ends and the owner creates a fresh label.
+   * legacy value: the quarantine ends and the owner keeps the current readable
+   * label, creating one only when none exists.
    * `exportQuarantined` deliberately does not clear either, so a backup can
    * never destroy the only copy. The raw value is handed to the owner so a
    * failed reset can restore the banner.
@@ -136,7 +137,7 @@ export function createStorageAlert({
     const proceed = await confirm({
       title: 'Reset the unreadable label?',
       message:
-        'The stored value that could not be read will be removed and a fresh label will open. Export the raw value first if you may need it. This cannot be undone.',
+        'The stored value that could not be read will be removed. The label open now is kept. Export the raw value first if you may need it. This cannot be undone.',
       confirmLabel: 'Reset the label',
     });
     if (!proceed) return false;

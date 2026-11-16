@@ -413,7 +413,7 @@ test('the library is opened before the controller can read a document', () => {
   assert.ok(editor > boot, 'the controller is created only after the boot payload');
   assert.match(main, /createMemoryLibrary\(\)/, 'unavailable IndexedDB falls back to memory');
   assert.match(main, /storageAlert\.capture\(\s*bootPayload\.legacyError\.raw/, 'the legacy error reaches the quarantine banner');
-  assert.match(main, /labelSession\.resetLegacy\(\)/, 'the alert reset creates a fresh label through the session');
+  assert.match(main, /labelSession\.resetLegacy\(\)/, 'the alert reset keeps the current label through the session');
   assert.doesNotMatch(main, /hydrateStoredDocument/, 'the legacy hydration lives in the library migration');
 });
 
