@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: '9f7dc63bfe8351d6',
+  version: '7041369040da404a',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -85,7 +85,7 @@ self.__PRECACHE = {
     'src/vendor/qrcode.js',
   ],
   digests: {
-    'assets/app.css': '3d4071cfedec7e0cdbb513d68d1667db70e529b1e1a0d303506a1f9f7db4fc39',
+    'assets/app.css': 'c3242a214651a67d574bc7a327a9c17aba816a10a7a52e76731b8c21e14f69c4',
     'assets/icon-192.png': 'f09102b1c7ae346aeceaf1a20d16c74e4900d19b907945acbf786f4198231a92',
     'assets/icon-512.png': '45fcfcfb212262f227be5745c0cd0b85b58787c4338471e0ea3c1583971c1573',
     'assets/icon-maskable-512.png': 'd5df4b979fd21e9af56424f3777ae974f8cb115e0ef8b92884588e55186b9688',
@@ -128,7 +128,7 @@ self.__PRECACHE = {
     'src/label/templates.js': '165b47fc6bee66c8f7121053bd24d26227ac0d951300b56714b0c0e2fc17142a',
     'src/label/text-layout.js': '475d60e209e7ecade8208829c8a244b6d37d5c01ef04069d577afbe165171599',
     'src/label/transfer.js': 'fe1f0e8db782a065d4f37d32b4cc1e38021fdf13ef7ffc1b2390016c2c65dfd4',
-    'src/main.js': 'f65c1aa57b9df8151d5d76f93b5dab6d146d704a9770da6a068c61e84b6143af',
+    'src/main.js': 'cd28ec6650e8890682d96813e83fbac4ce3439c05338ddb69a969c5476dd6b86',
     'src/protocol/client.js': '1124bfaf6668838e602c2cd9c7a36f8569fa78ccba3501cde37803721a400ea0',
     'src/protocol/commands.js': 'fb406fce789c8007e8d929148c92f697c4d1b36a3279eb32af9deaf7b6f5c2b6',
     'src/protocol/errors.js': '2ab17da4ec3ed375bfcf49cd7ef6daef721374b5dfe7c8958e2c874455a9505d',

@@ -284,12 +284,12 @@ function placeInspector() {
 
 /** The raw stage viewport the fit math measures. */
 function stageViewport() {
-  // On compact widths the stage caps itself with a CSS max-height (40vh). Use
-  // that cap, not the current content-driven height, or the fit would chase the
-  // canvas it is sizing. getComputedStyle resolves the cap to pixels.
-  const maxHeight = parseFloat(getComputedStyle(ui.stageScroll).maxHeight);
-  const cap = Number.isFinite(maxHeight) && maxHeight > 0 ? maxHeight : ui.stageScroll.clientHeight;
-  return { availableWidth: ui.stageScroll.clientWidth, availableHeight: cap };
+  // On compact widths the stage owns a fixed height (40vh), so the fit is not
+  // chasing the canvas it is sizing. getComputedStyle resolves that constant to
+  // pixels; on desktop it resolves the stage row the grid already sized.
+  const height = parseFloat(getComputedStyle(ui.stageScroll).height);
+  const available = Number.isFinite(height) && height > 0 ? height : ui.stageScroll.clientHeight;
+  return { availableWidth: ui.stageScroll.clientWidth, availableHeight: available };
 }
 
 /**

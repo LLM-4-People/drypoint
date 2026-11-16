@@ -59,3 +59,28 @@ test('the page has one heading, two unique landmarks and a named canvas', async 
     assert.equal(state.gateRole, 'status', 'a new gate refusal is announced without a focus change');
   });
 });
+
+
+test('the compact display:contents sidebar keeps its landmark and name', async (t) => {
+  // P-F2 removes the sidebar's box at compact widths so its rail, inspector and
+  // panels can be ordered like the final shell before boot. `display: contents`
+  // must not drop the aside from the accessibility tree: the AX domain is the
+  // only check that can see it, because querySelectorAll('aside') still finds
+  // the element either way.
+  await withPage(t, async ({ cdp, port }) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 412, height: 823, deviceScaleFactor: 2, mobile: true });
+    await openApp(cdp, port);
+    assert.equal(
+      await cdp.evaluate("getComputedStyle(document.querySelector('.sidebar')).display"),
+      'contents',
+      'the compact layout uses the pre-paint order'
+    );
+
+    await cdp.send('Accessibility.enable');
+    const tree = await cdp.send('Accessibility.getFullAXTree');
+    const landmarks = (tree.result?.nodes ?? [])
+      .filter((node) => !node.ignored && node.role?.value === 'complementary')
+      .map((node) => node.name?.value ?? '');
+    assert.deepEqual(landmarks.sort(), ['Elements and layers', 'Properties'], 'both named asides survive');
+  });
+});
