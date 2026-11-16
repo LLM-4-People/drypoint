@@ -109,8 +109,13 @@ declared exceptions, and both say so in the build log:
 - a key the build just generated cannot be the release key;
 - `CI` sets `ANDROID_ALLOW_TEST_KEY='true'` (both `'1'` and `'true'` are
   accepted), which the pull-request gate does because it proves the toolchain
-  with a throwaway key and publishes nothing. The release workflow never sets
-  it.
+  with a throwaway key and publishes nothing. The unprivileged CI jobs create
+  that key explicitly with `scripts/ci-keystore.mjs`; the script is the one
+  owner of the password, alias, distinguished name and `keytool` arguments.
+  `CI=true` with no key is still a hard failure — CI never invents a release
+  key. The release `build` job uses the throwaway key only for the unsigned
+  artifact; the `sign` job never sets `ANDROID_ALLOW_TEST_KEY` and never runs
+  the script.
 
 ## Signature schemes and reproducible bytes
 

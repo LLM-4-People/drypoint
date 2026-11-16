@@ -38,11 +38,209 @@ import { fileURLToPath } from 'node:url';
 
 import { parseDocument } from 'yaml';
 
+import { THROWAWAY as CI_THROWAWAY } from './ci-keystore.mjs';
+
 export const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
 export const WORKFLOW_DIR = '.github/workflows';
 export const RELEASE_FILE = 'release.yml';
 /** The one aggregate job whose whole purpose is to read its legs' results. */
 export const AGGREGATE_JOB = 'required';
+/** The one environment that holds the release signing key. */
+export const RELEASE_ENVIRONMENT = 'release';
+
+/** The pinned action commits the trusted wiring names explicitly below. */
+const CHECKOUT = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1';
+const SETUP_NODE = 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1';
+
+/** How the trusted gate selects the candidate tree as data, never as code. */
+const PR_TREE_EXPRESSION =
+  "${{ github.event_name == 'pull_request' && format('{0}/pr', github.workspace) || github.event_name == 'push' && format('{0}/data', github.workspace) || github.workspace }}";
+
+/**
+ * The exact trusted wiring of `policy` and `required`.
+ *
+ * These two jobs decide every merge, and a candidate checkout is present in
+ * the policy job. The gate therefore does not approve "equivalent" wiring: the
+ * exact steps, refs, paths, conditions, environment and shell bodies are the
+ * contract. A missing/extra/reordered step, a `working-directory`, a job
+ * `defaults` or `container`, a fork `repository:` or a moved checkout path is
+ * a finding.
+ */
+export const TRUSTED_STEPS = Object.freeze({
+  policy: Object.freeze([
+    Object.freeze({ name: 'Checkout main (trusted policy scripts)', uses: CHECKOUT, with: Object.freeze({ ref: 'main', 'persist-credentials': false }) }),
+    Object.freeze({ name: 'Use the pinned Node', uses: SETUP_NODE, with: Object.freeze({ 'node-version-file': '.node-version' }) }),
+    Object.freeze({ name: 'Install the one dev-only dependency', run: 'npm ci' }),
+    Object.freeze({
+      name: 'Checkout the pull request as data',
+      if: "github.event_name == 'pull_request'",
+      uses: CHECKOUT,
+      with: Object.freeze({
+        repository: '${{ github.event.pull_request.head.repo.full_name }}',
+        ref: '${{ github.event.pull_request.head.sha }}',
+        path: 'pr',
+        'persist-credentials': false,
+        'fetch-depth': 1,
+      }),
+    }),
+    Object.freeze({
+      name: 'Checkout the pushed commit as data',
+      if: "github.event_name == 'push'",
+      uses: CHECKOUT,
+      with: Object.freeze({ ref: '${{ github.sha }}', path: 'data', 'persist-credentials': false, 'fetch-depth': 1 }),
+    }),
+    Object.freeze({
+      name: 'Workflow policy and privacy on the candidate tree',
+      env: Object.freeze({ PR_TREE: PR_TREE_EXPRESSION }),
+      run: Object.freeze([
+        'set -euo pipefail',
+        'node scripts/check-workflows.mjs --workflows "$PR_TREE/.github/workflows"',
+        'node scripts/check-privacy.mjs --root "$PR_TREE" --tracked',
+        'bash scripts/actionlint.sh "$PR_TREE/.github/workflows"',
+      ]).join('\n'),
+    }),
+  ]),
+  required: Object.freeze([
+    Object.freeze({
+      name: 'Checkout main (trusted aggregate)',
+      uses: CHECKOUT,
+      with: Object.freeze({ ref: 'main', 'persist-credentials': false, 'fetch-depth': 1 }),
+    }),
+    Object.freeze({
+      name: 'Every leg must have succeeded',
+      env: Object.freeze({ NEEDS: '${{ toJSON(needs) }}' }),
+      run: 'node scripts/check-required.mjs',
+    }),
+  ]),
+});
+
+/**
+ * The exact step names of the four release jobs. The names are the step list's
+ * identity: an added, removed or reordered step changes the list even when the
+ * body would be harmless. The security-critical bodies are checked separately.
+ */
+export const RELEASE_STEP_NAMES = Object.freeze({
+  resolve: Object.freeze(['Checkout main with tags', 'Resolve the tag']),
+  build: Object.freeze([
+    'Checkout main',
+    'Materialize the resolved commit',
+    'Prove the worktree is the resolved commit',
+    'Use the pinned Node',
+    'Install the one dev-only dependency',
+    'Locate a Chromium binary',
+    'Gate the resolved tree',
+    'Release notes from the changelog',
+    'Generate the notes',
+    'Use JDK 21',
+    'Install the pinned SDK packages',
+    'Create a throwaway signing key',
+    'Build the unsigned APK with a throwaway key',
+    'Package the unsigned artifact',
+    'The built APK matches its manifest and policy',
+    'The build changed no tracked file',
+    'The build left no untracked file',
+    'Upload the unsigned artifact',
+  ]),
+  sign: Object.freeze([
+    'Download the unsigned artifact',
+    'Use the gate-proved JDK',
+    'Install the pinned build tools',
+    'Sign, verify and describe the APK',
+    'Attest the signed APK',
+    'Download the provenance bundle',
+    'Prove the provenance binds the tag commit',
+    'Upload the release files',
+  ]),
+  publish: Object.freeze(['Download the release files', 'Publish the release, or prove it already is']),
+});
+
+/**
+ * The exact permission map of every workflow and job. A write scope a job does
+ * not need is a grant the token holder can exercise; equality, not a minimum
+ * check, is the only way a widening edit shows up here.
+ */
+export const EXPECTED_PERMISSIONS = Object.freeze({
+  'actionlint.yml': Object.freeze({ top: Object.freeze({ contents: 'read' }), jobs: Object.freeze({}) }),
+  'checks.yml': Object.freeze({ top: Object.freeze({ contents: 'read' }), jobs: Object.freeze({}) }),
+  'codeql.yml': Object.freeze({
+    top: Object.freeze({ contents: 'read' }),
+    jobs: Object.freeze({ analyze: Object.freeze({ 'security-events': 'write', contents: 'read', actions: 'read' }) }),
+  }),
+  'dependency-review.yml': Object.freeze({
+    top: Object.freeze({ contents: 'read', 'pull-requests': 'write' }),
+    jobs: Object.freeze({}),
+  }),
+  'pages.yml': Object.freeze({
+    top: Object.freeze({ contents: 'read' }),
+    jobs: Object.freeze({
+      build: null,
+      deploy: Object.freeze({ pages: 'write', 'id-token': 'write' }),
+      smoke: Object.freeze({ contents: 'read' }),
+    }),
+  }),
+  'release.yml': Object.freeze({
+    top: Object.freeze({ contents: 'read' }),
+    jobs: Object.freeze({
+      resolve: null,
+      build: Object.freeze({ contents: 'read' }),
+      sign: Object.freeze({ contents: 'read', 'id-token': 'write', attestations: 'write' }),
+      publish: Object.freeze({ contents: 'write' }),
+    }),
+  }),
+  'scorecard.yml': Object.freeze({
+    top: Object.freeze({ contents: 'read' }),
+    jobs: Object.freeze({
+      analysis: Object.freeze({ 'security-events': 'write', 'id-token': 'write', contents: 'read', actions: 'read' }),
+    }),
+  }),
+  'stale.yml': Object.freeze({ top: Object.freeze({ issues: 'write', 'pull-requests': 'write' }), jobs: Object.freeze({}) }),
+});
+
+/** The exact concurrency group of every workflow; `release` is reserved. */
+export const EXPECTED_CONCURRENCY = Object.freeze({
+  'actionlint.yml': Object.freeze({ group: 'actionlint-${{ github.workflow }}-${{ github.ref }}', 'cancel-in-progress': true }),
+  'checks.yml': Object.freeze({ group: 'checks-${{ github.workflow }}-${{ github.ref }}', 'cancel-in-progress': true }),
+  'codeql.yml': Object.freeze({ group: 'codeql-${{ github.workflow }}-${{ github.ref }}', 'cancel-in-progress': true }),
+  'dependency-review.yml': Object.freeze({ group: 'dependency-review-${{ github.ref }}', 'cancel-in-progress': true }),
+  'pages.yml': Object.freeze({ group: 'pages', 'cancel-in-progress': false }),
+  'release.yml': Object.freeze({ group: 'release', 'cancel-in-progress': false }),
+  'scorecard.yml': Object.freeze({ group: 'scorecard', 'cancel-in-progress': false }),
+  'stale.yml': Object.freeze({ group: 'stale', 'cancel-in-progress': false }),
+});
+
+/**
+ * Environment variables that change what a trusted script executes or where it
+ * writes. They are rejected at workflow, job and step level.
+ */
+export const INJECTION_KEYS = Object.freeze([
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'BASH_ENV',
+  'ENV',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'PATH',
+  'GITHUB_ENV',
+  'GITHUB_PATH',
+  'GITHUB_OUTPUT',
+]);
+
+/**
+ * Every workflow this repository owns. A candidate can add `.github/workflows/
+ * release.yaml`, which GitHub runs exactly like `release.yml` but which the
+ * release-specific policy would never inspect. The set is therefore closed:
+ * an added, renamed or removed workflow is a finding.
+ */
+export const OWNED_WORKFLOWS = Object.freeze([
+  'actionlint.yml',
+  'checks.yml',
+  'codeql.yml',
+  'dependency-review.yml',
+  'pages.yml',
+  'release.yml',
+  'scorecard.yml',
+  'stale.yml',
+]);
 
 /**
  * The only actions this repository may use, each pinned to one commit. A
@@ -92,15 +290,17 @@ export const GATE_COMMANDS = Object.freeze({
     android: Object.freeze([
       'npm ci',
       'bash scripts/android-sdk.sh',
+      'node scripts/ci-keystore.mjs',
       'npm run build:android',
-      'node scripts/check-apk.mjs --apk "android/build/drypoint-${version}.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
+      'node scripts/check-apk.mjs --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
       'git diff --exit-code',
       'test -z "$(git status --porcelain)"',
     ]),
     policy: Object.freeze([
       'npm ci',
       'node scripts/check-workflows.mjs --workflows "$PR_TREE/.github/workflows"',
-      'node scripts/check-privacy.mjs --root "$PR_TREE"',
+      'node scripts/check-privacy.mjs --root "$PR_TREE" --tracked',
+      'bash scripts/actionlint.sh "$PR_TREE/.github/workflows"',
     ]),
     required: Object.freeze(['node scripts/check-required.mjs']),
   }),
@@ -111,6 +311,12 @@ const MASK_COMMANDS = new Set(['true', ':', 'exit 0']);
 const SHA = /^[0-9a-f]{40}$/;
 /** A masked gate step is rejected in both workflows that hold authority. */
 const MASKABLE_WORKFLOWS = new Set(['checks.yml', RELEASE_FILE]);
+/** A secret reference in any job that is not the one signing job. */
+const SECRET_REFERENCE = /secrets\.[A-Za-z_][A-Za-z0-9_]*/;
+/** The exact opt-in a gated step may put before its registered command. */
+const GATE_PREAMBLE = 'set -euo pipefail';
+/** The one owner of the CI throwaway key; both unprivileged jobs call it. */
+export const CI_KEYSTORE_COMMAND = 'node scripts/ci-keystore.mjs';
 
 /** YAML may hold a scalar or a list in either form; callers want a list. */
 function list(value) {
@@ -399,6 +605,185 @@ export function jobNames(workflow) {
   return isMap(workflow?.jobs) ? Object.keys(workflow.jobs) : [];
 }
 
+/** Whether two plain maps have the same keys and values (order-insensitive). */
+function sameMap(actual, expected) {
+  if (actual == null && expected == null) return true;
+  if (!isMap(actual) || !isMap(expected)) return false;
+  const entries = (map) => Object.entries(map).sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify(entries(actual)) === JSON.stringify(entries(expected));
+}
+
+/** The exact permission table, applied to every owned workflow. */
+function permissionTableFindings(workflow, file) {
+  const table = EXPECTED_PERMISSIONS[file];
+  if (!table) return [];
+  const findings = [];
+  if (!sameMap(workflow?.permissions, table.top)) {
+    findings.push(`${file}: top-level permissions must be exactly ${JSON.stringify(table.top)}`);
+  }
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    const expected = Object.hasOwn(table.jobs, name) ? table.jobs[name] : null;
+    if (!sameMap(job.permissions, expected)) {
+      findings.push(
+        `${file}: job "${name}" permissions must be exactly ${JSON.stringify(expected)}, not ${JSON.stringify(job.permissions ?? null)}`
+      );
+    }
+  }
+  return findings;
+}
+
+/** The exact concurrency group, so a checks run cannot join `release`. */
+function concurrencyFindings(workflow, file) {
+  const expected = EXPECTED_CONCURRENCY[file];
+  if (!expected) return [];
+  const findings = [];
+  if (workflow?.concurrency?.group !== expected.group) {
+    findings.push(
+      `${file}: concurrency group must be exactly "${expected.group}", not ${JSON.stringify(workflow?.concurrency?.group ?? null)}`
+    );
+  }
+  if (workflow?.concurrency?.['cancel-in-progress'] !== expected['cancel-in-progress']) {
+    findings.push(`${file}: concurrency cancel-in-progress must be ${expected['cancel-in-progress']}`);
+  }
+  return findings;
+}
+
+/** Reject every env key that changes what the trusted scripts execute. */
+function injectionFindings(workflow, file) {
+  const findings = [];
+  const check = (env, where) => {
+    if (!isMap(env)) return;
+    for (const key of Object.keys(env)) {
+      if (INJECTION_KEYS.includes(key)) findings.push(`${file}: ${where} must not set ${key}`);
+    }
+  };
+  check(workflow?.env, 'the workflow env');
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    check(job?.env, `job "${name}" env`);
+    for (const step of stepsOf(job)) check(step.env, `job "${name}" step env`);
+  }
+  return findings;
+}
+
+/** Normalize one GitHub expression for an exact comparison. */
+export function conditionText(value) {
+  return value == null ? '' : String(value).replace(/\s+/g, ' ').trim();
+}
+
+/** Require one exact job or step condition. */
+export function exactConditionFindings(value, expected, file, where) {
+  if (conditionText(value) === expected) return [];
+  return [`${file}: ${where} must be exactly "${expected}", not ${JSON.stringify(conditionText(value) || null)}`];
+}
+
+/**
+ * The exact trusted step list. Any added, missing, reordered or reshaped step
+ * is a finding, as is a job-level `defaults`, `container`, `env` or
+ * `continue-on-error`.
+ */
+function trustedStepFindings(job, file, jobName) {
+  const expected = TRUSTED_STEPS[jobName];
+  if (!expected) return [];
+  if (!isMap(job)) return [`${file}: job "${jobName}" is missing`];
+  const findings = [];
+  for (const key of ['defaults', 'container']) {
+    if (job[key] != null) findings.push(`${file}: job "${jobName}" must not declare ${key}`);
+  }
+  if (job.env != null) findings.push(`${file}: job "${jobName}" must not declare job-level env`);
+  if (job['continue-on-error'] != null && job['continue-on-error'] !== false) {
+    findings.push(`${file}: job "${jobName}" must not set continue-on-error`);
+  }
+  const steps = stepsOf(job);
+  if (steps.length !== list(job.steps).length) {
+    findings.push(`${file}: job "${jobName}" steps must all be mappings`);
+  }
+  if (steps.length !== expected.length) {
+    findings.push(`${file}: job "${jobName}" must have exactly ${expected.length} steps; found ${steps.length}`);
+  }
+  const allowed = ['name', 'if', 'uses', 'with', 'run', 'env'];
+  for (let index = 0; index < Math.min(steps.length, expected.length); index++) {
+    const step = steps[index];
+    const wanted = expected[index];
+    const where = `job "${jobName}" step ${index + 1} ("${wanted.name}")`;
+    for (const key of Object.keys(step)) {
+      if (!allowed.includes(key)) findings.push(`${file}: ${where} must not set ${key}`);
+    }
+    if (step.name !== wanted.name) {
+      findings.push(`${file}: ${where} has the name ${JSON.stringify(step.name ?? null)}`);
+      continue;
+    }
+    if (conditionText(step.if) !== conditionText(wanted.if)) {
+      findings.push(`${file}: ${where} condition must be ${JSON.stringify(conditionText(wanted.if) || null)}`);
+    }
+    if (step.uses !== wanted.uses) {
+      findings.push(`${file}: ${where} must use ${JSON.stringify(wanted.uses ?? null)}`);
+    }
+    if (!sameMap(step.with, wanted.with)) {
+      findings.push(`${file}: ${where} with: must be exactly ${JSON.stringify(wanted.with ?? null)}`);
+    }
+    if (!sameMap(step.env, wanted.env)) {
+      findings.push(`${file}: ${where} env: must be exactly ${JSON.stringify(wanted.env ?? null)}`);
+    }
+    if ((step.run == null ? '' : String(step.run).trim()) !== (wanted.run ?? '')) {
+      findings.push(`${file}: ${where} run: must be the trusted body, not ${JSON.stringify(step.run ?? null)}`);
+    }
+  }
+  return findings;
+}
+
+/** The exact step names of one release job. */
+function releaseStepNamesFindings(job, file, jobName) {
+  const expected = RELEASE_STEP_NAMES[jobName];
+  if (!expected) return [];
+  if (!isMap(job)) return [`${file}: job "${jobName}" is missing`];
+  const findings = [];
+  for (const key of ['defaults', 'container']) {
+    if (job[key] != null) findings.push(`${file}: job "${jobName}" must not declare ${key}`);
+  }
+  const names = stepsOf(job).map((step) => step.name);
+  if (JSON.stringify(names) !== JSON.stringify(expected)) {
+    findings.push(
+      `${file}: job "${jobName}" must have exactly these steps: ${expected.join(' | ')}; found ${names.join(' | ') || 'none'}`
+    );
+  }
+  return findings;
+}
+
+/** Reject the write token outside the release workflow. */
+function tokenFindings(workflow, file) {
+  if (file === RELEASE_FILE) return [];
+  if (JSON.stringify([workflow?.env ?? {}, workflow?.jobs ?? {}]).includes('github.token')) {
+    return [`${file}: must not read github.token; the trusted jobs need no write capability`];
+  }
+  return [];
+}
+
+/** Reject `source`/`.` in a shell body; both execute repository data. */
+function sourceFindings(job, file, jobName) {
+  const findings = [];
+  for (const command of stepsOf(job).flatMap(stepCommands)) {
+    const tokens = shellTokens(command);
+    if (tokens[0] === 'source' || tokens[0] === '.') {
+      findings.push(`${file}: job "${jobName}" must not source a file: "${command}"`);
+    }
+  }
+  return findings;
+}
+
+/** Sign and publish steps are plain: no condition, shell, directory or mask. */
+function plainStepFindings(job, file, jobName) {
+  const findings = [];
+  for (const step of stepsOf(job)) {
+    for (const key of ['if', 'shell', 'working-directory']) {
+      if (step[key] != null) findings.push(`${file}: job "${jobName}" step must not set ${key}`);
+    }
+    if (step['continue-on-error'] != null && step['continue-on-error'] !== false) {
+      findings.push(`${file}: job "${jobName}" step must not set continue-on-error`);
+    }
+  }
+  return findings;
+}
+
 /** The `needs:` list of one parsed job. */
 export function needsOf(job) {
   return list(job?.needs).map(String);
@@ -446,7 +831,13 @@ function usesFindings(step, file, jobName) {
     return findings;
   }
   const value = step.uses;
-  if (value.startsWith('./')) return findings;
+  if (value.startsWith('./')) {
+    // A local action is candidate or repository code, not a pinned action. In
+    // the trusted `policy` job the candidate checkout is present, so a local
+    // action there would run candidate code before the gate.
+    findings.push(`${file}: job "${jobName}" must not run a local action: ${value}`);
+    return findings;
+  }
   const at = value.lastIndexOf('@');
   const action = at < 0 ? value : value.slice(0, at);
   const ref = at < 0 ? '' : value.slice(at + 1);
@@ -529,12 +920,10 @@ function aggregateFindings(workflow, jobs, file) {
   const scriptStep = steps.find((step) => stepCommands(step).includes('node scripts/check-required.mjs'));
   if (!scriptStep) {
     findings.push(`${file}: job "${AGGREGATE_JOB}" must call node scripts/check-required.mjs`);
-  } else {
-    if (String(scriptStep.env?.NEEDS ?? '').trim() !== '${{ toJSON(needs) }}') {
-      findings.push(`${file}: job "${AGGREGATE_JOB}" must pass NEEDS: \${{ toJSON(needs) }} to the script`);
-    }
-    findings.push(...maskedStepFindings(scriptStep, file, AGGREGATE_JOB, stepCommands(scriptStep)));
+  } else if (String(scriptStep.env?.NEEDS ?? '').trim() !== '${{ toJSON(needs) }}') {
+    findings.push(`${file}: job "${AGGREGATE_JOB}" must pass NEEDS: \${{ toJSON(needs) }} to the script`);
   }
+  findings.push(...gateStepFindings(aggregate, file, AGGREGATE_JOB, ['node scripts/check-required.mjs']));
 
   const logic = steps
     .flatMap((step) => [...stepCommands(step), JSON.stringify(step.env ?? {}), typeof step.with?.script === 'string' ? step.with.script : ''])
@@ -558,9 +947,14 @@ export function parsedWorkflowFindings(workflow, file) {
   if (!isMap(jobs) || !Object.keys(jobs).length) return [`${file}: no jobs`];
 
   findings.push(...permissionFindings(workflow.permissions, file, ''));
+  findings.push(...permissionTableFindings(workflow, file));
+  findings.push(...concurrencyFindings(workflow, file));
+  findings.push(...injectionFindings(workflow, file));
+  findings.push(...tokenFindings(workflow, file));
   if (workflow.permissions == null) findings.push(`${file}: no top-level permissions block`);
   if (workflow.concurrency == null) findings.push(`${file}: no top-level concurrency block`);
   if (mentionsKey(workflow.on, 'pull_request_target')) findings.push(`${file}: pull_request_target is banned`);
+  if (workflow.defaults != null) findings.push(`${file}: must not declare workflow-level defaults (a run shell override could no-op a gate)`);
 
   for (const [name, job] of Object.entries(jobs)) {
     if (!isMap(job)) {
@@ -569,6 +963,14 @@ export function parsedWorkflowFindings(workflow, file) {
     }
     if (!Number.isInteger(job['timeout-minutes']) || job['timeout-minutes'] <= 0) {
       findings.push(`${file}: job "${name}" has no timeout-minutes`);
+    }
+    // A trusted job must run on the image the gate proved. A self-hosted,
+    // Windows or macOS label changes the shell and the tools silently.
+    if (job['runs-on'] !== 'ubuntu-24.04') {
+      findings.push(`${file}: job "${name}" must run on ubuntu-24.04, not ${JSON.stringify(job['runs-on'] ?? null)}`);
+    }
+    if (job['continue-on-error'] != null && job['continue-on-error'] !== false) {
+      findings.push(`${file}: job "${name}" must not set continue-on-error`);
     }
     findings.push(...permissionFindings(job.permissions, file, `job "${name}" `));
     if (job.uses != null) {
@@ -584,12 +986,19 @@ export function parsedWorkflowFindings(workflow, file) {
 
   findings.push(...aggregateFindings(workflow, jobs, file));
   findings.push(...withScriptFindings(workflow, file));
+  findings.push(...environmentFindings(workflow, file));
+  findings.push(...secretFindings(workflow, file));
   if (file === 'checks.yml') {
     const on = isMap(workflow.on) ? workflow.on : {};
     if (!list(on.push?.tags).includes('v*')) findings.push(`${file}: Checks must run on v* tag pushes so the release can resolve them`);
     if (!list(on.push?.branches).includes('main')) findings.push(`${file}: Checks must run on main`);
     if (!Object.hasOwn(on, 'pull_request')) findings.push(`${file}: Checks must run on pull requests`);
-    if (jobs.policy?.if != null) findings.push(`${file}: job "policy" must not skip a push or tag`);
+    for (const [name, job] of Object.entries(jobs)) {
+      if (name === AGGREGATE_JOB) continue;
+      if (job.if != null) findings.push(`${file}: job "${name}" must not carry an if: (the gate runs on every trigger)`);
+    }
+    findings.push(...trustedStepFindings(jobs.policy, file, 'policy'));
+    findings.push(...trustedStepFindings(jobs.required, file, 'required'));
   }
   if (file === 'checks.yml' && !jobs[AGGREGATE_JOB]) {
     findings.push(`${file}: job "${AGGREGATE_JOB}" is missing`);
@@ -599,8 +1008,73 @@ export function parsedWorkflowFindings(workflow, file) {
 }
 
 /**
- * Every required merge-gate command must appear exactly once, in a step that
- * cannot be skipped or masked.
+ * The one gate-step grammar.
+ *
+ * A gate step's shell body must be exactly a contiguous slice of the job's
+ * registered command list, optionally prefixed by `set -euo pipefail`. The
+ * slices, in step order, must concatenate to the whole list exactly.
+ *
+ * Matching text is not enough: `if false; then <gate>; fi`, a here-doc, a
+ * pipeline (`| cat`), `|| /bin/true`, a subshell, a brace group or a `sh -c`
+ * wrapper all put commands around the registered one that a substring scan
+ * never sees. Those forms add tokens, so the body is no longer the registered
+ * sequence and the step is rejected. `set -euo pipefail` is the only accepted
+ * preamble; every other command in a gate step is a finding.
+ */
+function gateStepFindings(job, file, jobName, required) {
+  const findings = [];
+  const observed = [];
+  for (const step of stepsOf(job)) {
+    const commands = stepCommands(step);
+    if (!commands.length) continue;
+    const body = commands[0] === GATE_PREAMBLE ? commands.slice(1) : commands;
+    if (!body.some((command) => required.includes(command))) continue;
+
+    findings.push(...maskedStepFindings(step, file, jobName, commands));
+    const start = body.length ? required.indexOf(body[0]) : -1;
+    const expected = start < 0 ? [] : required.slice(start, start + body.length);
+    const exact =
+      start >= 0 && body.length === expected.length && body.every((command, index) => command === expected[index]);
+    if (!exact) {
+      findings.push(
+        `${file}: job "${jobName}" gate step must run only the registered commands; found ${JSON.stringify(body)}`
+      );
+      continue;
+    }
+    observed.push(...body);
+  }
+  if (observed.join('\n') !== required.join('\n')) {
+    findings.push(
+      `${file}: job "${jobName}" must run exactly these commands in order: ${required.join(' | ')}; found ${
+        observed.join(' | ') || 'none'
+      }`
+    );
+  }
+  return findings;
+}
+
+/**
+ * The throwaway key must be created before the build that consumes it. A
+ * reordered workflow leaves `CI=true` with no key, which is a hard failure —
+ * or worse, tempts someone to relax that rule instead.
+ */
+function keystoreOrderFindings(job, file, jobName) {
+  const steps = stepsOf(job);
+  const keystore = steps.findIndex((step) => stepCommands(step).includes(CI_KEYSTORE_COMMAND));
+  const build = steps.findIndex((step) => stepCommands(step).includes('npm run build:android'));
+  if (build < 0) return [];
+  if (keystore < 0) {
+    return [`${file}: job "${jobName}" must create the throwaway key with ${CI_KEYSTORE_COMMAND} before ${'npm run build:android'}`];
+  }
+  if (keystore > build) {
+    return [`${file}: job "${jobName}" must create the throwaway key before npm run build:android`];
+  }
+  return [];
+}
+
+/**
+ * Every required merge-gate command must appear in the registered order, in
+ * gate steps that cannot be skipped or masked.
  */
 function gateFindings(workflow, jobs, file) {
   const gates = GATE_COMMANDS[file];
@@ -612,17 +1086,80 @@ function gateFindings(workflow, jobs, file) {
       findings.push(`${file}: job "${jobName}" is missing`);
       continue;
     }
-    for (const command of required) {
-      const holders = stepsOf(job).filter((step) => stepCommands(step).includes(command));
-      if (holders.length !== 1) {
-        findings.push(
-          `${file}: job "${jobName}" must run exactly one ${holders.length ? 'step with' : 'step containing'} "${command}"`
-        );
-        continue;
-      }
-      const [step] = holders;
-      findings.push(...maskedStepFindings(step, file, jobName, stepCommands(step)));
+    findings.push(...gateStepFindings(job, file, jobName, required));
+    findings.push(...keystoreOrderFindings(job, file, jobName));
+  }
+  return findings;
+}
+
+/**
+ * The environment names one `environment:` value declares. GitHub accepts a
+ * bare name or a map with `name`; both are the same environment grant.
+ */
+function environmentNames(value) {
+  if (typeof value === 'string') return [value];
+  if (isMap(value) && typeof value.name === 'string') return [value.name];
+  return [];
+}
+
+/**
+ * Only `release.yml`'s `sign` job may enter the release environment. Every
+ * other job in every workflow is rejected, including a map-form spelling of the
+ * same name. The environment holds the signing key; `environment:` is a grant
+ * exactly like a permission.
+ */
+function environmentFindings(workflow, file) {
+  const findings = [];
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    if (!isMap(job) || job.environment == null) continue;
+    if (!environmentNames(job.environment).includes(RELEASE_ENVIRONMENT)) continue;
+    const owner = file === RELEASE_FILE && name === 'sign' && job.environment === RELEASE_ENVIRONMENT;
+    if (!owner) {
+      findings.push(
+        `${file}: job "${name}" must not use the ${RELEASE_ENVIRONMENT} environment; only ${RELEASE_FILE}'s "sign" job may`
+      );
     }
+  }
+  return findings;
+}
+
+/**
+ * A secret reference anywhere in a job (env, step env, `with:`, or the `run:`
+ * body itself) is a grant of the secret to that job. Only the signing job may
+ * read one.
+ */
+function secretFindings(workflow, file) {
+  const findings = [];
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    if (!isMap(job)) continue;
+    if (file === RELEASE_FILE && name === 'sign') continue;
+    const text = JSON.stringify([
+      job.env ?? {},
+      stepsOf(job).map((step) => ({ env: step.env ?? {}, with: step.with ?? {}, run: step.run ?? '' })),
+    ]);
+    if (SECRET_REFERENCE.test(text)) {
+      findings.push(`${file}: job "${name}" must not read secrets; only ${RELEASE_FILE}'s "sign" job may`);
+    }
+  }
+  return findings;
+}
+
+/**
+ * The throwaway identity has one owner: `scripts/ci-keystore.mjs`. A workflow
+ * that spells the password, DN or a raw `keytool -genkeypair` is a second
+ * owner, so it is rejected even if it would work.
+ */
+function keystoreOwnershipFindings(text, file) {
+  const findings = [];
+  const source = String(text);
+  if (source.includes(CI_THROWAWAY.password)) {
+    findings.push(`${file}: must not hardcode the CI throwaway password; call ${CI_KEYSTORE_COMMAND}`);
+  }
+  if (source.includes(CI_THROWAWAY.dn)) {
+    findings.push(`${file}: must not hardcode the CI throwaway DN; call ${CI_KEYSTORE_COMMAND}`);
+  }
+  if (/keytool\s+-genkeypair/.test(source)) {
+    findings.push(`${file}: must not run a raw keytool -genkeypair; call ${CI_KEYSTORE_COMMAND}`);
   }
   return findings;
 }
@@ -637,7 +1174,11 @@ function gateFindings(workflow, jobs, file) {
 export function checkWorkflow(text, { file = 'workflow' } = {}) {
   const { workflow, findings } = parseWorkflow(text);
   if (!workflow) return findings.map((finding) => `${file}: ${finding}`);
-  return [...findings.map((finding) => `${file}: ${finding}`), ...parsedWorkflowFindings(workflow, file)];
+  return [
+    ...findings.map((finding) => `${file}: ${finding}`),
+    ...keystoreOwnershipFindings(text, file),
+    ...parsedWorkflowFindings(workflow, file),
+  ];
 }
 
 function jobEnvText(job) {
@@ -685,9 +1226,6 @@ function triggerFindings(workflow, file) {
   for (const forbidden of ['push', 'pull_request', 'pull_request_target', 'schedule', 'workflow_call']) {
     if (on[forbidden] != null) findings.push(`${file}: release must not trigger on ${forbidden}`);
   }
-  if (workflow.concurrency?.group !== 'release' || workflow.concurrency?.['cancel-in-progress'] !== false) {
-    findings.push(`${file}: release concurrency must serialize the group "release"`);
-  }
   return findings;
 }
 
@@ -698,23 +1236,18 @@ function resolveFindings(workflow, file) {
   if (job.environment != null) findings.push(`${file}: job "resolve" must not use the release environment`);
   if (jobEnvText(job).includes('secrets.')) findings.push(`${file}: job "resolve" must not read secrets`);
 
-  const condition = typeof job.if === 'string' ? job.if.replace(/\s+/g, ' ').trim() : '';
-  if (!condition.includes("github.event_name == 'workflow_dispatch'")) {
-    findings.push(`${file}: job "resolve" must handle a manual dispatch`);
-  }
-  if (!condition.includes("github.event.workflow_run.event == 'push'")) {
-    findings.push(`${file}: job "resolve" must only run for a push Checks run, never a pull request`);
-  }
-  if (!condition.includes("github.event.workflow_run.conclusion == 'success'")) {
-    findings.push(`${file}: job "resolve" must only run after a successful Checks run`);
-  }
-  if (!/workflow_run\.event == 'push'\s*&&\s*github\.event\.workflow_run\.conclusion == 'success'/.test(condition)) {
-    findings.push(`${file}: job "resolve" must require the push event and the success conclusion together`);
-  }
+  const expectedCondition =
+    "github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')";
+  findings.push(...exactConditionFindings(job.if, expectedCondition, file, 'job "resolve" if:'));
+  findings.push(...releaseStepNamesFindings(job, file, 'resolve'));
 
   const outputs = isMap(job.outputs) ? job.outputs : {};
-  for (const name of ['publish', 'tag', 'sha', 'version', 'ref']) {
+  const expectedOutputs = ['publish', 'ref', 'sha', 'tag', 'version'];
+  for (const name of expectedOutputs) {
     if (!(name in outputs)) findings.push(`${file}: job "resolve" must output ${name}`);
+  }
+  for (const name of Object.keys(outputs)) {
+    if (!expectedOutputs.includes(name)) findings.push(`${file}: job "resolve" must not expose the unused output ${name}`);
   }
 
   const steps = stepsOf(job);
@@ -722,9 +1255,11 @@ function resolveFindings(workflow, file) {
   if (!checkout) {
     findings.push(`${file}: job "resolve" must check out main`);
   } else {
-    if (checkout.with?.ref !== 'main') findings.push(`${file}: job "resolve" must check out main`);
-    if (checkout.with?.['fetch-depth'] !== 0) findings.push(`${file}: job "resolve" must fetch the full history`);
-    if (checkout.with?.['fetch-tags'] !== true) findings.push(`${file}: job "resolve" must fetch tags`);
+    if (
+      !sameMap(checkout.with, { ref: 'main', 'fetch-depth': 0, 'fetch-tags': true, 'persist-credentials': false })
+    ) {
+      findings.push(`${file}: job "resolve" checkout must name exactly main with full history, tags and no credentials`);
+    }
   }
 
   const logic = steps.flatMap(stepCommands).join('\n');
@@ -733,7 +1268,6 @@ function resolveFindings(workflow, file) {
     [/out "ref=/, 'report the ref the build checks out'],
     [/git merge-base --is-ancestor/, 'verify the commit is an ancestor of origin/main'],
     [/package\.json/, 'verify the tag version against package.json'],
-    [/gh release view/, 'detect an existing release'],
     [/workflow_dispatch/, 'handle the manual dry run'],
     [/publish=true requires a release tag/, 'refuse publish=true with a commit SHA'],
     [/40-character SHA/, 'refuse a short commit SHA'],
@@ -754,26 +1288,27 @@ function resolveFindings(workflow, file) {
 }
 
 function jobGateFindings(workflow, file, name, required) {
-  const findings = [];
   const job = workflow?.jobs?.[name];
   if (!isMap(job)) return [`${file}: job "${name}" is missing`];
+  const findings = gateStepFindings(job, file, name, required);
+  const steps = stepsOf(job);
   for (const command of required) {
-    const holders = stepsOf(job).filter((step) => stepCommands(step).includes(command));
-    if (holders.length !== 1) {
-      findings.push(`${file}: job "${name}" must run exactly one step containing "${command}"`);
-      continue;
+    const holder = steps.find((step) => stepCommands(step).includes(command));
+    if (holder && holder['working-directory'] !== '${{ env.RELEASE_TREE }}') {
+      findings.push(`${file}: job "${name}" must run "${command}" in the resolved worktree`);
     }
-    findings.push(...maskedStepFindings(holders[0], file, name, stepCommands(holders[0])));
   }
   return findings;
 }
 
 function buildFindings(workflow, file) {
   const required = [
+    'test "$(git rev-parse HEAD)" = "$SHA"',
     'npm ci',
     'node scripts/find-chrome.mjs',
     'npm run verify:all',
     'node scripts/release-notes.mjs --tag "$TAG" --commit "$SHA" --out dist/notes.md',
+    CI_KEYSTORE_COMMAND,
     'npm run build:android',
     'node scripts/check-apk.mjs --apk "dist/drypoint-${VERSION}-unsigned.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"',
     'git diff --exit-code',
@@ -784,9 +1319,21 @@ function buildFindings(workflow, file) {
   if (!isMap(job)) return findings;
   if (job.environment != null) findings.push(`${file}: job "build" must not use the release environment`);
   if (jobEnvText(job).includes('secrets.')) findings.push(`${file}: job "build" must not read secrets`);
-  const condition = typeof job.if === 'string' ? job.if : '';
-  if (!condition.includes("needs.resolve.outputs.publish == 'true'") || !condition.includes('workflow_dispatch')) {
-    findings.push(`${file}: job "build" must run only for a resolved release or a manual dry run`);
+  findings.push(
+    ...exactConditionFindings(
+      job.if,
+      "needs.resolve.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'",
+      file,
+      'job "build" if:'
+    )
+  );
+  findings.push(...releaseStepNamesFindings(job, file, 'build'));
+  for (const [name, value] of [
+    ['TAG', '${{ needs.resolve.outputs.tag }}'],
+    ['SHA', '${{ needs.resolve.outputs.sha }}'],
+    ['VERSION', '${{ needs.resolve.outputs.version }}'],
+  ]) {
+    if (job.env?.[name] !== value) findings.push(`${file}: job "build" env ${name} must be exactly ${value}`);
   }
   const steps = stepsOf(job);
   const checkout = steps.find((step) => typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@'));
@@ -795,11 +1342,9 @@ function buildFindings(workflow, file) {
     // The build's own checkout is a fixed ref. A dynamic ref here is the
     // CodeQL cache-poisoning pattern: the resolved tag/SHA must be data for
     // git, materialized below, not an actions/checkout target.
-    if (String(checkout.with?.ref ?? '') !== 'main') {
-      findings.push(`${file}: job "build" must check out main, never a dynamic ref or a movable name`);
+    if (!sameMap(checkout.with, { ref: 'main', 'fetch-depth': 0, 'fetch-tags': true, 'persist-credentials': false })) {
+      findings.push(`${file}: job "build" checkout must name exactly main with full history, tags and no credentials`);
     }
-    if (checkout.with?.['fetch-depth'] !== 0) findings.push(`${file}: job "build" checkout must fetch the full history`);
-    if (checkout.with?.['fetch-tags'] !== true) findings.push(`${file}: job "build" checkout must fetch the tags`);
   }
   const materialize = steps.find((step) => step.env?.REF === '${{ needs.resolve.outputs.ref }}');
   if (!materialize) {
@@ -809,24 +1354,39 @@ function buildFindings(workflow, file) {
     if (!/git worktree add --detach/.test(run)) {
       findings.push(`${file}: job "build" must materialize the resolved ref as a detached worktree`);
     }
+    if (!run.includes('"$REF"')) {
+      findings.push(`${file}: job "build" must materialize "$REF", never a movable branch name`);
+    }
     if (!run.includes('RELEASE_TREE') || !run.includes('GITHUB_ENV')) {
       findings.push(`${file}: job "build" must export RELEASE_TREE to later steps`);
-    }
-  }
-  for (const command of required) {
-    const holder = steps.find((step) => stepCommands(step).includes(command));
-    if (holder && holder['working-directory'] !== '${{ env.RELEASE_TREE }}') {
-      findings.push(`${file}: job "build" must run "${command}" in the resolved worktree`);
     }
   }
   if (!steps.some((step) => stepCommands(step).some((command) => command.startsWith('node scripts/check-apk.mjs')))) {
     findings.push(`${file}: job "build" must check the built APK`);
   }
-  if (!steps.some((step) => step.env?.ANDROID_ALLOW_TEST_KEY === 'true')) {
-    findings.push(`${file}: job "build" must build with ANDROID_ALLOW_TEST_KEY=true and no release secret`);
+  for (const [flag, target] of [
+    ['--version-code', 'dist/version-code.txt'],
+    ['--signing-scheme', 'dist/signing.json'],
+  ]) {
+    if (!steps.some((step) => stepCommands(step).some((command) => command.includes(flag) && command.includes(target)))) {
+      findings.push(`${file}: job "build" must publish ${target} from build-android.mjs ${flag}`);
+    }
   }
-  if (!steps.some((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@'))) {
+  findings.push(...keystoreOrderFindings(job, file, 'build'));
+  if (
+    JSON.stringify(job.env ?? {}).includes('ANDROID_ALLOW_TEST_KEY') ||
+    steps.some((step) => JSON.stringify(step.env ?? {}).includes('ANDROID_ALLOW_TEST_KEY'))
+  ) {
+    findings.push(`${file}: job "build" must not set ANDROID_ALLOW_TEST_KEY itself; ${CI_KEYSTORE_COMMAND} owns the flag`);
+  }
+  const upload = steps.find((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@'));
+  if (!upload) {
     findings.push(`${file}: job "build" must upload the unsigned artifact`);
+  } else {
+    if (upload.with?.name !== 'drypoint-unsigned') findings.push(`${file}: job "build" must upload the artifact as drypoint-unsigned`);
+    if (upload.with?.path !== '${{ env.RELEASE_TREE }}/dist/*') {
+      findings.push(`${file}: job "build" upload path must be exactly \${{ env.RELEASE_TREE }}/dist/*`);
+    }
   }
   return findings;
 }
@@ -838,6 +1398,24 @@ function signFindings(workflow, file) {
   if (job.environment !== 'release') findings.push(`${file}: job "sign" must use the release environment`);
   const needs = needsOf(job);
   for (const name of ['resolve', 'build']) if (!needs.includes(name)) findings.push(`${file}: job "sign" must need ${name}`);
+  findings.push(
+    ...exactConditionFindings(
+      job.if,
+      "needs.resolve.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'",
+      file,
+      'job "sign" if:'
+    )
+  );
+  findings.push(...releaseStepNamesFindings(job, file, 'sign'));
+  findings.push(...plainStepFindings(job, file, 'sign'));
+  findings.push(...sourceFindings(job, file, 'sign'));
+  for (const [name, value] of [
+    ['TAG', '${{ needs.resolve.outputs.tag }}'],
+    ['SHA', '${{ needs.resolve.outputs.sha }}'],
+    ['VERSION', '${{ needs.resolve.outputs.version }}'],
+  ]) {
+    if (job.env?.[name] !== value) findings.push(`${file}: job "sign" env ${name} must be exactly ${value}`);
+  }
   if (job.permissions?.contents !== 'read') findings.push(`${file}: job "sign" permissions must include contents: read`);
   if (job.permissions?.['id-token'] !== 'write') findings.push(`${file}: job "sign" must request id-token: write`);
   if (job.permissions?.attestations !== 'write') findings.push(`${file}: job "sign" must request attestations: write`);
@@ -849,6 +1427,14 @@ function signFindings(workflow, file) {
   }
   if (!jobEnvText(job).includes('secrets.ANDROID_KEYSTORE_BASE64')) {
     findings.push(`${file}: job "sign" must decode the keystore from the release environment`);
+  }
+  const signText = JSON.stringify(job);
+  for (const [needle, message] of [
+    ['ANDROID_ALLOW_TEST_KEY', 'must never set ANDROID_ALLOW_TEST_KEY'],
+    ['ci-keystore', 'must never run the CI throwaway keystore script'],
+    [CI_THROWAWAY.password, 'must never contain the CI throwaway password'],
+  ]) {
+    if (signText.includes(needle)) findings.push(`${file}: job "sign" ${message}`);
   }
   for (const step of stepsOf(job)) {
     if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {
@@ -868,7 +1454,8 @@ function signFindings(workflow, file) {
   const joined = commands.join('\n');
   for (const [pattern, message] of [
     [/apksigner"?\s+sign/, 'sign with apksigner'],
-    [/--v1-signing-enabled"?\s+false/, 'disable the v1 signature'],
+    [/--min-sdk-version"?\s+"\$min_sdk"/, 'take the minimum SDK from the build manifest'],
+    [/--v1-signing-enabled"?\s+"\$v1_signing"/, 'take the v1 scheme from the manifest-derived answer'],
     [/--v2-signing-enabled"?\s+true/, 'enable the v2 signature'],
     [/--v3-signing-enabled"?\s+true/, 'enable the v3 signature'],
     [/apksigner"?\s+verify/, 'verify the signature'],
@@ -876,11 +1463,24 @@ function signFindings(workflow, file) {
     [/aapt2"?\s+dump\s+badging/, 'assert package and version'],
     [/aapt2"?\s+dump\s+xmltree/, 'assert the binary manifest'],
     [/gh attestation download/, 'download the provenance bundle'],
+    [/expected_package="package: name='\$\{package_id\}' versionCode='\$\{expected_version_code\}' versionName='\$\{VERSION\}'"/, 'assert the exact package, versionCode and versionName'],
+    [/resolvedDependencies\[\]\?\.digest\.gitCommit/, 'prove the provenance resolves the tag commit'],
   ]) {
     if (!pattern.test(joined)) findings.push(`${file}: job "sign" must ${message}`);
   }
-  if (!stepsOf(job).some((step) => step.uses === 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8')) {
+  // The scheme has one owner: the manifest. A second hard-coded answer is
+  // exactly the latent divergence this policy removes.
+  if (/--min-sdk-version"?\s+26\b/.test(joined) || /--v1-signing-enabled"?\s+false/.test(joined)) {
+    findings.push(`${file}: job "sign" must not hard-code the minSdk/signing scheme; read dist/signing.json`);
+  }
+  if (!stepsOf(job).some((step) => step.uses === 'actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880' && step.with?.['java-version'] === '21')) {
+    findings.push(`${file}: job "sign" must use the pinned Temurin 21 action`);
+  }
+  const attest = stepsOf(job).find((step) => step.uses === 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8');
+  if (!attest) {
     findings.push(`${file}: job "sign" must use the pinned attest action`);
+  } else if (attest.env?.GITHUB_SHA !== '${{ needs.resolve.outputs.sha }}') {
+    findings.push(`${file}: job "sign" must bind the attestation to needs.resolve.outputs.sha, not the default-branch HEAD`);
   }
   return findings;
 }
@@ -894,12 +1494,26 @@ function publishFindings(workflow, file) {
     if (scope !== 'contents' && level === 'write') findings.push(`${file}: job "publish" must not hold ${scope}: write`);
   }
   if (jobEnvText(job).includes('secrets.')) findings.push(`${file}: job "publish" must not read secrets`);
+  if (job.env?.GH_REPO !== '${{ github.repository }}') {
+    findings.push(
+      `${file}: job "publish" must set GH_REPO to \${{ github.repository }}; it has no checkout for gh to discover one`
+    );
+  }
   if (!needsOf(job).includes('resolve') || !needsOf(job).includes('sign')) {
     findings.push(`${file}: job "publish" must need resolve and sign`);
   }
-  const condition = typeof job.if === 'string' ? job.if : '';
-  if (!condition.includes("needs.resolve.outputs.publish == 'true'")) {
-    findings.push(`${file}: job "publish" must be gated on the resolved publish flag`);
+  findings.push(...exactConditionFindings(job.if, "needs.resolve.outputs.publish == 'true'", file, 'job "publish" if:'));
+  findings.push(...releaseStepNamesFindings(job, file, 'publish'));
+  findings.push(...plainStepFindings(job, file, 'publish'));
+  findings.push(...sourceFindings(job, file, 'publish'));
+  // The tag is the resolved tag, never the ref name, the workflow_run branch or
+  // a literal. Equality is the contract; a substring check let every alternate
+  // source through.
+  if (job.env?.TAG !== '${{ needs.resolve.outputs.tag }}') {
+    findings.push(`${file}: job "publish" env TAG must be exactly \${{ needs.resolve.outputs.tag }}`);
+  }
+  if (job.env?.VERSION !== '${{ needs.resolve.outputs.version }}') {
+    findings.push(`${file}: job "publish" env VERSION must be exactly \${{ needs.resolve.outputs.version }}`);
   }
   for (const step of stepsOf(job)) {
     if (typeof step.uses === 'string' && step.uses.startsWith('actions/checkout@')) {
@@ -912,6 +1526,33 @@ function publishFindings(workflow, file) {
         findings.push(`${file}: job "publish" must not execute repository code: "${command}"`);
       }
       if (command.includes('scripts/')) findings.push(`${file}: job "publish" must not execute repository scripts: "${command}"`);
+    }
+  }
+  // Publish is a command allowlist. `gh release upload --clobber` can replace
+  // an asset after the byte comparison; delete/api/raw shell can do worse.
+  const allowedRelease = new Set(['view', 'download', 'create', 'edit']);
+  for (const command of stepsOf(job).flatMap(stepCommands)) {
+    const tokens = shellTokens(command);
+    if (['curl', 'wget', 'eval', 'bash', 'sh', 'zsh'].includes(tokens[0])) {
+      findings.push(`${file}: job "publish" must not run ${tokens[0]}: "${command}"`);
+    }
+    for (let index = 0; index < tokens.length; index++) {
+      if (tokens[index] !== 'gh') continue;
+      if (tokens[index + 1] !== 'release') {
+        findings.push(`${file}: job "publish" may only run gh release commands: "${command}"`);
+        break;
+      }
+      const subcommand = tokens[index + 2];
+      if (!allowedRelease.has(subcommand)) {
+        findings.push(`${file}: job "publish" must not run gh release ${subcommand}`);
+        break;
+      }
+      if (subcommand === 'edit' && !tokens.includes('--notes-file')) {
+        findings.push(`${file}: job "publish" may only edit the notes body`);
+      }
+      if (tokens.includes('--clobber') && subcommand !== 'download') {
+        findings.push(`${file}: job "publish" may only use --clobber on gh release download`);
+      }
     }
   }
   const logic = jobLogic(workflow, 'publish');
@@ -936,6 +1577,7 @@ function existingReleaseFindings(workflow, file) {
     [/exit 0/, 'treat an identical existing release as a pass'],
     [/--latest/, 'mark the release latest'],
     [/--notes-file/, 'publish the generated notes'],
+    [/gh release edit "\$TAG"[^\n]*--notes-file/, 'refresh the notes on a re-run instead of exiting with a stale body'],
   ]) {
     if (!pattern.test(logic)) findings.push(`${file}: job "publish" must ${message}`);
   }
@@ -1000,7 +1642,19 @@ export async function checkWorkflows({ root = ROOT, workflows } = {}) {
     .sort();
   const findings = [];
   for (const name of names) {
+    if (!OWNED_WORKFLOWS.includes(name)) {
+      findings.push(
+        `${name}: workflow is not owned; GitHub runs every .yml/.yaml file, so the owned set is exactly ${OWNED_WORKFLOWS.join(', ')}`
+      );
+    }
+  }
+  for (const name of OWNED_WORKFLOWS) {
+    if (!names.includes(name)) findings.push(`${name}: owned workflow is missing`);
+  }
+  for (const name of names) {
     const text = await readFile(join(directory, name), 'utf8');
+    // The general policy (environment, secrets, permissions, pins, masks) is
+    // applied to every file, not only the release workflow.
     findings.push(...checkWorkflow(text, { file: name }));
     if (basename(name) === RELEASE_FILE) findings.push(...checkReleaseWorkflow(text, { file: name }));
   }

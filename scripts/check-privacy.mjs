@@ -7,18 +7,21 @@
  * `.gitignore` (so the keystore, `.run` and build output are excluded for the
  * same reason git excludes them) and refuses ignore syntax it does not
  * understand, so a future `.gitignore` edit cannot silently widen what this
- * gate does not see.
+ * gate does not see. The trusted CI scan passes `--tracked`: it scans what git
+ * actually publishes, so a candidate cannot hide a force-added file behind the
+ * candidate ignore file.
  *
  * Usage:
  *   node scripts/check-privacy.mjs          # exit 1 and print every finding
  *   node scripts/check-privacy.mjs --list   # print the scanned file count
+ *   node scripts/check-privacy.mjs --root <dir> --tracked
  */
 
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ROOT, isTextBuffer, listFiles } from './lib/tree.mjs';
+import { ROOT, isTextBuffer, listFiles, listTrackedFiles } from './lib/tree.mjs';
 
 /**
  * Paths every scan of this repository must contain. A scan that silently
@@ -108,11 +111,15 @@ export async function assertCoverage(root, files) {
 /**
  * Scan one tree and return every finding.
  *
- * @param {{root?: string, rules?: object[], requireRoots?: boolean}} [options]
+ * `tracked` uses `git ls-files` instead of the ignore-aware walker. The trusted
+ * CI scan sets it: a candidate `.gitignore` must not be able to hide a file the
+ * same candidate force-added and published.
+ *
+ * @param {{root?: string, rules?: object[], requireRoots?: boolean, tracked?: boolean}} [options]
  * @returns {Promise<{findings: {file: string, line: number, rule: string, why: string, text: string}[], scanned: number}>}
  */
-export async function scanTree({ root = ROOT, rules, requireRoots = true } = {}) {
-  const files = await listFiles({ root, rules });
+export async function scanTree({ root = ROOT, rules, requireRoots = true, tracked = false } = {}) {
+  const files = tracked ? listTrackedFiles({ root }) : await listFiles({ root, rules });
   if (requireRoots) await assertCoverage(root, files);
   const findings = [];
   for (const file of files) {
@@ -140,6 +147,7 @@ export function formatFinding(finding) {
 
 async function main(argv) {
   let root = ROOT;
+  let tracked = false;
   const flags = [];
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
@@ -150,6 +158,8 @@ async function main(argv) {
         return 2;
       }
       root = resolve(value);
+    } else if (argument === '--tracked') {
+      tracked = true;
     } else if (argument.startsWith('--')) {
       flags.push(argument);
     } else {
@@ -160,10 +170,10 @@ async function main(argv) {
   const unknown = flags.filter((flag) => flag !== '--list');
   if (unknown.length) {
     console.error(`privacy: unknown option ${unknown.join(', ')}`);
-    console.error('usage: node scripts/check-privacy.mjs [--list] [--root <dir>]');
+    console.error('usage: node scripts/check-privacy.mjs [--list] [--root <dir>] [--tracked]');
     return 2;
   }
-  const { findings, scanned } = await scanTree({ root }).catch((error) => {
+  const { findings, scanned } = await scanTree({ root, tracked }).catch((error) => {
     console.error(`privacy: ${error.message}`);
     return { findings: null, scanned: 0 };
   });

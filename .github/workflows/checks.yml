@@ -35,25 +35,22 @@ jobs:
       - name: Install the one dev-only dependency
         run: npm ci
       - name: Generated files are current
-        run: |
-          set -euo pipefail
-          npm run build:brand -- --check
-          npm run check:precache
+        run: npm run build:brand -- --check
+      - name: The precache manifest is current
+        run: npm run check:precache
       - name: Privacy gate
         run: npm run privacy:check
       - name: Unit test suite (the browser suites have their own job)
         run: npm run test:unit
-      - name: Documentation, generated docs and workflow policy
-        # All four are gates, so all four run in the merge gate on every web
-        # leg. There is no separate path-filtered Docs workflow: a docs-only
-        # pull request gets the same checks here. The trusted copy of the
-        # workflow policy runs in the `policy` job; this leg gives a pull
-        # request the same answer without waiting for it.
-        run: |
-          set -euo pipefail
-          node scripts/build-docs.mjs --check
-          npm run docs:check
-          npm run workflows:check
+      - name: Generated documentation is current
+        # Every gate command is one exact step. The trusted policy job runs the
+        # same gates from main; this leg gives a pull request the answer without
+        # waiting for it.
+        run: node scripts/build-docs.mjs --check
+      - name: Documentation links and generated docs
+        run: npm run docs:check
+      - name: Workflow policy
+        run: npm run workflows:check
       - name: No tracked file changed
         run: git diff --exit-code
       - name: No untracked file was left behind
@@ -94,13 +91,6 @@ jobs:
     env:
       ANDROID_PLATFORM: android-36
       ANDROID_BUILD_TOOLS: '36.0.0'
-      ANDROID_KEYSTORE_PASSWORD: ci-throwaway-not-a-release-key
-      ANDROID_KEYSTORE_KEY_PASSWORD: ci-throwaway-not-a-release-key
-      ANDROID_KEY_ALIAS: ci
-      # This job proves the toolchain with a throwaway key; it publishes
-      # nothing, so the release certificate pin cannot apply here. The build
-      # says so in its log.
-      ANDROID_ALLOW_TEST_KEY: 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -120,22 +110,9 @@ jobs:
       - name: Install the pinned SDK packages
         run: bash scripts/android-sdk.sh
       - name: Create a throwaway signing key
-        run: |
-          set -euo pipefail
-          keystore="$RUNNER_TEMP/ci-release.jks"
-          printf '%s' "$ANDROID_KEYSTORE_PASSWORD" > "$RUNNER_TEMP/ci-pass.txt"
-          chmod 600 "$RUNNER_TEMP/ci-pass.txt"
-          keytool -genkeypair \
-            -keystore "$keystore" \
-            -alias "$ANDROID_KEY_ALIAS" \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 1 \
-            -storepass:file "$RUNNER_TEMP/ci-pass.txt" \
-            -keypass:file "$RUNNER_TEMP/ci-pass.txt" \
-            -dname "CN=CI Throwaway, O=LLM-4-People, C=CA"
-          chmod 600 "$keystore"
-          echo "ANDROID_KEYSTORE_FILE=$keystore" >> "$GITHUB_ENV"
+        # One owner of the throwaway identity. This job proves the toolchain and
+        # publishes nothing; the release `sign` job never runs this script.
+        run: node scripts/ci-keystore.mjs
       - name: Build and sign the APK
         # CI=true makes a missing keystore a hard failure, never a new key. The
         # build also signs and verifies its own artifact.
@@ -155,10 +132,9 @@ jobs:
           printf '%s\n' "$badging" | grep -F "package: name='${package_id}' versionCode='${version_code}' versionName='${version}'"
           sha256sum "$apk"
       - name: The built APK matches its manifest and policy
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          node scripts/check-apk.mjs --apk "android/build/drypoint-${version}.apk" --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
+        # The artifact name defaults to package.json's version inside the check,
+        # so this gate step is one exact command with no shell arithmetic.
+        run: node scripts/check-apk.mjs --aapt2 "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2" --apksigner "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
       - name: No tracked file changed
         # The build regenerates resources and the precache stamp. A tracked
         # file that moved means the committed generated files are stale.
@@ -220,7 +196,8 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/check-workflows.mjs --workflows "$PR_TREE/.github/workflows"
-          node scripts/check-privacy.mjs --root "$PR_TREE"
+          node scripts/check-privacy.mjs --root "$PR_TREE" --tracked
+          bash scripts/actionlint.sh "$PR_TREE/.github/workflows"
 
   required:
     name: required

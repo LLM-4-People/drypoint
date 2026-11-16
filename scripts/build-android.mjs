@@ -370,6 +370,31 @@ export function minSdkVersionOf(manifestXml) {
 }
 
 /**
+ * The signing schemes for one minimum SDK. This is the only rule: API 24 and
+ * later verify the APK Signature Scheme v2, so the JAR (v1) signature is only
+ * needed below it. The build and the sign job both consume this answer.
+ *
+ * @param {number|string} minSdkVersion
+ * @returns {{minSdkVersion: number, v1SigningEnabled: boolean}}
+ */
+export function signingSchemeForMinSdk(minSdkVersion) {
+  const value = Number(minSdkVersion);
+  if (!Number.isInteger(value) || value <= 0) fail(`minSdkVersion must be a positive integer: ${JSON.stringify(minSdkVersion)}`);
+  return { minSdkVersion: value, v1SigningEnabled: !(value >= 24) };
+}
+
+/**
+ * The signing scheme the rendered manifest declares. The manifest is the one
+ * owner of the minimum SDK.
+ *
+ * @param {string} manifestXml the rendered AndroidManifest.xml
+ * @returns {{minSdkVersion: number, v1SigningEnabled: boolean}}
+ */
+export function signingSchemeOf(manifestXml) {
+  return signingSchemeForMinSdk(minSdkVersionOf(manifestXml));
+}
+
+/**
  * The SHA-256 of the certificate `apksigner verify --print-certs` reported.
  *
  * Lower-case hex, the form `brand.json` stores, so a comparison never depends
@@ -391,8 +416,9 @@ export function certificateSha256(output) {
  * APK unless the build says otherwise. There are exactly two declared
  * exceptions, and both are visible in the build log: a key this run just
  * generated cannot be the release key (the build already warns loudly), and a
- * caller may set ANDROID_ALLOW_TEST_KEY=1. The pull-request gate does, because
- * it proves the toolchain with a throwaway key and never publishes anything.
+ * caller may set ANDROID_ALLOW_TEST_KEY=1. `scripts/ci-keystore.mjs` sets it
+ * for the unprivileged CI jobs, which prove the toolchain with a throwaway key
+ * and publish nothing; the release sign job never sets it.
  *
  * @param {{generated: boolean, env?: Record<string,string|undefined>}} options
  * @returns {boolean}
@@ -506,15 +532,15 @@ export function keystoreAction({ exists, requireKey }) {
  * on every build. Below API 24 the v1 signature is still required.
  */
 export function apksignerArgs({ store, keyAlias, files, out, aligned, minSdkVersion }) {
-  const needsV1 = !(Number(minSdkVersion) >= 24);
+  const scheme = signingSchemeForMinSdk(minSdkVersion);
   return [
     'sign',
     '--ks', store,
     '--ks-key-alias', keyAlias,
     '--ks-pass', `file:${files.ks}`,
     '--key-pass', `file:${files.key}`,
-    '--min-sdk-version', String(minSdkVersion),
-    '--v1-signing-enabled', needsV1 ? 'true' : 'false',
+    '--min-sdk-version', String(scheme.minSdkVersion),
+    '--v1-signing-enabled', scheme.v1SigningEnabled ? 'true' : 'false',
     '--out', out,
     aligned,
   ];
@@ -644,6 +670,13 @@ async function main() {
   // arithmetic, instead of recomputing it in shell.
   if (process.argv.includes('--version-code')) {
     console.log(versionCodeOf(pkg.version));
+    return;
+  }
+  // The sign job must not hard-code the scheme: it reads this answer from the
+  // same manifest owner the build uses.
+  if (process.argv.includes('--signing-scheme')) {
+    const template = await readFile(join(androidDir, 'AndroidManifest.template.xml'), 'utf8');
+    console.log(JSON.stringify(signingSchemeOf(template)));
     return;
   }
   const requireKey = process.argv.includes('--require-key') || process.env.CI === 'true';

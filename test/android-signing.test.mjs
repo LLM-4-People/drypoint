@@ -50,7 +50,7 @@ test('keytool and apksigner receive paths, never a password', () => {
   const secret = 's3cr3t-never-on-a-command-line';
   const files = { store: '/tmp/drypoint-sign/store.txt', key: '/tmp/drypoint-sign/key.txt', ks: '/tmp/drypoint-sign/ks.txt' };
   const keytool = keytoolArgs({ store: '/keys/release.jks', keyAlias: 'drypoint', files: { store: files.store, key: files.key } });
-  const signer = apksignerArgs({ store: '/keys/release.jks', keyAlias: 'drypoint', files: { ks: files.ks, key: files.key }, out: '/out.apk', aligned: '/aligned.apk' });
+  const signer = apksignerArgs({ store: '/keys/release.jks', keyAlias: 'drypoint', files: { ks: files.ks, key: files.key }, out: '/out.apk', aligned: '/aligned.apk', minSdkVersion: 26 });
 
   for (const argument of [...keytool, ...signer]) {
     assert.equal(argument.includes(secret), false, 'no password in argv');
