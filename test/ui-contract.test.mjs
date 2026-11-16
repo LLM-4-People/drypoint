@@ -68,6 +68,14 @@ test('compact layout pins the action bar and keeps the status live region', () =
   assert.match(css, /@media \(pointer: coarse\)[\s\S]*?44px/);
 });
 
+test('the document actions meet the 44 px coarse-pointer contract', () => {
+  assert.match(html, /<div class="document-actions">[\s\S]*?id="exportDocumentButton"[\s\S]*?id="importDocumentButton"/);
+  // The two document buttons are not `.btn`, so they must join the shared
+  // coarse-pointer min-height group explicitly; they measured 36.7 px without
+  // this selector.
+  assert.match(css, /@media \(pointer: coarse\)[\s\S]*?\.document-actions button,[\s\S]*?min-height:\s*44px/);
+});
+
 test('a cancelled port picker is one contract, keyed off error.cancelled', () => {
   assert.match(printPanel, /if \(error\?\.cancelled\)/);
   assert.match(main, /if \(error\?\.cancelled\)/);

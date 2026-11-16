@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: '95dda867e88d2178',
+  version: 'ced11621bad85385',
   navigationTimeoutMs: 3000,
   installRetries: 2,
   installRetryDelayMs: 250,
@@ -86,7 +86,7 @@ self.__PRECACHE = {
     'src/vendor/qrcode.js',
   ],
   digests: {
-    'assets/app.css': 'e2c0fde0cbe1357a4b766209bf95d2bbb03167d65a6f169074b9501d8ebfbe20',
+    'assets/app.css': 'a22f9c833db84764bcc73de9abf26c70567ad2c7c111f39e85983c536cb3bbc5',
     'assets/icon-192.png': 'f09102b1c7ae346aeceaf1a20d16c74e4900d19b907945acbf786f4198231a92',
     'assets/icon-512.png': '45fcfcfb212262f227be5745c0cd0b85b58787c4338471e0ea3c1583971c1573',
     'assets/icon-maskable-512.png': 'd5df4b979fd21e9af56424f3777ae974f8cb115e0ef8b92884588e55186b9688',

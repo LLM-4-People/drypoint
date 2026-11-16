@@ -585,6 +585,25 @@ Three facts are recorded as accepted for this release rather than fixed:
   have no provenance assets) hold that score down until three more provenance
   releases exist. Both are recorded, not gamed with a second workflow.
 
+### Accepted interaction observations (1.0.3)
+
+Three interaction observations are recorded rather than "fixed", because the
+current behaviour is the deliberate one:
+
+- **A device-reported sensor refusal is a one-shot event.** The gate leaves
+  Print enabled, the print attempt is refused by the printer, and the one error
+  toast names the reason; the Print panel's Sensors row carries the current
+  state. A second persistent banner would duplicate the toast and imply the gate
+  can know a sensor before the job.
+- **Print stays enabled behind the pre-print confirmation.** The modal makes
+  the shell inert, so the action bar's Print button cannot be activated; its
+  `disabled` state is presentational while the modal is the only interactive
+  layer.
+- **A rotated element that extends past the tape edge is visibly clipped.** The
+  stage and the print preview show the same clip; the layout pass reports
+  overlaps and unreadable barcodes, not every geometric overhang. A dedicated
+  warning would duplicate the visible clip without changing the printed result.
+
 ## Logging
 
 `src/core/log.js` is the only module that touches `console`. It owns:
