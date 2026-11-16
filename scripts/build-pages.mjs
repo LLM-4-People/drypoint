@@ -19,6 +19,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import brand from '../brand.json' with { type: 'json' };
+import { DISTRIBUTION_FILES } from './lib/distribution.mjs';
 import { OUTPUT, ROOT, SW_FILE, checkPrecache } from './precache.mjs';
 
 export const SITE_DIR = '_site';
@@ -92,6 +93,10 @@ export function notFoundPage(basePath = pagesBasePath()) {
  * The exact set of files a deployment contains, as `{ path, content }` where a
  * `null` content means "copy the file of that name from the repository".
  *
+ * The licence and the third-party notices come from the one distribution list
+ * the APK build also reads; they are not runtime files and never enter the
+ * precache manifest.
+ *
  * @param {string[]} runtimeFiles the generated precache list
  * @param {{basePath?: string}} [options]
  * @returns {{path: string, content: string|null}[]} sorted by path
@@ -106,6 +111,7 @@ export function siteEntries(runtimeFiles, { basePath = pagesBasePath() } = {}) {
   entries.set(PRECACHE_FILE, { path: PRECACHE_FILE, content: null });
   entries.set(NOT_FOUND_FILE, { path: NOT_FOUND_FILE, content: notFoundPage(basePath) });
   entries.set(NO_JEKYLL_FILE, { path: NO_JEKYLL_FILE, content: '' });
+  for (const path of DISTRIBUTION_FILES) entries.set(path, { path, content: null });
   // Codepoint order, like every other sorted list in the repository: a locale
   // must never decide whether two builds produce the same tree.
   return [...entries.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

@@ -3,7 +3,7 @@
 // and CSS url() assets; each file carries its own SHA-256 digest.
 // Regenerate with: npm run build
 self.__PRECACHE = {
-  version: '5436145da52140c3',
+  version: 'f4abe09f0eb51d17',
   navigationTimeoutMs: 3000,
   required: [
     'index.html',
@@ -79,12 +79,12 @@ self.__PRECACHE = {
   ],
   digests: {
     'assets/app.css': '5d96db86feed49140c8527bf6533ae101d6bc65ae005e78673a07785cdcf8b34',
-    'assets/icon-192.png': 'bff926b11497490d3d1d868023bf42da8c889025756a9611fa1a914326eb973e',
-    'assets/icon-512.png': 'e06a80431d92fc0cfe0ccee71e322fec12ede27032543258d3ed86fa0e48b35f',
+    'assets/icon-192.png': '385a3fca5d56177e2132ad60dfb2737d0f46521d00e0b4306b1207190de6a514',
+    'assets/icon-512.png': '624474157e439f58e5ac6e8793ed9db38cc7775c8f189505b0693d8f7ef76468',
     'assets/icon.svg': '0d57f5f217288935f039793a3bc1b2d99c755c085a0326276a4f2f817464e53d',
-    'index.html': '60bdd5d7bacbd9f21a4c8aa7239f356b847a21cb4f4acbd414a1ea5cbe7370dc',
-    'manifest.webmanifest': 'a1aed1f1b9ebcf98bd9d869365fd9bc7ae952f484ff1ba88748da10edaf7b683',
-    'src/core/brand.js': '1ee4555417f02d02a0d11b4ca8c8ac10465a954a3271791f0e5e5ba0d01eb6fc',
+    'index.html': '2371a27ce23f8ec9cbe7e21c4e7482c0c01eb757da80956a7d83f11e85862424',
+    'manifest.webmanifest': '9614a5b7ffac0e0705aa2f9ec8810277a859fde5ac9b196dddb450c31f83154a',
+    'src/core/brand.js': '21f3aaec0f9b48420f657fa6f00bad26dfcc4c822eda0d5e173661b9cd16826f',
     'src/core/config.js': 'e91cb8feee972cbbcbaf1fe59cf116e9f21dd180259cebd3dedc550f992b96c3',
     'src/core/dom.js': '2f57fa97ae74096ae0c5e82892c038e95dd6483e0dfc0ddcc1f571a65c4ab09b',
     'src/core/events.js': 'f5f36474ae1e697206e4997916dcd865f86ea364f9cc3ef176f1e2e0feb6ec9f',

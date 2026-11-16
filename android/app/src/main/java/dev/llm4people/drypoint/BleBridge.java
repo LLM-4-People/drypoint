@@ -20,6 +20,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -65,6 +66,8 @@ public class BleBridge {
   private static final long MTU_FALLBACK_MS = 300;
   /** Nothing above this is ever needed for a request frame; keeps chunks sane on a bogus MTU. */
   private static final int MAX_CHUNK_BYTES = 512;
+  /** The one MIME type a diagnostics export is stored as. */
+  private static final String JSON_MIME = "application/json";
 
   private final Activity activity;
   private final WebView webView;
@@ -236,28 +239,78 @@ public class BleBridge {
     return target;
   }
 
-  @JavascriptInterface
-  public boolean saveFile(String name, String text) {
-    if (!SafeFileName.isSafe(name) || text == null) return false;
+  /**
+   * Whether Downloads already holds a row with this display name.
+   *
+   * MediaStore silently renames a colliding insert ("labels (1).json"), so the
+   * export would report success while writing a file the caller did not name.
+   * The check runs before the insert; the remaining window is the platform's,
+   * not something this shell can lock.
+   */
+  private boolean displayNameTaken(String name) {
+    String selection = MediaStore.Downloads.DISPLAY_NAME + " = ? AND " + MediaStore.Downloads.MIME_TYPE + " = ?";
+    try (Cursor cursor = activity.getContentResolver().query(
+        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+        new String[] { MediaStore.Downloads._ID },
+        selection,
+        new String[] { name, JSON_MIME },
+        null)) {
+      return cursor != null && cursor.getCount() > 0;
+    }
+  }
+
+  /**
+   * API 29+: one MediaStore row, invisible until the bytes are complete.
+   *
+   * The row is inserted with IS_PENDING=1, so neither the Files app nor another
+   * reader can observe a half-written export; the flag is cleared only after
+   * the write returned. A failure deletes the pending row rather than leaving a
+   * hidden zero-byte file behind.
+   */
+  private boolean saveFileModern(String name, String text) throws java.io.IOException {
+    if (displayNameTaken(name)) return false;
+    ContentValues values = new ContentValues();
+    values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+    values.put(MediaStore.Downloads.MIME_TYPE, JSON_MIME);
+    values.put(MediaStore.Downloads.IS_PENDING, 1);
+    Uri uri = activity.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+    if (uri == null) return false;
+    boolean written = false;
     try {
-      if (Build.VERSION.SDK_INT >= 29) {
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Downloads.DISPLAY_NAME, name);
-        values.put(MediaStore.Downloads.MIME_TYPE, "application/json");
-        Uri uri = activity.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-        if (uri == null) return false;
-        try (OutputStream out = activity.getContentResolver().openOutputStream(uri)) {
-          if (out == null) return false;
-          out.write(text.getBytes(StandardCharsets.UTF_8));
-        }
-        return true;
-      }
-      File target = downloadTarget(name);
-      if (target == null) return false;
-      try (FileOutputStream out = new FileOutputStream(target)) {
+      try (OutputStream out = activity.getContentResolver().openOutputStream(uri)) {
+        if (out == null) return false;
         out.write(text.getBytes(StandardCharsets.UTF_8));
       }
-      return true;
+      written = true;
+    } finally {
+      if (written) {
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.Downloads.IS_PENDING, 0);
+        activity.getContentResolver().update(uri, done, null, null);
+      } else {
+        activity.getContentResolver().delete(uri, null, null);
+      }
+    }
+    return true;
+  }
+
+  /** API 26–28: no MediaStore Downloads collection, so write the file directly. */
+  private boolean saveFileLegacy(String name, String text) throws java.io.IOException {
+    File target = downloadTarget(name);
+    if (target == null) return false;
+    try (FileOutputStream out = new FileOutputStream(target)) {
+      out.write(text.getBytes(StandardCharsets.UTF_8));
+    }
+    return true;
+  }
+
+  @JavascriptInterface
+  public boolean saveFile(String name, String text) {
+    if (!SafeFileName.isSafe(name)) return false;
+    if (text == null) return false;
+    try {
+      if (Build.VERSION.SDK_INT >= 29) return saveFileModern(name, text);
+      return saveFileLegacy(name, text);
     } catch (Exception error) {
       return false;
     }

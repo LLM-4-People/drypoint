@@ -47,6 +47,15 @@ const REQUIRED_STRINGS = Object.freeze([
   'author',
 ]);
 
+/**
+ * The SHA-256 of the release signing certificate's public key material, in
+ * lower-case hex — the same value `apksigner verify --print-certs` prints.
+ * `scripts/build-android.mjs` refuses to publish an APK signed by anything
+ * else, so this field is the one place that identity is written down.
+ */
+export const SIGNING_CERTIFICATE_FIELD = 'androidSigningCertificateSha256';
+const SIGNING_CERTIFICATE = /^[0-9a-f]{64}$/;
+
 /** The icon artwork is owned here; only its accessible name comes from brand.json. */
 const ICON_TEMPLATE = `<!-- ${HEADER} -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="{{name}}">
@@ -96,6 +105,10 @@ export function parseBrand(text) {
   assertIdentifier('storagePrefix', brand.storagePrefix, /^[a-z0-9][a-z0-9-]*$/);
   assertIdentifier('cachePrefix', brand.cachePrefix, /^[a-z0-9][a-z0-9-]*-$/);
   assertIdentifier('cliPrefix', brand.cliPrefix, /^[a-z0-9][a-z0-9-]*$/);
+  const certificate = brand[SIGNING_CERTIFICATE_FIELD];
+  if (typeof certificate !== 'string' || !SIGNING_CERTIFICATE.test(certificate)) {
+    throw new Error(`brand.json ${SIGNING_CERTIFICATE_FIELD} must be 64 lower-case hex characters`);
+  }
   return Object.freeze(brand);
 }
 
@@ -141,7 +154,10 @@ export function renderWebManifest(brand, { background, theme }) {
     {
       name: brand.name,
       short_name: brand.name,
-      id: './',
+      // No `id`. A relative id resolves against the document's origin, not the
+      // deployment subpath, so `"./"` would claim https://host/ for a site
+      // served from /drypoint/. Omitting it makes the identity the resolved
+      // start_url — https://host/drypoint/ — which is the app and nothing else.
       description: brand.shortDescription,
       start_url: './',
       scope: './',

@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 import brand from '../brand.json' with { type: 'json' };
+import { DISTRIBUTION_FILES, resolveDistributionFile } from './lib/distribution.mjs';
 import { isAllowed, resolveSurfacePath } from './precache.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -28,9 +29,20 @@ const buildDir = join(androidDir, 'build');
 const appDir = join(androidDir, 'app', 'src', 'main');
 const javaDir = join(appDir, 'java');
 
+/**
+ * A build refusal: the message is the whole story, so the command line prints
+ * it without a stack.
+ *
+ * `fail()` used to call `process.exit(1)` where it stood, which killed the
+ * process before `main()`'s `finally` ran: every failed build left its
+ * `android/build-XXXXXX` staging directory (and its keystore copy, its dex and
+ * its APK) behind. Throwing unwinds normally, so the cleanup always runs and
+ * the exit code is still 1.
+ */
+export class BuildError extends Error {}
+
 const fail = (message) => {
-  console.error(`android: ${message}`);
-  process.exit(1);
+  throw new BuildError(message);
 };
 
 function sdkRoot() {
@@ -111,6 +123,18 @@ function run(command, args, label) {
   execFileSync(command, args, { stdio: 'inherit' });
 }
 
+/**
+ * Run one command with a payload on its standard input.
+ *
+ * Used where a path must reach a helper without appearing in its arguments: the
+ * command line stays a constant program, so nothing a build step derived from
+ * the tree becomes part of another process's argv.
+ */
+function runWithInput(command, args, input, label) {
+  process.stdout.write(`android: ${label}\n`);
+  execFileSync(command, args, { input, stdio: ['pipe', 'inherit', 'inherit'] });
+}
+
 async function readPrecache() {
   const source = await readFile(join(root, 'assets', 'precache.js'), 'utf8');
   const sandbox = { self: {} };
@@ -128,7 +152,7 @@ async function readPrecache() {
  * ship a stray `leak.txt`, a stale `www-old/` tree, or a keystore copy that
  * happens to sit there.
  */
-async function syncAssets(manifest, assetsDir) {
+export async function syncAssets(manifest, assetsDir) {
   const wwwDir = join(assetsDir, 'www');
   await rm(wwwDir, { recursive: true, force: true });
   for (const file of manifest.files) {
@@ -145,47 +169,33 @@ async function syncAssets(manifest, assetsDir) {
     await mkdir(dirname(to), { recursive: true });
     await cp(real, to);
   }
-  console.log(`android: bundled ${manifest.files.length} web files (${manifest.version})`);
-}
-
-/**
- * Publish the stable, version-less APK name only after the signed build has
- * verified, and only by an atomic rename.
- *
- * A copy straight onto the stable name truncates it first: an I/O error, a full
- * disk or an interrupt mid-copy destroyed the previous good artifact and the
- * follow-up verify never ran. The copy now lands on `stable.tmp`, that copy is
- * verified, and only then does a rename replace the stable name in one step.
- *
- * @param {{ signed: string, stable: string, verify: Function, copy?: Function,
- *           rename?: Function, remove?: Function }} options
- *   `verify(file, label)` runs the signature check; `copy(from, to)` stages the
- *   published bytes; `rename(from, to)` publishes atomically; `remove(file)`
- *   discards a staged copy that failed verification.
- */
-export async function publishApk({ signed, stable, verify, copy = cp, rename: move = rename, remove = rm }) {
-  await verify(signed, 'verifying the signature');
-  const temporary = `${stable}.tmp`;
-  try {
-    await copy(signed, temporary);
-    await verify(temporary, 'verifying the staged copy');
-    await move(temporary, stable);
-  } catch (error) {
-    await remove(temporary, { force: true });
-    throw error;
+  // The licence and the third-party notices travel with every distribution,
+  // from the one list the site also reads. They are deliberately not precached
+  // entries: they are not part of the offline app shell.
+  for (const file of DISTRIBUTION_FILES) {
+    let real;
+    try {
+      ({ real } = await resolveDistributionFile(file));
+    } catch (error) {
+      fail(`distribution notice is missing: ${file} (${error.message})`);
+    }
+    await mkdir(wwwDir, { recursive: true });
+    await cp(real, join(wwwDir, file));
   }
-  return stable;
+  console.log(`android: bundled ${manifest.files.length} web files (${manifest.version}) and ${DISTRIBUTION_FILES.length} notices`);
 }
 
 /**
  * Publish the versioned and stable APK names as one transaction.
  *
- * Two independent publishes can leave a new versioned file beside the previous
- * stable one when the second fails. Stage and verify both copies first, back up
- * the previous pair, then rename both into place; on any failure restore the
- * previous pair byte-for-byte and never delete the last good artifacts. A
- * failure while creating a backup is itself before any visible name changed, so
- * it leaves that pair exactly as it found it.
+ * Both names are verified before either visible name is touched, then backed
+ * up, then renamed into place; on any failure the previous pair is restored
+ * byte-for-byte and the last good artifacts are never deleted. A failure while
+ * creating a backup is itself before any visible name changed, so it leaves
+ * that pair exactly as it found it.
+ *
+ * This is the only publish path: the single-name copy this replaced survived
+ * only in tests, where it proved an ordering the real build never used.
  *
  * @returns {Promise<{versioned:string, stable:string}>}
  */
@@ -320,7 +330,82 @@ export async function writeManifest({ androidDir, buildDir, versionName, version
   return output;
 }
 
-async function syncResources(buildDirectory) {
+/**
+ * The Android versionCode for a semver version.
+ *
+ * `major * 10000 + minor * 100 + patch` has room for two digits in the minor
+ * and the patch. A larger component would silently borrow from the next one —
+ * 1.100.0 and 2.0.0 would both be 20000, and patch 100 would collide with the
+ * next minor — so an out-of-range component is refused instead of colliding.
+ * A prerelease suffix is refused for the same reason: the release contract is a
+ * strict `vMAJOR.MINOR.PATCH` tag, and `1.0.0-rc.1` has no versionCode.
+ *
+ * @param {string} version package.json's version
+ * @returns {number}
+ */
+export function versionCodeOf(version) {
+  const text = String(version ?? '');
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (!match) fail(`package.json version must be MAJOR.MINOR.PATCH with no suffix: ${JSON.stringify(text)}`);
+  const [major, minor, patch] = match.slice(1).map(Number);
+  if (minor > 99) fail(`package.json minor ${minor} does not fit the versionCode (0-99): ${text}`);
+  if (patch > 99) fail(`package.json patch ${patch} does not fit the versionCode (0-99): ${text}`);
+  return major * 10000 + minor * 100 + patch;
+}
+
+/**
+ * The minimum SDK the rendered manifest declares.
+ *
+ * The signing schemes are chosen from this one value: API 24+ verifies the APK
+ * Signature Scheme v2, so the JAR (v1) signature is only needed below it.
+ *
+ * @param {string} manifestXml the rendered AndroidManifest.xml
+ * @returns {number}
+ */
+export function minSdkVersionOf(manifestXml) {
+  const match = /android:minSdkVersion="(\d+)"/.exec(String(manifestXml));
+  if (!match) fail('the rendered manifest declares no android:minSdkVersion');
+  return Number(match[1]);
+}
+
+/**
+ * The SHA-256 of the certificate `apksigner verify --print-certs` reported.
+ *
+ * Lower-case hex, the form `brand.json` stores, so a comparison never depends
+ * on how the tool spells its digest.
+ *
+ * @param {string} output apksigner's stdout
+ * @returns {string}
+ */
+export function certificateSha256(output) {
+  const match = /Signer #1 certificate SHA-256 digest:\s*([0-9a-f]{64})/i.exec(String(output));
+  if (!match) fail('apksigner did not print a signer certificate digest');
+  return match[1].toLowerCase();
+}
+
+/**
+ * Whether this build must prove it used the release signing identity.
+ *
+ * The pin is enforced by default: an APK this repository builds is the release
+ * APK unless the build says otherwise. There are exactly two declared
+ * exceptions, and both are visible in the build log: a key this run just
+ * generated cannot be the release key (the build already warns loudly), and a
+ * caller may set ANDROID_ALLOW_TEST_KEY=1. The pull-request gate does, because
+ * it proves the toolchain with a throwaway key and never publishes anything.
+ *
+ * @param {{generated: boolean, env?: Record<string,string|undefined>}} options
+ * @returns {boolean}
+ */
+export function releaseIdentityRequired({ generated, env = process.env }) {
+  if (generated) return false;
+  return !['1', 'true'].includes(String(env.ANDROID_ALLOW_TEST_KEY ?? '').toLowerCase());
+}
+
+/**
+ * Stage the Android resources: the one launcher icon comes from the web app's
+ * 192 px icon, byte-for-byte, so the APK cannot ship a differently drawn mark.
+ */
+export async function syncResources(buildDirectory) {
   const res = join(buildDirectory, 'res');
   await mkdir(join(res, 'values'), { recursive: true });
   await mkdir(join(res, 'drawable'), { recursive: true });
@@ -367,6 +452,16 @@ export async function withPasswordFiles(passwords, fn) {
 /** The public release identity; changing it changes every future signature. */
 export const KEYSTORE_DN = `CN=${brand.name}, O=${brand.author}, C=CA`;
 
+/**
+ * The `sh -c` wrapper that runs keytool with umask 077.
+ *
+ * keytool creates the store with the process umask, so on a standard login it
+ * would be 0664 — readable by every local user — until the chmod at the end.
+ * With umask 077 the file is 0600 from its first byte. `"$@"` keeps every
+ * argument verbatim, so no password or path is ever shell-parsed.
+ */
+export const UMASK_WRAPPER = Object.freeze(['-c', 'umask 077; exec "$@"', 'keytool']);
+
 /** keytool argv for a new release key; the passwords are file paths only. */
 export function keytoolArgs({ store, keyAlias, files }) {
   return [
@@ -400,17 +495,67 @@ export function keystoreAction({ exists, requireKey }) {
   return requireKey ? 'fail' : 'generate';
 }
 
-/** apksigner argv for the release build; the passwords are file paths only. */
-export function apksignerArgs({ store, keyAlias, files, out, aligned }) {
+/**
+ * apksigner argv for the release build; the passwords are file paths only.
+ *
+ * `minSdkVersion` decides the schemes. API 24 and later verify the APK
+ * Signature Scheme v2, and the manifest's own minimum (26) always has it, so v1
+ * is disabled: a JAR signature would add three META-INF entries that apksigner
+ * stamps with the wall clock, and the same tree would produce different bytes
+ * on every build. Below API 24 the v1 signature is still required.
+ */
+export function apksignerArgs({ store, keyAlias, files, out, aligned, minSdkVersion }) {
+  const needsV1 = !(Number(minSdkVersion) >= 24);
   return [
     'sign',
     '--ks', store,
     '--ks-key-alias', keyAlias,
     '--ks-pass', `file:${files.ks}`,
     '--key-pass', `file:${files.key}`,
+    '--min-sdk-version', String(minSdkVersion),
+    '--v1-signing-enabled', needsV1 ? 'true' : 'false',
     '--out', out,
     aligned,
   ];
+}
+
+/** The zip timestamp every entry this build writes carries. */
+export const APK_ENTRY_DATE_TIME = Object.freeze([1980, 1, 1, 0, 0, 0]);
+
+/**
+ * Append `classes.dex` with a fixed entry timestamp.
+ *
+ * `ZipFile.write()` stamps the entry with the current wall clock, so two builds
+ * of the same tree produced different archives. The entry is written through an
+ * explicit `ZipInfo` instead: the same 1980-01-01 timestamp aapt2 gives every
+ * entry it emits, the same compression and the same permission bits. Python's
+ * `zipfile` is the only zip writer here because Node has none without a
+ * dependency.
+ *
+ * The two paths travel over stdin, never on the command line: the invocation
+ * stays `python3 -c <fixed program>`, so no path a caller controls is part of
+ * the process arguments. What this cannot pin is documented in docs/ANDROID.md.
+ */
+const DEX_ENTRY_SCRIPT = [
+  'import json, sys, zipfile',
+  'request = json.load(sys.stdin)',
+  'stamp = tuple(int(part) for part in request["dateTime"])',
+  'with zipfile.ZipFile(request["apk"], "a", zipfile.ZIP_DEFLATED) as archive:',
+  '    info = zipfile.ZipInfo("classes.dex", stamp)',
+  '    info.compress_type = zipfile.ZIP_DEFLATED',
+  '    info.create_system = 0',
+  '    info.external_attr = 0o644 << 16',
+  '    with open(request["dex"], "rb") as source, archive.open(info, "w") as entry:',
+  '        for chunk in iter(lambda: source.read(65536), b""):',
+  '            entry.write(chunk)',
+].join('\n');
+
+/**
+ * @param {{apk: string, dex: string, dateTime?: number[], exec?: Function}} options
+ *   `exec(command, args, options)` runs the writer; the tests inject a recorder.
+ */
+export function addDexEntry({ apk, dex, dateTime = APK_ENTRY_DATE_TIME, exec = runWithInput }) {
+  exec('python3', ['-c', DEX_ENTRY_SCRIPT], JSON.stringify({ apk, dex, dateTime: [...dateTime] }), 'adding classes.dex');
 }
 
 /**
@@ -424,7 +569,12 @@ export function apksignerArgs({ store, keyAlias, files, out, aligned }) {
 async function ensureKeystore({ requireKey = false } = {}) {
   const dir = join(androidDir, 'keystore');
   const propertiesFile = join(dir, 'keystore.properties');
-  await mkdir(dir, { recursive: true });
+  // 0700 before anything is written. The directory is what keeps another local
+  // user out while keytool creates the store with the login umask (0664); a
+  // default 0775 directory left the key world-traversable until the final
+  // chmod.
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
   // The password is a secret: prefer the environment, then a local file that
   // .gitignore excludes. Only a throwaway run with neither gets a generated one.
   if (!existsSync(propertiesFile) && !process.env.ANDROID_KEYSTORE_PASSWORD) {
@@ -444,9 +594,16 @@ async function ensureKeystore({ requireKey = false } = {}) {
         'restore android/keystore/drypoint-release.jks or set ANDROID_KEYSTORE_FILE.'
     );
   }
-  if (action === 'generate') {
+  const generated = action === 'generate';
+  if (generated) {
+    // keytool creates the store with the process umask. `umask 077` makes the
+    // file 0600 from its first byte instead of 0664 until the chmod, and the
+    // temporary name means a reader never observes a half-written key.
+    const pending = `${store}.new`;
     await withPasswordFiles({ store: storePassword, key: keyPassword }, async (files) => {
-      run('keytool', keytoolArgs({ store, keyAlias, files }), 'creating the release keystore');
+      run('sh', [...UMASK_WRAPPER, 'keytool', ...keytoolArgs({ store: pending, keyAlias, files })], 'creating the release keystore');
+      await chmod(pending, 0o600);
+      await rename(pending, store);
     });
     console.warn(`android: created a NEW signing key at ${store}`);
     console.warn('android: APKs signed with it cannot upgrade an install signed by another key');
@@ -454,15 +611,43 @@ async function ensureKeystore({ requireKey = false } = {}) {
   // The keystore is a secret in its own right, whether this build created it or
   // an earlier one did: only this user may read it.
   await chmod(store, 0o600);
-  return { store, storePassword, keyPassword, keyAlias };
+  return { store, storePassword, keyPassword, keyAlias, generated };
+}
+
+/**
+ * Run one build in a scratch directory under `android/`, removing it whether
+ * the build succeeded or threw.
+ *
+ * This is the only owner of the staging lifetime. `fail()` used to call
+ * `process.exit(1)` where it stood, so the cleanup below never ran and every
+ * failed build left its `build-XXXXXX` tree — assets, dex, keystore copy and
+ * signed APK — behind on disk.
+ *
+ * @template T
+ * @param {string} directory the parent the scratch directory lives in
+ * @param {(staging: string) => Promise<T>} build
+ * @returns {Promise<T>}
+ */
+export async function withStaging(directory, build) {
+  const staging = await mkdtemp(join(directory, 'build-'));
+  try {
+    return await build(staging);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 }
 
 async function main() {
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  // The gate prints the code the build will stamp, from the one owner of the
+  // arithmetic, instead of recomputing it in shell.
+  if (process.argv.includes('--version-code')) {
+    console.log(versionCodeOf(pkg.version));
+    return;
+  }
   const requireKey = process.argv.includes('--require-key') || process.env.CI === 'true';
   const { aapt2, d8, zipalign, apksigner, androidJar } = resolveTools();
-  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-  const [major = 1, minor = 0, patch = 0] = String(pkg.version).split('.').map(Number);
-  const versionCode = major * 10000 + minor * 100 + (Number.isFinite(patch) ? patch : 0);
+  const versionCode = versionCodeOf(pkg.version);
 
   run(process.execPath, [join(root, 'scripts', 'precache.mjs'), '--write'], 'refreshing the precache manifest');
   const manifest = await readPrecache();
@@ -470,15 +655,26 @@ async function main() {
   // Build into a scratch directory. `android/build/` holds the last verified
   // artifacts and is only touched by the atomic renames below, so a failed
   // build (javac, d8, apksigner, a full disk) leaves the published APK intact.
-  const staging = await mkdtemp(join(androidDir, 'build-'));
-  try {
+  await withStaging(androidDir, async (staging) => {
     const assetsRoot = join(staging, 'assets');
     await syncAssets(manifest, assetsRoot);
     await syncResources(staging);
 
-    await writeManifest({ androidDir, buildDir: staging, versionName: pkg.version, versionCode });
+    const manifestPath = await writeManifest({ androidDir, buildDir: staging, versionName: pkg.version, versionCode });
+    const minSdkVersion = minSdkVersionOf(await readFile(manifestPath, 'utf8'));
 
-    run(aapt2, ['compile', '--dir', join(staging, 'res'), '-o', join(staging, 'res.zip')], 'compiling resources');
+    run(
+      aapt2,
+      [
+        'compile',
+        '--dir', join(staging, 'res'),
+        '-o', join(staging, 'res.zip'),
+        // Without this aapt2 re-encodes the PNG, so the APK's drawable would
+        // not be the file the tests checked: same artwork, different bytes.
+        '--no-crunch',
+      ],
+      'compiling resources'
+    );
     run(
       aapt2,
       [
@@ -507,20 +703,11 @@ async function main() {
     await mkdir(join(staging, 'dex'), { recursive: true });
     run(
       d8,
-      ['--lib', androidJar, '--min-api', '26', '--output', join(staging, 'dex'), ...classes],
+      ['--lib', androidJar, '--min-api', String(minSdkVersion), '--output', join(staging, 'dex'), ...classes],
       'dexing'
     );
 
-    run(
-      'python3',
-      [
-        '-c',
-        'import sys, zipfile\nwith zipfile.ZipFile(sys.argv[1], "a", zipfile.ZIP_DEFLATED) as z:\n    z.write(sys.argv[2], "classes.dex")\n',
-        join(staging, 'base.apk'),
-        join(staging, 'dex', 'classes.dex'),
-      ],
-      'adding classes.dex'
-    );
+    addDexEntry({ apk: join(staging, 'base.apk'), dex: join(staging, 'dex', 'classes.dex') });
 
     run(zipalign, ['-f', '4', join(staging, 'base.apk'), join(staging, 'aligned.apk')], 'aligning');
 
@@ -536,10 +723,24 @@ async function main() {
           files,
           out: signedInStaging,
           aligned: join(staging, 'aligned.apk'),
+          minSdkVersion,
         }),
         'signing'
       );
     });
+
+    // The one signature this project will publish: compared before either
+    // visible name is touched, so a build that somehow ran with another key
+    // cannot replace the released APKs.
+    if (releaseIdentityRequired({ generated: keystore.generated })) {
+      const actual = certificateSha256(execFileSync(apksigner, ['verify', '--print-certs', signedInStaging], { encoding: 'utf8' }));
+      if (actual !== brand.androidSigningCertificateSha256) {
+        fail(`the APK is signed by ${actual}, not the release certificate ${brand.androidSigningCertificateSha256}`);
+      }
+      console.log(`android: signing certificate matches brand.json (${actual})`);
+    } else {
+      console.warn('android: the signing certificate was not compared with brand.json (test key or generated key)');
+    }
 
     const verify = (file, label) => run(apksigner, ['verify', '--print-certs', file], label);
     const versioned = join(buildDir, name);
@@ -556,15 +757,13 @@ async function main() {
       }
     }
     console.log(`android: built ${relative(root, versioned)}`);
-  } finally {
-    await rm(staging, { recursive: true, force: true });
-  }
+  });
 }
 
 const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   main().catch((error) => {
-    console.error(`android: ${error.stack ?? error.message}`);
+    console.error(`android: ${error instanceof BuildError ? error.message : (error.stack ?? error.message)}`);
     process.exit(1);
   });
 }

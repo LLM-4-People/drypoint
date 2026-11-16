@@ -86,13 +86,16 @@ scripts/
   serve.mjs                zero-dependency dev server + pid tracking
   stop.mjs                 validated stop for the tracked server
   precache.mjs             dependency-graph walker, allowlist, manifest generator
+  android-sdk.sh           the pinned SDK packages and licence handling both workflows use
   build-brand.mjs          brand.json + package.json → manifest, strings.xml, BRAND/version modules, icon
   build-android.mjs        APK pipeline: precache → aapt2 → javac → d8 → sign
-  build-pages.mjs          Pages staging: runtime list + worker + 404 + .nojekyll
+  build-pages.mjs          Pages staging: runtime list + worker + 404 + .nojekyll + notices
   check-docs.mjs           Markdown relative links, heading anchors and images
   check-privacy.mjs        the one deny list for the published tree
-  check-workflows.mjs      pinned actions, permissions, timeouts, tag-only release
+  check-workflows.mjs      pinned actions, permissions, timeouts, one aggregate gate
   release-notes.mjs        tag ↔ package.json version, CHANGELOG section → notes
+  smoke-pages.mjs          headless check that every precached URL answers 200
+  lib/distribution.mjs     the licence and notices every distribution ships
   lib/js-scan.mjs          shared comment/string/template/regex lexer
   lib/server-state.mjs     pid file, liveness, command verification
   lib/tree.mjs             gitignore-aware walker shared by the repository gates
@@ -529,20 +532,34 @@ itself: `v<version>` on a commit in `main`.
    - the signed APK is copied to `dist/drypoint-<version>.apk`, hashed into
      `dist/drypoint-<version>.apk.sha256`, attested with
      `actions/attest-build-provenance`, and uploaded as an artifact;
-   - `git diff --exit-code` proves the build changed no tracked file;
+   - `git diff --exit-code` and `git status --porcelain` prove the build changed
+     no tracked file and left no untracked one behind;
    - the `publish` job — the only job with `contents: write` — downloads the
      artifact and runs `gh release create "$GITHUB_REF_NAME" --verify-tag` with
-     the APK, the checksum and the notes file. A tag containing `-` is a
-     prerelease; every other tag is `--latest`. There is never a draft.
+     the APK, the checksum and the notes file. Tags are strict
+     `vMAJOR.MINOR.PATCH`, so every release is `--latest`; there is no
+     prerelease branch and never a draft. A re-run verifies the existing
+     release's assets byte-for-byte and exits 0 instead of failing.
+
+   Before any of that, the workflow proves the tag is on `main`:
+   `git merge-base --is-ancestor "$GITHUB_SHA" origin/main` on a full clone
+   (`fetch-depth: 0`, `fetch-tags: true`). A tag pushed off a side branch cannot
+   publish. The build job runs in the `release` environment, whose policy only
+   admits `v*` tags.
 
    A concurrent release is serialised by `concurrency: release` with
    `cancel-in-progress: false`.
 
-The Pages deployment is separate. `.github/workflows/pages.yml` runs on every
-push to `main` — never on a tag — stages `_site/` from `collectFiles()` plus
-`sw.js`, the generated `404.html` and `.nojekyll`, and smoke-tests the deployed
-`/`, `/sw.js`, `/manifest.webmanifest` and `/assets/precache.js` for a 200, with
-the manifest required to be served as `application/manifest+json`.
+The Pages deployment is separate. `.github/workflows/pages.yml` runs when the
+`Checks` workflow completes successfully for `main` — never on a red run and
+never on a tag. It checks out `github.event.workflow_run.head_sha` (the commit
+that run validated, not whatever `main` points at now), stages `_site/` from
+`collectFiles()` plus `sw.js`, the generated `404.html`, `.nojekyll` and the
+notices, and then smoke-tests **every** URL in `assets/precache.js` plus `/`:
+`node scripts/smoke-pages.mjs` retries each one a bounded number of times,
+fails on any non-200, and requires the manifest to be served as
+`application/manifest+json`. `workflow_dispatch` still deploys a named commit
+by hand.
 
 Every workflow pins each action to a commit SHA, declares explicit
 `permissions`, a `concurrency` group and a job `timeout-minutes`, and sets

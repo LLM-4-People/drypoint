@@ -58,6 +58,23 @@ export function stripFences(markdown) {
 }
 
 /**
+ * The plain text of one heading.
+ *
+ * GitHub strips inline HTML before building the slug, but this repository has
+ * no heading with HTML in it, so the gate refuses one instead of hand-rolling a
+ * scrub: a `<[^>]*>` replacement leaves `<script` behind and silently slugs a
+ * half-stripped string. Refusing is the unambiguous answer.
+ *
+ * @param {string} text the heading text after the `#` markers
+ * @returns {string}
+ */
+export function headingText(text) {
+  const value = String(text);
+  if (/[<>]/.test(value)) throw new Error(`a heading may not contain HTML: ${value}`);
+  return value;
+}
+
+/**
  * The slugs GitHub generates for the headings in a document.
  *
  * Lower-case, HTML tags removed, punctuation removed, spaces collapsed to
@@ -72,7 +89,7 @@ export function headingSlugs(markdown) {
   for (const line of stripFences(markdown).split('\n')) {
     const match = /^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
     if (!match) continue;
-    const text = match[1].replace(/<[^>]*>/g, '');
+    const text = headingText(match[1]);
     const base = text
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s_-]/gu, '')

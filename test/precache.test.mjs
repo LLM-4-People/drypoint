@@ -111,12 +111,21 @@ test('the manifest owns the structural anchors the worker validates', () => {
   for (const required of manifest.required) assert.ok(manifest.files.includes(required), `${required} is also precached`);
 });
 
-test('the manifest is installable and identifies itself with a same-origin id', () => {
+test('the manifest declares no id and keeps its subpath-relative start and scope', () => {
   const manifest = JSON.parse(read('manifest.webmanifest'));
-  assert.equal(typeof manifest.id, 'string', 'the manifest declares an id');
-  assert.ok(!/^[a-z]+:/i.test(manifest.id), 'the id is a relative, same-origin path');
-  assert.equal(new URL(manifest.id, 'https://example.test/app/manifest.webmanifest').origin, 'https://example.test');
-  assert.equal(new URL(manifest.start_url, 'https://example.test/app/manifest.webmanifest').pathname, '/app/');
+  // A relative `id` resolves against the origin, not the deployment path, so
+  // `"./"` on /drypoint/ claimed https://host/ for this site. Omitting it makes
+  // the identity the resolved start_url: https://host/drypoint/.
+  assert.equal('id' in manifest, false, 'the manifest declares no id');
+  assert.equal(manifest.start_url, './');
+  assert.equal(manifest.scope, './');
+  for (const key of ['start_url', 'scope']) {
+    const resolved = new URL(manifest[key], 'https://example.test/drypoint/manifest.webmanifest');
+    assert.equal(resolved.origin, 'https://example.test');
+    assert.equal(resolved.pathname, '/drypoint/', `${key} resolves to the deployment root`);
+  }
+  const identity = new URL(manifest.start_url, 'https://example.test/drypoint/manifest.webmanifest').href;
+  assert.equal(identity, 'https://example.test/drypoint/', 'the omitted id is that resolved identity');
 });
 
 test('dependency scanning ignores imports that only appear in comments', () => {

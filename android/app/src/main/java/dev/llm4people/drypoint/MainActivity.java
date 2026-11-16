@@ -66,7 +66,12 @@ public class MainActivity extends Activity {
       @Override
       public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
         Uri url = request.getUrl();
-        if (url == null || !HOST.equals(url.getHost())) return null;
+        // A request that is not the bundled app is answered, not released:
+        // returning null let the WebView resolve it against the network, so a
+        // page (or a redirect) could reach any host the phone could. The shell
+        // has no INTERNET permission and must not depend on that to stay
+        // offline.
+        if (!isAppUrl(url)) return textResponse(403, "Forbidden");
         String path = url.getPath();
         if (path == null || path.equals("/") || path.isEmpty()) path = "/index.html";
         if (path.contains("..") || path.indexOf('\\') >= 0) return textResponse(400, "Bad request");
@@ -76,6 +81,13 @@ public class MainActivity extends Activity {
         } catch (IOException missing) {
           return textResponse(404, "Not found");
         }
+      }
+
+      @Override
+      public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+        // Navigation stays in the app: a link that leaves the one origin is
+        // refused here instead of being handed to a browser or an external app.
+        return !isAppUrl(request.getUrl());
       }
     });
 
@@ -123,6 +135,16 @@ public class MainActivity extends Activity {
     }
   }
 
+  /**
+   * Whether a URL belongs to the bundled app: https on the one app host.
+   *
+   * This is the only place a request is allowed in, so the interceptor and the
+   * navigation override cannot disagree about what "the app" is.
+   */
+  private static boolean isAppUrl(Uri url) {
+    return url != null && "https".equals(url.getScheme()) && HOST.equals(url.getHost());
+  }
+
   private static WebResourceResponse assetResponse(String path, InputStream stream) {
     String mime = mimeOf(path);
     boolean textual = mime.startsWith("text/") || mime.endsWith("json") || mime.endsWith("javascript") || mime.endsWith("svg+xml");
@@ -138,9 +160,22 @@ public class MainActivity extends Activity {
         "text/plain",
         "utf-8",
         status,
-        status == 404 ? "Not Found" : "Bad Request",
+        reasonOf(status),
         headers,
         new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  /** The status line for a refusal; never a reason that contradicts the code. */
+  private static String reasonOf(int status) {
+    switch (status) {
+      case 403:
+        return "Forbidden";
+      case 404:
+        return "Not Found";
+      case 400:
+      default:
+        return "Bad Request";
+    }
   }
 
   private static String mimeOf(String path) {

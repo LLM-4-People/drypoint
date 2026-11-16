@@ -8,7 +8,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { checkDocs, headingSlugs, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
+import { checkDocs, headingSlugs, headingText, markdownLinks, resolveTarget, stripFences } from '../scripts/check-docs.mjs';
 import { MODELS } from '../src/protocol/models.js';
 import { readProjectFile as read } from './helpers/project-files.mjs';
 
@@ -43,6 +43,14 @@ test('heading slugs follow GitHub, including duplicates and inline code', () => 
     ['0xde-heartbeat-info', 'same', 'same-1', 'trailing', 'em--dash-test'],
     'punctuation is removed, spaces become hyphens and repeats are numbered'
   );
+});
+
+test('a heading with HTML is refused instead of silently half-stripped', () => {
+  assert.equal(headingText('Plain `code` heading'), 'Plain `code` heading');
+  // A scrub would turn this into "alert(1)" and slug it as if it were text.
+  assert.throws(() => headingText('<script>alert(1)</script>'), /may not contain HTML/);
+  assert.throws(() => headingText('An <em>emphasis</em> heading'), /may not contain HTML/);
+  assert.throws(() => headingSlugs('## <b>Bold</b>'), /may not contain HTML/);
 });
 
 test('a broken relative link, image and anchor are reported', async (t) => {
